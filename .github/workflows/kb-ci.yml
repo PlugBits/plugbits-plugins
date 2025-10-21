@@ -1,33 +1,67 @@
 name: kb-ci
+
 on:
   pull_request:
     branches: [main]
+    paths:
+      - "plugins/**"
+      - "tools/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/**"
+  push:
+    branches: [main]
+    paths:
+      - "plugins/**"
+      - "tools/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/**"
+
+concurrency:
+  group: kb-ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  setup:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: 20, cache: 'npm' }
-      - run: npm ci
-
+  # 1) コード＆ルールチェック（ESLint + CSS/HTML混入チェック）
   kb-rules-check:
     runs-on: ubuntu-latest
-    needs: setup
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: 'npm' }
       - run: npm ci
-      - run: npm run kb:check
+      - name: Run code & plugin checks
+        run: npm run check   # ← ここで eslint と kb-check-css をまとめて実行
 
+  # 2) ビルド（各プラグインの build を横断実行）
   build:
     runs-on: ubuntu-latest
-    needs: [setup, kb-rules-check]
+    needs: [kb-rules-check]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20, cache: 'npm' }
       - run: npm ci
-      - run: npm run build
+      - name: Build workspace
+        run: npm run build   # ルートの workspaces 経由で各プラグインの build
+
+  # 3) ZIP 生成＆ZIP 内整合性検査（manifest と実ファイル）
+  pack-and-verify:
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20, cache: 'npm' }
+      - run: npm ci
+      - name: Pack and verify zips
+        run: npm run verify  # pack 実行後に kb-zip-verify を実行
+      - name: Upload dist zips (artifact)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-dist
+          path: |
+            plugins/**/dist/*.zip
+          if-no-files-found: warn

@@ -11,7 +11,10 @@
     "lint": "npm run -ws --if-present lint",
     "pack": "npm run -ws --if-present pack",
     "kb:check": "node tools/kb-check-css.mjs",
-    "kb:zipverify": "node tools/kb-zip-verify.mjs"
+    "kb:zipverify": "node tools/kb-zip-verify.mjs",
+    "check": "npm run lint && npm run kb:check",
+    "verify": "npm run pack && npm run kb:zipverify",
+    "ci": "npm run build && npm run check && npm run verify"
   },
   "devDependencies": {
     "adm-zip": "^0.5.12",

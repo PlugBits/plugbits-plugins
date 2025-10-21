@@ -6,9 +6,9 @@
   "scripts": {
     "clean": "rimraf dist ship",
     "build": "node -e \"console.log('build skipped')\"",
-    "lint": "echo skip",
-    "pack:init": "mkdirp .keys ship && kintone-plugin-packer . --ppk .keys/outlook-template.ppk --out ship/outlook-template.zip",
-    "pack": "mkdirp ship && kintone-plugin-packer . --ppk .keys/outlook-template.ppk --out ship/outlook-template.zip"
+    "lint": "eslint . || true",
+    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/outlook-template.ppk --out dist/outlook-template.zip",
+    "pack": "mkdirp dist && kintone-plugin-packer . --ppk .keys/outlook-template.ppk --out dist/outlook-template.zip"
  
   },
   "devDependencies": {

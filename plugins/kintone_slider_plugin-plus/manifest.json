@@ -1,6 +1,6 @@
 {
   "manifest_version": 1,
-  "version": "1.1.11",
+  "version": "1.1.12",
   "type": "APP",
   "name": {
     "ja": "一覧日付スライダープラス",
@@ -10,14 +10,14 @@
     "ja": "一覧ビューに期間スライダーとプリセットボタンを追加し、日付フィールドで動的に絞り込みできます",
     "en": "Adds date range slider and preset buttons to list view for dynamic filtering by date field"
   },
-  "icon": "src/images/icon_128.png",
+  "icon": "images/icon.png",
   "desktop": {
-    "js": ["dist/js/plugin.js"],
-    "css": ["src/css/base.css", "src/css/plugin.css"]
+    "js": ["app/plugin.js"],
+    "css": ["app/base.css", "app/plugin.css"]
   },
   "config": {
-  "html": "src/html/config.html",
-  "js": ["src/js/config.js"],
-  "css": ["src/css/config.css"]
+  "html": "config/config.html",
+  "js": ["config/config.js"],
+  "css": ["config/config.css"]
   }
 }
