@@ -1,0 +1,58 @@
+
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>一覧日付スライダー 設定</title>
+<link rel="stylesheet" href="config.css">
+<div class="kb-root" data-kb-theme="light">
+  <div class="kb-card" style="max-width:860px;margin:24px auto;">
+    <h2 style="margin:0 0 8px">一覧日付スライダー / Date Slider (Config)</h2>
+    <p class="kb-label" style="margin:0 0 16px">保存後に再度開いても設定が保持されるように修正済みです。</p>
+
+    <div class="kb-row" style="margin-bottom:10px">
+      <label class="kb-label" style="width:180px">対象日付フィールド / Field</label>
+      <select id="dateField" class="kb-input" style="min-width:220px"></select>
+    </div>
+
+    <div class="kb-row" style="margin-bottom:10px">
+      <label class="kb-label" style="width:180px">週の開始 / Week start</label>
+      <select id="weekStart" class="kb-input">
+        <option value="0">日曜 / Sun</option>
+        <option value="1">月曜 / Mon</option>
+      </select>
+    </div>
+
+    <div class="kb-row" style="margin-bottom:12px; align-items:flex-start">
+      <label class="kb-label" style="width:180px">適用ビュー / Target views</label>
+      <div style="display:flex; flex-direction:column; gap:6px; flex:1 1 auto;">
+        <div id="viewsBox" class="kb-row" style="flex-wrap:wrap; gap:8px"></div>
+        <p class="kb-muted" style="margin:0">未選択の場合は全ビューに適用されます / Applies to all views when empty</p>
+      </div>
+    </div>
+    <div class="kb-row" style="margin-bottom:10px; align-items:flex-start">
+      <label class="kb-label" style="width:180px">プリセット / Presets</label>
+      <div id="presetsBox" class="kb-row" style="flex-wrap:wrap; gap:8px"></div>
+    </div>
+
+    <div class="kb-row" style="margin-bottom:10px">
+      <label class="kb-label" style="width:180px">既定プリセット / Default</label>
+      <select id="defaultPreset" class="kb-input"></select>
+    </div>
+
+    <div class="kb-row" style="margin-bottom:14px">
+      <label class="kb-label" style="width:180px">テーマ（アイコンのみ）/ Theme</label>
+      <select id="theme" class="kb-input">
+        <option value="light">light</option>
+        <option value="mono-blue">mono-blue</option>
+        <option value="mint">mint</option>
+        <option value="pale">pale</option>
+        <option value="rose">rose</option>
+      </select>
+    </div>
+
+    <div class="kb-row" style="gap:10px">
+      <button id="save" class="kb-btn kb-primary">保存 / Save</button>
+      <button id="cancel" class="kb-btn">キャンセル / Cancel</button>
+    </div>
+  </div>
+</div>
+<script src="config.js"></script>

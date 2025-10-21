@@ -1,0 +1,41 @@
+:root{
+  --kp-font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+  --kp-radius: 12px;
+  --kp-gap: 12px;
+  --kp-muted: #6b7280;
+  --kp-border: #e5e7eb;
+  --kp-bg: #fff;
+  --kp-btn: #0d6efd;
+  --kp-danger: #dc3545;
+  --kp-ok: #16a34a;
+}
+html{ font-family:var(--kp-font); }
+html[data-kp-theme="dark"]{ filter: invert(1) hue-rotate(180deg); }
+@media print{ html[data-kp-theme="dark"]{ filter:none; } }
+
+.kp-wrap{ max-width: 720px; margin: 24px auto; padding: 0 12px; }
+.kp-card{ background:var(--kp-bg); border:1px solid var(--kp-border); border-radius:var(--kp-radius); padding:16px; }
+.kp-title{ font-size:18px; margin:0 0 6px; }
+.kp-desc{ color:var(--kp-muted); margin:0 0 16px; }
+
+.kp-row{ display:grid; grid-template-columns: 200px 1fr; gap:12px; align-items:center; padding:8px 0; }
+.kp-label{ color:#374151; font-weight:600; }
+.kp-help{ color:var(--kp-muted); font-size:12px; margin-top:6px; }
+.kp-field > select,
+.kp-field > input{ width:100%; padding:8px; border:1px solid var(--kp-border); border-radius:10px; background:#fff; }
+
+.kp-actions{ display:flex; gap:8px; margin-top:16px; }
+.kp-btn{ border:1px solid var(--kp-border); border-radius:10px; padding:8px 14px; background:#fafafa; cursor:pointer; }
+.kp-btn.primary{ background:var(--kp-btn); color:#fff; border-color:var(--kp-btn); }
+.kp-btn.ghost{ background:transparent; }
+.kp-btn.danger{ background:var(--kp-danger); border-color:var(--kp-danger); color:#fff; }
+
+.kp-note{ color:var(--kp-muted); font-size:12px; margin-top:8px; }
+.kp-toast{ position:fixed; left:50%; transform:translateX(-50%); bottom:24px; padding:10px 14px; background:#111; color:#fff; border-radius:10px; opacity:.92; z-index:9999; }
+.kp-toast.ok{ background:var(--kp-ok); }
+.kp-toast.err{ background:var(--kp-danger); }
+
+.kp-table{ width:100%; border-collapse: collapse; margin:8px 0; }
+.kp-table th, .kp-table td{ border-bottom:1px solid var(--kp-border); padding:8px; }
+.kp-table th{ text-align:left; color:#374151; }
+.kp-right{ text-align:right; }

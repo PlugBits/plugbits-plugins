@@ -1,0 +1,44 @@
+/* plugin.css — modal only (アイコンの見た目は統一CSSに委譲) */
+.kb-root{ display:inline-flex !important; gap:6px; }
+.kb-root .kb-backdrop{
+  position:fixed; inset:0; background:rgba(20,24,28,.45); display:none; z-index:9998;
+}
+.kb-root .kb-modal{
+  position:fixed; top:10%; left:50%; transform:translateX(-50%);
+  background:var(--kb-bg); border:1px solid var(--kb-line); border-radius:12px; display:none; z-index:9999;
+  width:fit-content; max-width:min(980px, calc(100% - 40px)); box-shadow:0 12px 32px rgba(0,0,0,.2);
+}
+.kb-root[data-modal="1"] .kb-backdrop{ display:block }
+.kb-root[data-modal="1"] .kb-modal{ display:block; animation:kbFadeUp .18s ease }
+@keyframes kbFadeUp{ from{ opacity:0; transform:translate(-50%, 8px) } to{ opacity:1; transform:translate(-50%, 0) } }
+
+
+/* common runtime UI (kp) */
+.kb-root.kb-dock{ display:inline-flex !important; gap:8px;  white-space:nowrap; vertical-align:middle; }
+
+.kb-root .kp-icon-btn{ display:inline-flex; align-items:center; justify-content: center; width:48px; height:48px; margin-right: 8px !important; padding:0;
+  border:1px solid ; border-radius:0; border-color: #e3e7e8; background:#f7f9fa; cursor:pointer; line-height:1;
+  box-shadow:0 1px 0 rgba(0,0,0,.02); color:#475569; }
+.kb-root .kp-icon-btn:focus-visible{ outline:2px solid; outline-offset:2px; }
+.kb-root .kp-icon-btn svg{ width:32px; height:32px; display:block; stroke:currentColor; fill:none; }
+
+.kp-modal{ position:fixed; inset:0; display:none; align-items:center; justify-content:center;
+  background:rgba(17,24,39,.42); z-index:9999; }
+.kp-modal[aria-hidden="false"]{ display:flex; }
+.kp-modal .kp-card{ width:min(820px, 92vw); max-height:80vh; overflow:auto;
+  background:#fff; border:1px solid var(--kp-border); border-radius:12px; padding:16px;
+  box-shadow:0 18px 50px rgba(0,0,0,.22); }
+.kp-modal-header{ display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+.kp-modal-body{ margin:8px 0 12px; }
+.kp-modal-footer{ display:flex; gap:8px; justify-content:flex-end; }
+
+.kbp-root{display:inline-flex;gap:6px}
+.kbp-root .kbp-icon-btn{width:48px;height:48px;display:inline-flex;align-items:center;justify-content:center;border:1px solid #e3e7e8;background:#f7f9fa;margin-right:8px}
+.kbp-backdrop{position:fixed;inset:0;background:rgba(15,18,20,.36);z-index:2147483645}
+.kbp-modal{position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);width:min(960px,92vw);max-height:88vh;overflow:auto;border-radius:16px;background:#fff;box-shadow:0 20px 50px rgba(0,0,0,.18);z-index:2147483646}
+.kbp-head,.kbp-foot{position:sticky;background:#fff;z-index:2}
+.kbp-head{top:0;padding:12px 16px;border-bottom:1px solid #dfe3e8;display:flex;justify-content:space-between;align-items:center}
+.kbp-foot{bottom:0;padding:12px 16px;border-top:1px solid #dfe3e8;display:flex;justify-content:space-between;gap:12px}
+.kbp-card>div{padding:12px 16px}
+.kbp-toast{position:fixed;top:calc(14px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);display:inline-block;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff;padding:8px 12px;border-radius:12px;font-size:12px;z-index:2147483647;white-space:nowrap;box-shadow:0 10px 30px rgba(37,99,235,.35)}
+

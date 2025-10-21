@@ -1,0 +1,13 @@
+{
+  "name": "kintone-index-date-slider",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "pack": "kintone-plugin-packer --ppk .keys/private.ppk --out dist/slider-plugin-plus.zip ."
+  },
+  "devDependencies": {
+    "esbuild": "^0.21.0"
+  }
+}
