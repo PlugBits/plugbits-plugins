@@ -1,0 +1,43 @@
+# Kintone Plugin Boilerplate (量産テンプレ)
+
+■ 目的
+- 量産しやすい最小骨格（ランタイム/設定UI/ビルド/パック）を提供。
+- 各案件では src/js/plugin.js の「TODO」付近に本処理を加える。
+
+■ 使い方
+1) npm install
+2) npm run build
+3) npm run pack   # dist/plugin.zip を作成（.ppk は安定鍵を使い回し）
+
+■ 既定ポリシー（このテンプレで統一）
+- desktop は dist/js/plugin.js を読み込む。
+- config は src/html/config.html（本文のみ）。CSS/JS は manifest の config.css/js に列挙。
+- early.js は必要時のみ導入（ちらつき等）。esbuild には含めない。
+- ダークは CSS のみで自動対応（印刷時は filter 無効）。
+- イベント配列は SHOW/INDEX/EDIT を用意。不要なら削除/追加で調整。
+- 設定は JSON で保存（manifest → setConfig({ version, data })). UIを増やす場合は config.js の row()/fetchFields()/fetchSpaces() を流用。
+- ヘッダー描画は getHeaderMenuSpaceElement() を優先し、なければ getHeaderSpaceElement() にフォールバック。
+
+■ 拡張ヒント
+- テーブルUIを追加したい場合：config.js の row()/textarea にならい <select> や <input> を組み立て、保存時に data に格納。
+- 実行時の共通ユーティリティ（ホスト生成・ready・configロード）は plugin.js に実装済み。
+- バッジは動作確認用。製品では削除してください。
+
+■ 構成
+plugin-template/
+├─ manifest.json
+├─ package.json
+├─ esbuild.config.mjs
+├─ src/
+│  ├─ js/
+│  │  ├─ plugin.js
+│  │  └─ config.js
+│  ├─ css/
+│  │  ├─ base.css
+│  │  └─ kp-config.css
+│  ├─ html/
+│  │  └─ config.html
+│  └─ images/
+│     ├─ icon-128.png
+│     └─ icon-16.png
+└─ dist/   # build 出力

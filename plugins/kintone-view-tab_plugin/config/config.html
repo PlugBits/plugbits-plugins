@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>KB View Tabs 設定</title>
+  <!-- ※ CSS は manifest の config.css で kb-shell.css を読み込みます（ここでの <link> は不要） -->
+  <style>
+    /* 既存の見た目を維持する最小スタイル（必要なら kb-shell.css へ後で移設可） */
+    .kb-dual { display:flex; gap:16px; }
+    .kb-list { flex:1; }
+    .kb-list .kb-card { min-height:280px; }
+    .kb-ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+    .kb-li { display:flex; align-items:center; justify-content:space-between; gap:8px; padding:6px 8px;
+             border:1px solid var(--kb-line,#d9dee5); border-radius:8px; }
+    .kb-li span { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .kb-colbtns { display:flex; gap:6px; }
+    .kb-rowbtns { display:flex; gap:6px; margin-top:8px; }
+    .kb-input-number { width:80px; }
+  </style>
+</head>
+<body>
+  <div class="kb-root kb-page">
+    <div class="kb-container">
+      <div class="kb-card">
+        <div class="kb-title">KB View Tabs — 設定</div>
+        <p class="kb-desc">サブツールバーに表示するビューを選択してください。並び順は右リストの順序になります。</p>
+
+        <div class="kb-dual">
+          <div class="kb-list">
+            <div class="kb-title">利用可能なビュー</div>
+            <div class="kb-row" style="margin:8px 0;">
+              <input id="searchAvailable" class="kb-input" type="text" placeholder="検索…" />
+              <button id="btnAddSelected" class="kb-btn">追加 ▶</button>
+            </div>
+            <div class="kb-card">
+              <ul id="ulAvailable" class="kb-ul"></ul>
+            </div>
+          </div>
+          <div class="kb-list">
+            <div class="kb-title">表示するビュー</div>
+            <div class="kb-colbtns">
+              <button id="btnRemoveSelected" class="kb-btn kb-danger">◀ 削除</button>
+            </div>
+            <div class="kb-card">
+              <ul id="ulSelected" class="kb-ul"></ul>
+            </div>
+            <div class="kb-rowbtns">
+              <button id="btnUp" class="kb-btn">↑ 上へ</button>
+              <button id="btnDown" class="kb-btn">↓ 下へ</button>
+            </div>
+          </div>
+        </div>
+
+        <hr style="margin:16px 0; border:none; border-top:1px solid var(--kb-line,#d9dee5);" />
+
+        <div class="kb-row" style="gap:16px;">
+          <label class="kb-label"><input id="optIcons" type="checkbox" checked /> アイコン表示</label>
+          <label class="kb-label">インライン表示上限 <input id="optMaxInline" class="kb-input kb-input-number" type="number" min="0" max="20" value="6" /></label>
+        </div>
+
+        <div class="kb-toolbar" style="margin-top:16px;">
+          <button id="btnSave" class="kb-btn kb-primary">保存</button>
+          <button id="btnCancel" class="kb-btn">キャンセル</button>
+          <span class="kb-muted">未選択の場合は全ビューを表示します。</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ※ JS は manifest の config.js（dist/config.js）から読み込みます。ここに <script> は入れません。 -->
+</body>
+</html>

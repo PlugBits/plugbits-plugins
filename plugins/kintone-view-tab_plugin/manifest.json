@@ -1,0 +1,29 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.0",
+  "type": "APP",
+  "name": {
+    "ja": "一覧ビュータブ表示化プラグイン",
+    "en": "Index View Tabs Plugin"
+  },
+  "description": {
+    "ja": "一覧画面のビュー選択をサブツールバーのタブで切り替えます。表示タブ/順序・アイコン表示・インライン数は設定画面で変更できます。",
+    "en": "Replaces the view dropdown on the index page with a sub-toolbar of tabs. You can configure visible tabs/order, icon visibility, and inline count in the settings."
+  },
+  "icon": "images/icon.png",
+  "homepage_url": {
+  },
+  "desktop": {
+    "js": [
+      "app/plugin.js"
+    ]
+  },
+  "mobile": {
+    "js": []
+  },
+  "config": {
+    "html": "config/config.html",
+    "css": ["config/config.css","config/kp-config.css","config/kb-shell.css"],
+    "js": ["config/config.js"]
+  }
+}

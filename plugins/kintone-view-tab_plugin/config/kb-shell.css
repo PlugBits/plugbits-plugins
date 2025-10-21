@@ -1,0 +1,77 @@
+/* PlugBits kintone Plugins — kb-shell.css (common UI shell)
+   Scope all styles under .kb-root to avoid affecting kintone UI. */
+
+:root {
+  --kb-bg: #f7f7f9;
+  --kb-surface: #ffffff;
+  --kb-text: #1f2328;
+  --kb-sub: #667085;
+  --kb-line: #e6e8ec;
+
+  --kb-primary: #2563eb;
+  --kb-primary-ink: #ffffff;
+  --kb-danger: #dc2626;
+  --kb-focus: #3b82f6;
+
+  --kb-radius: 8px;
+  --kb-gap: 8px;
+  --kb-gap-lg: 16px;
+  --kb-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --kb-bg: #0f1115;
+    --kb-surface: #16191f;
+    --kb-text: #e6e7ea;
+    --kb-sub: #a0a6b2;
+    --kb-line: #2a2f3a;
+
+    --kb-primary: #3b82f6;
+    --kb-primary-ink: #0b1220;
+    --kb-danger: #ef4444;
+    --kb-focus: #60a5fa;
+  }
+}
+
+/* Root wrapper */
+.kb-root { box-sizing: border-box; color: var(--kb-text); font: 14px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif; }
+.kb-root *, .kb-root *::before, .kb-root *::after { box-sizing: inherit; }
+
+/* Layout helpers */
+.kb-card { background: var(--kb-surface); border: 1px solid var(--kb-line); border-radius: var(--kb-radius); padding: var(--kb-gap-lg); box-shadow: var(--kb-shadow); }
+.kb-row { display: flex; align-items: center; gap: var(--kb-gap); }
+.kb-label { color: var(--kb-sub); font-weight: 600; min-width: 120px; }
+.kb-subtable-item {margin-bottom: 10px;}
+
+/* Inputs */
+.kb-input input, .kb-input select, .kb-input textarea {
+  width: 100%; padding: 6px 10px; border: 1px solid var(--kb-line); border-radius: 6px; background: var(--kb-surface); color: var(--kb-text);
+}
+.kb-input input:focus, .kb-input select:focus, .kb-input textarea:focus { outline: 2px solid var(--kb-focus); outline-offset: 0; }
+
+/* Buttons */
+.kb-btn { appearance: none; border: 1px solid var(--kb-line); background: var(--kb-surface); color: var(--kb-text); border-radius: 6px; height: 30px; padding: 0 10px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.kb-btn:hover { filter: brightness(0.98); }
+.kb-btn:focus { outline: 2px solid var(--kb-focus); outline-offset: 1px; }
+.kb-btn.kb-primary { background: var(--kb-primary); border-color: var(--kb-primary); color: var(--kb-primary-ink); }
+.kb-btn.kb-danger { background: var(--kb-danger); border-color: var(--kb-danger); color: #fff; }
+.kb-inline-btn { height: 24px; padding: 0 8px; font-size: 12px; }
+
+/* Icons */
+.kb-ico { width: 12px; height: 12px; fill: currentColor; display: inline-block; }
+
+/* Header area */
+.kb-head { display: flex; gap: var(--kb-gap); align-items: center; padding: 0; background: transparent; }
+
+/* Toast */
+.kb-toast { position: fixed; top: 12px; left: 50%; transform: translateX(-50%); background: var(--kb-surface); border: 1px solid var(--kb-line); border-radius: 999px; padding: 6px 12px; box-shadow: var(--kb-shadow); z-index: 9999; }
+
+/* Modal */
+.kb-backdrop { position: fixed; inset: 0; background: rgba(15,17,21,0.4); backdrop-filter: blur(2px); z-index: 9998; }
+.kb-modal { position: fixed; inset: 0; display: grid; place-items: center; z-index: 9999; }
+.kb-modal .kb-card { width: min(640px, 90vw); max-height: 80vh; overflow: auto; }
+
+#viewList label {display: flex; align-items: center; gap: 8px; width: 100%;}
+#viewList input[type="checkbox"] {width: 10%; flex: 0 0 auto;}
+#viewList span {flex: 1;}

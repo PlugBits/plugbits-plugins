@@ -1,0 +1,32 @@
+:root{
+  --kp-font: system-ui,-apple-system,"Segoe UI",Roboto,"Noto Sans JP",sans-serif;
+  --kp-radius: 12px;
+  --kp-border: #e5e7eb;
+  --kp-muted: #6b7280;
+  --kp-btn: #0d6efd;
+  --kp-danger: #dc3545;
+}
+html{ font-family:var(--kp-font); }
+@media (prefers-color-scheme: dark){ html{ filter: invert(1) hue-rotate(180deg); } }
+@media print{ html{ filter:none !important; } }
+
+/* 外枠は iframe 幅にフィット */
+.kp-wrap{ max-width: var(--kp-wrap-max, none); margin:16px auto; padding:0 16px; }
+.kp-title{ font-size:18px; margin:0 0 6px; }
+.kp-desc{ color:var(--kp-muted); margin:0 0 16px; }
+
+.kp-card{ border:1px solid var(--kp-border); border-radius:var(--kp-radius); padding:16px; background:#fff; }
+
+.kp-actions{ display:flex; gap:8px; margin-top:16px; }
+.kp-btn{ border:1px solid var(--kp-border); border-radius:10px; padding:8px 14px; background:#fafafa; cursor:pointer; }
+.kp-btn.primary{ background:var(--kp-btn); color:#fff; border-color:var(--kp-btn); }
+.kp-btn.ghost{ background:transparent; }
+.kp-btn.danger{ background:var(--kp-danger); color:#fff; border-color:var(--kp-danger); }
+
+/* テーブルUI（サンプル） */
+.kp-table{ width:100%; border-collapse:collapse; table-layout:fixed; }
+.kp-table th,.kp-table td{ border:1px solid var(--kp-border); padding:8px; vertical-align:top; }
+.kp-help{ color:var(--kp-muted); font-size:12px; margin-top:6px; }
+
+.kp-json{ width:100%; min-height:180px; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  
