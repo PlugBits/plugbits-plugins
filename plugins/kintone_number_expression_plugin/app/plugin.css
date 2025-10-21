@@ -1,0 +1,9 @@
+/* 最低限の共通スタイル（競合しない範囲） */
+.kp-host{ display:flex; align-items:center; gap:8px; }
+.kp-badge{
+  display:inline-block; padding:2px 8px; font-size:12px; border-radius:999px;
+  background:#eef2ff; color:#1e3a8a; border:1px solid #93c5fd;
+}
+@media (prefers-color-scheme: dark){ html{ filter: invert(1) hue-rotate(180deg); } }
+@media print{ html{ filter: none !important; } }
+

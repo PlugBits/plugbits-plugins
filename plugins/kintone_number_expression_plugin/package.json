@@ -1,0 +1,17 @@
+{
+  "name": "kintone-number-expression-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "clean": "rimraf dist ship",
+    "build": "node -e \"console.log('build skipped')\"",
+    "lint": "eslint . || exit 0",
+    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/number-expression.ppk --out dist/number-expression.zip",
+    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/number-expression.ppk --out dist/number-expression.zip ."
+  },
+  "devDependencies": {
+  },
+  "engines": { "node": ">=18" }
+}
+

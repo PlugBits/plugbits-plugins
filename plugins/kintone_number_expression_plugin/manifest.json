@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.8",
+  "type": "APP",
+  "name": { "ja": "数式入力（数値）プラグイン", "en": "Number Expression Plugin" },
+  "description": {
+    "ja": "作成/編集画面で、選択した文字列フィールドに『=』または『＋』で始まる式（例: =1+2, +（1+2）×0.5）を入力すると、その場で安全に評価して数値へ置換します。サブテーブル対応。任意で『文字列→数値』の出力マッピングを設定でき、結果を数値フィールドへミラー保存できます",
+    "en": "On create/edit, evaluates expressions entered in string fields when they start with '=' or '+' and replaces them with the numeric result. Supports subtables. "
+  },
+  "desktop": {
+    "js": ["app/plugin.js"],
+    "css": ["app/plugin.css"]
+  },
+  "mobile": { "js": ["app/plugin.js"], "css": [] },
+  "config": {
+    "html": "config/config.html",
+    "js": ["config/config.js"],
+    "css": ["config/config.css"]
+  },
+  "icon": "images/icon.png"
+}
