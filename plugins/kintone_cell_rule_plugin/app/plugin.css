@@ -1,0 +1,4 @@
+/* Conditional formatting cell styles */
+td.puchi-bg-red{ background:#fde8e8 !important; color:#c0392b !important; }
+td.puchi-bg-green{ background:#e8f7ec !important; color:#1e824c !important; }
+td.puchi-bg-yellow{ background:#fff7da !important; color:#8a6d3b !important; }

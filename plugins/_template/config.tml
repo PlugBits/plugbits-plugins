@@ -1,0 +1,9 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8"><title>設定</title></head>
+<body>
+  <div id="app">
+    <label>サンプル<input id="sample" type="text"></label>
+    <button id="save">保存</button>
+    <button id="cancel">キャンセル</button>
+  </div>
+</body></html>

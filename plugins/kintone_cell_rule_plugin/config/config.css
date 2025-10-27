@@ -1,0 +1,228 @@
+/* ===== AGENTS-style config UI (修正版) ===== */
+
+.kb-root {
+  --kb-bg: #f7f9fb;
+  --kb-surface: #ffffff;
+  --kb-text: #111827;
+  --kb-sub: #6b7280;
+  --kb-line: #e5e7eb;
+  --kb-accent: #2563eb;
+  --kb-accent-ink: #ffffff;
+  --kb-danger: #b42318;
+  --kb-shadow: 0 6px 20px rgba(2, 8, 20, 0.06);
+  --kb-radius: 14px;
+  --kb-gap: 12px;
+  --kb-input-h: 34px;
+  --kb-font: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial,
+    "Noto Sans JP", sans-serif;
+}
+
+/* base */
+.kb-root {
+  font-family: var(--kb-font);
+  color: var(--kb-text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+.kb-root select,
+.kb-root input {
+  font-size: 13px;
+  box-sizing: border-box;
+}
+
+/* container & cards */
+.kb-root .kb-container,
+.kb-root .kp-wrap {
+  max-width: 1080px; /* ✅ ボックス拡大 */
+  margin: 20px auto;
+  padding: 0 16px;
+}
+.kb-root .kb-card,
+.kb-root .kp-card {
+  background: var(--kb-surface);
+  border: 1px solid var(--kb-line);
+  border-radius: var(--kb-radius);
+  box-shadow: var(--kb-shadow);
+  padding: 16px 20px;
+  margin-bottom: 14px;
+}
+
+/* labels */
+.kb-root .kb-title {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+.kb-root .kb-desc {
+  color: var(--kb-sub);
+  margin: 0 0 8px;
+}
+
+/* input / select */
+.kb-root .kb-input,
+.kb-root .kb-select,
+.kb-root .kp-rule select,
+.kb-root .kp-rule input {
+  height: var(--kb-input-h);
+  border: 1px solid var(--kb-line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 0 10px;
+  width: 100%;
+}
+.kb-root .kb-input:focus,
+.kb-root .kb-select:focus,
+.kb-root .kp-rule select:focus,
+.kb-root .kp-rule input:focus {
+  outline: 2px solid rgba(37, 99, 235, 0.18);
+  border-color: var(--kb-accent);
+}
+
+/* actions */
+.kb-root .kb-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.kb-root .kb-btn {
+  height: var(--kb-input-h);
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--kb-line);
+  background: #fff;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.kb-root .kb-btn:hover {
+  background: #f4f6f8;
+}
+.kb-root .kb-btn.kb-primary {
+  background: var(--kb-accent);
+  color: var(--kb-accent-ink);
+  border-color: var(--kb-accent);
+}
+.kb-root .kb-btn.kb-primary:hover {
+  filter: brightness(0.97);
+}
+/* ✅ 削除ボタンを赤化 */
+.kb-root .kb-btn.kb-btn-danger {
+  background: var(--kb-danger);
+  color: #fff;
+  border-color: var(--kb-danger);
+}
+.kb-root .kb-btn.kb-btn-danger:hover {
+  filter: brightness(0.95);
+}
+
+/* ---------- Rule row ---------- */
+.kb-root .kp-rule {
+  display: grid;
+  grid-template-columns:
+    minmax(260px, 1.3fr) /* field */
+    1fr /* type */
+    1fr /* op */
+    minmax(320px, 2.2fr) /* value */
+    1fr /* color */
+    auto; /* delete */
+  gap: 10px;
+  align-items: center;
+  padding: 8px 0;
+}
+.kb-root .kp-type {
+  min-width: 100px;
+}
+.kb-root .kp-op {
+  min-width: 130px;
+}
+.kb-root .kp-color {
+  min-width: 100px;
+}
+
+/* value area */
+.kb-root .kp-value-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: var(--kb-input-h);
+}
+.kb-root .kp-value-wrap .kb-input {
+  flex: 1 1 0;
+  min-width: 160px;
+}
+.kb-root .kp-sep {
+  color: var(--kb-sub);
+  padding: 0 2px;
+}
+.kb-root .kp-value-wrap.is-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* --- choice の行高ズレ修正（ラジオと文字を縦中央で揃える） --- */
+.kb-root .kp-value-wrap .kp-choices{
+  display: grid;
+  row-gap: 6px;
+  padding: 2px 0;
+  line-height: 1; /* テキスト行高を詰める */
+}
+.kb-root .kp-value-wrap .kp-choices label{
+  display: inline-flex;
+  align-items: center; /* ← ラジオと文字を縦中央揃え */
+  gap: 8px;
+  margin: 0;
+}
+
+/* ラジオ/チェック：サイズ小さめ＆縦位置調整（transformは使わない） */
+.kb-root .kp-value-wrap .kp-choices input[type="radio"],
+.kb-root .kp-value-wrap .kp-choices input[type="checkbox"]{
+  width: 14px;
+  height: 14px;
+  margin: 0;               /* 余白ばらつき防止 */
+  vertical-align: middle;  /* フォールバック系ブラウザ向け */
+  accent-color: var(--kb-accent);
+}
+
+/* ✅ ラジオボタンを小型化 */
+.kb-root input[type="radio"] {
+  transform: none;
+  margin-right: 4px;
+}
+.kb-root input[type="radio"]:checked {
+  accent-color: var(--kb-accent);
+}
+
+/* helper text */
+.kb-root .kb-label {
+  font-weight: 600;
+}
+.kb-root .kb-help {
+  color: var(--kb-sub);
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+/* responsive */
+@media (max-width: 980px) {
+  .kb-root .kp-rule {
+    grid-template-columns: 1.3fr 1fr 1fr 1.8fr 1fr auto;
+  }
+}
+@media (max-width: 720px) {
+  .kb-root .kp-rule {
+    grid-template-columns: 1fr 1fr;
+    grid-auto-rows: minmax(var(--kb-input-h), auto);
+  }
+  .kb-root .kp-op {
+    grid-column: 1 / 2;
+  }
+  .kb-root .kp-value-wrap {
+    grid-column: 1 / -1;
+  }
+  .kb-root .kp-color {
+    grid-column: 1 / 2;
+  }
+  .kb-root .kb-btn.kb-btn-danger {
+    grid-column: 2 / 3;
+    justify-self: end;
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "name": "kintone-conditional-formatting",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "clean": "rimraf dist ship",
+    "build": "node -e \"console.log('build skipped')\"",
+    "lint": "eslint . || exit 0",
+    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --out dist/conditional-formatting_plugin.zip",
+    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/conditional-formatting.ppk --out dist/conditional-formatting_plugin.zip ."
+  },
+  "devDependencies": {
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

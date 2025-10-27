@@ -1,0 +1,12 @@
+.kb-root{
+  --kb-bg:#f7f9fa; --kb-surface:#ffffff; --kb-text:#23272a; --kb-sub:#6b7280; --kb-line:#dfe3e8;
+  --kb-primary:#3498db; --kb-primary-ink:#ffffff; --kb-danger:#e74c3c; --kb-focus:#1e5fb2;
+  --kb-radius:4px; --kb-gap:8px; --kb-gap-lg:16px;
+}
+.kb-root .kb-card{background:var(--kb-surface);border:1px solid var(--kb-line);border-radius:var(--kb-radius);padding:var(--kb-gap-lg)}
+.kb-root .kb-btn{border:1px solid var(--kb-line);background:#fff;color:var(--kb-text);padding:6px 12px;border-radius:var(--kb-radius);cursor:pointer;font-size:13px;line-height:1.2}
+.kb-root .kb-btn.kb-primary{background:var(--kb-primary);border-color:var(--kb-focus);color:var(--kb-primary-ink)}
+.kb-root .kb-btn.kb-primary:hover{filter:brightness(0.95)}
+.kb-root .kb-label{color:var(--kb-sub);font-size:12px}
+.kb-root .kb-row{display:flex;gap:var(--kb-gap);align-items:center}
+.kb-root .kb-hr{height:1px;background:var(--kb-line);margin:var(--kb-gap-lg) 0}

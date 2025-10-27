@@ -7,6 +7,7 @@
     "tools"
   ],
   "scripts": {
+    "create:plugin": "node scripts/create-plugin.mjs",
     "build": "npm run -ws --if-present build",
     "lint": "npm run -ws --if-present lint",
     "pack": "npm run -ws --if-present pack",

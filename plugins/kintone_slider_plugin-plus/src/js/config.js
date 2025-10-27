@@ -26,7 +26,6 @@
     dateField: '',
     weekStart: 0,
     defaultPreset: 'last-30',
-    theme: 'light',
     presets: PRESET_LABELS.map(x => x[0]),
     targetViews: []
   };
@@ -62,7 +61,6 @@
       dateField: saved.dateField || saved.dateFieldCode || DEFAULTS.dateField,
       weekStart: Number(saved.weekStart ?? DEFAULTS.weekStart),
       defaultPreset: saved.defaultPreset || DEFAULTS.defaultPreset,
-      theme: saved.theme || DEFAULTS.theme,
       presets: parsePresets(saved.presets),
       targetViews: parseViewSelection(saved.targetViews)
     };
@@ -211,10 +209,9 @@
     const weekStart = document.getElementById('weekStart');
     const viewsBox = document.getElementById('viewsBox');
     const defaultPreset = document.getElementById('defaultPreset');
-    const theme = document.getElementById('theme');
     const save = document.getElementById('save');
     const cancel = document.getElementById('cancel');
-
+    const presetsBox = document.getElementById('presetsBox');
     // Week start
     weekStart.value = String(cfg.weekStart);
 
@@ -230,10 +227,8 @@
     presetsBox.addEventListener('change', refreshDefault);
     refreshDefault();
 
-    // Theme
-    theme.value = cfg.theme;
-
     // Date field select
+    await populateDateFields(dateField, cfg.dateField);
     await populateViews(viewsBox, cfg.targetViews);
 if (cfg.dateField && !Array.from(dateField.options).some(o => o.value === cfg.dateField)) {
       // 持っている値が候補にない場合でも保持
@@ -249,7 +244,6 @@ if (cfg.dateField && !Array.from(dateField.options).some(o => o.value === cfg.da
         dateField: dateField.value,
         weekStart: String(Number(weekStart.value)||0),
         defaultPreset: defaultPreset.value,
-        theme: theme.value,
         presets: JSON.stringify(chosenPresets.length ? chosenPresets : DEFAULTS.presets),
         targetViews: JSON.stringify(chosenViews)
       };
@@ -265,9 +259,6 @@ if (cfg.dateField && !Array.from(dateField.options).some(o => o.value === cfg.da
   if (document.readyState !== 'loading') main();
   else document.addEventListener('DOMContentLoaded', main);
 })();
-
-
-
 
 
 

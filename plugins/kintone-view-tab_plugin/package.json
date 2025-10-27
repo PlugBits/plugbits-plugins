@@ -7,7 +7,7 @@
     "build": "node -e \"console.log('build skipped')\"",
     "lint": "eslint . || exit 0",
     "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/view-tab.ppk --out dist/view-tab-plugin.zip .",
-    "pack_init": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/view-tab.ppk --out dist/view-tab-plugin.zip"
+    "pack_init": "mkdirp .keys dist && kintone-plugin-packer . --out dist/view-tab-plugin.zip"
   },
     "devDependencies": {
   },

@@ -1,0 +1,30 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.1",
+  "type": "APP",
+  "name": {
+    "en": "Work Progress Evidence Gallery",
+    "ja": "進捗スクショ・ギャラリー"
+  },
+  "description": {
+    "ja": "詳細画面にスクショ証拠のギャラリーを追加し、貼り付けやドラッグ&ドロップで画像を保存します。",
+    "en": "Adds an evidence gallery on record details so teams can paste or drop screenshots and keep lightweight progress logs."
+  },
+  "icon": "images/icon.png",
+  "config": {
+    "html": "config/config.html",
+    "js": [
+      "config/config.js"
+    ],
+    "css": [
+      "config/config.css"
+    ],
+    "required_params": []
+  },
+  "desktop": {
+    "js": [
+      "app/plugin.js"
+    ],
+    "css": []
+  }
+}

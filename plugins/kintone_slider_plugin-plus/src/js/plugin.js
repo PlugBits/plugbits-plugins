@@ -15,9 +15,9 @@
     if (document.getElementById('kb-style-modal-slider')) return;
     const css = `
     .kb-root{
-      --kb-accent:#2563eb; --kb-accent-ink:#fff;
+      --kb-accent:#7fc4ff; --kb-accent-ink:#0b2540;
       --kb-bg:#ffffff; --kb-text:#0f172a; --kb-sub:#64748b; --kb-line:#e5e7eb;
-      --kb-chip:#f1f5f9; --kb-chip-border:#e5e7eb; --kb-hover:#f8fafc;
+      --kb-chip:#edf6ff; --kb-chip-border:#d0e6ff; --kb-hover:#f5faff;
     }
     .kb-root.kb-dock{
       display:inline-flex;
@@ -158,12 +158,11 @@
         dateField: raw.dateField || raw.dateFieldCode || '',
         weekStart: Number(raw.weekStart || 0),
         defaultPreset: canonKey(raw.defaultPreset || 'last-30'),
-        theme: raw.theme || 'light',
         presets: parsePresets(raw.presets),
         targetViews: parseViews(raw.targetViews)
       };
     }catch(_){
-      return {dateField:'', weekStart:0, defaultPreset:'last-30', theme:'light', presets:['all','today','yesterday','last-7','last-30','this-week','last-week','this-month','last-month','this-quarter','last-quarter','this-half','last-half','this-year'], targetViews: []};
+      return {dateField:'', weekStart:0, defaultPreset:'last-30', presets:['all','today','yesterday','last-7','last-30','this-week','last-week','this-month','last-month','this-quarter','last-quarter','this-half','last-half','this-year'], targetViews: []};
     }
   }
 
@@ -249,11 +248,7 @@
     if (existing) {
       const bag = existing.__kbUi;
       if (bag) {
-        if (cfgOverride) {
-          bag.cfg = cfgOverride;
-          if (cfgOverride.theme) existing.setAttribute('data-kb-theme', cfgOverride.theme);
-          else existing.removeAttribute('data-kb-theme');
-        }
+        if (cfgOverride) bag.cfg = cfgOverride;
         return bag;
       }
       if (existing.parentNode) existing.parentNode.removeChild(existing);
@@ -268,8 +263,6 @@
     root.dataset.kbPid = PLUGIN_ID;
 
     const cfg = cfgOverride || getConfigSafe();
-    if (cfg.theme) root.setAttribute('data-kb-theme', cfg.theme);
-    else root.removeAttribute('data-kb-theme');
 
     // アイコン
     const icon = document.createElement('button');

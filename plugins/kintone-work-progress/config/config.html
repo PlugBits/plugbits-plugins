@@ -1,0 +1,134 @@
+﻿<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>進捗スクショ・ギャラリー設定</title>
+  </head>
+  <body>
+    <main class="kwp-config">
+      <h1 class="kwp-config__title">進捗スクショ・ギャラリー</h1>
+      <p class="kwp-config__lead">
+        サブテーブルに保存した証拠画像をギャラリーで表示するプラグインです。フィールドと表示場所を設定してください。
+      </p>
+
+      <form id="config-form" class="kwp-config__form" novalidate>
+        <section class="kwp-section" aria-live="polite">
+          <h2 class="kwp-section__title">フィールド設定</h2>
+          <p class="kwp-note" data-state="loading">アプリのフィールド情報を取得しています…</p>
+          <p class="kwp-note kwp-note--error" data-state="error" hidden></p>
+
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="subtableCode">サブテーブル<span class="kwp-field__required">必須</span></label>
+            <select class="kwp-field__input" id="subtableCode" name="subtableCode" required disabled>
+              <option value="">読み込み中…</option>
+            </select>
+            <p class="kwp-field__hint">証拠を保存するサブテーブルを選択します。</p>
+          </div>
+
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="fileFieldCode">添付ファイルフィールド<span class="kwp-field__required">必須</span></label>
+            <select class="kwp-field__input" id="fileFieldCode" name="fileFieldCode" required disabled></select>
+            <p class="kwp-field__hint">サブテーブル内の添付ファイル（FILE）フィールドを選択します。</p>
+          </div>
+
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="memoFieldCode">メモフィールド<span class="kwp-field__required">必須</span></label>
+            <select class="kwp-field__input" id="memoFieldCode" name="memoFieldCode" required disabled></select>
+            <p class="kwp-field__hint">サブテーブル内のテキスト系フィールドを選択します（シングル・複数行）。</p>
+          </div>
+
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="authorFieldCode">作成者フィールド</label>
+            <select class="kwp-field__input" id="authorFieldCode" name="authorFieldCode" disabled></select>
+            <p class="kwp-field__hint">サブテーブル内のユーザー選択フィールド。選択すると追加時にログインユーザーを自動設定します（任意）。</p>
+          </div>
+
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="timestampFieldCode">作成日時フィールド</label>
+            <select class="kwp-field__input" id="timestampFieldCode" name="timestampFieldCode" disabled></select>
+            <p class="kwp-field__hint">サブテーブル内の日時（DATETIME）または日付（DATE）フィールド。追加時に現在日時を自動設定します（任意）。</p>
+          </div>
+
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="spaceFieldCode">表示スペース</label>
+            <select class="kwp-field__input" id="spaceFieldCode" name="spaceFieldCode" disabled></select>
+            <p class="kwp-field__hint">ギャラリーを表示するスペースフィールド。未選択の場合は既定位置に挿入します。</p>
+          </div>
+        </section>
+
+        <section class="kwp-section">
+          <h2 class="kwp-section__title">UI・挙動</h2>
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="layout">表示レイアウト</label>
+            <select class="kwp-field__input" id="layout" name="layout">
+              <option value="grid">グリッド（2列）</option>
+              <option value="scroll">横スクロール</option>
+            </select>
+            <p class="kwp-field__hint">ギャラリーのレイアウトを選択します。</p>
+          </div>
+          <fieldset class="kwp-field kwp-field--group">
+            <legend class="kwp-field__label">画像圧縮</legend>
+            <label class="kwp-switch">
+              <input id="compressionEnabled" name="compressionEnabled" type="checkbox">
+              <span>有効にする</span>
+            </label>
+            <div class="kwp-field__grid">
+              <label class="kwp-field__sub">
+                <span>最大辺（px）</span>
+                <input id="maxImageEdge" name="maxImageEdge" type="number" min="200" max="4000" step="10">
+              </label>
+              <label class="kwp-field__sub">
+                <span>JPEG品質（0.1〜1.0）</span>
+                <input id="imageQuality" name="imageQuality" type="number" min="0.1" max="1" step="0.05">
+              </label>
+            </div>
+            <p class="kwp-field__hint">貼り付け・ドラッグ&ドロップで追加した画像を自動圧縮します。</p>
+          </fieldset>
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="gridColumns">グリッド列数</label>
+            <select class="kwp-field__input" id="gridColumns" name="gridColumns">
+              <option value="auto">自動（画面幅に合わせる）</option>
+              <option value="two">2列固定</option>
+              <option value="three">3列固定</option>
+            </select>
+            <p class="kwp-field__hint">レイアウトがグリッドの場合の列数。横スクロールでは無効です。</p>
+          </div>
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="memoTemplate">メモ初期値</label>
+            <input class="kwp-field__input" id="memoTemplate" name="memoTemplate" type="text" autocomplete="off" placeholder="例: スクショ追加">
+            <p class="kwp-field__hint">新規追加時にメモへ挿入する初期文字列。</p>
+          </div>
+          <fieldset class="kwp-field kwp-field--group">
+            <legend class="kwp-field__label">追加後の挙動</legend>
+            <label class="kwp-radio">
+              <input type="radio" name="postAddBehavior" value="instant">
+              <span>即時に再描画</span>
+            </label>
+            <label class="kwp-radio">
+              <input type="radio" name="postAddBehavior" value="toast">
+              <span>トーストのみ表示</span>
+            </label>
+          </fieldset>
+          <fieldset class="kwp-field kwp-field--group">
+            <legend class="kwp-field__label">レコードコメント</legend>
+            <label class="kwp-switch">
+              <input id="commentEnabled" name="commentEnabled" type="checkbox">
+              <span>自動でコメントを投稿する</span>
+            </label>
+            <label class="kwp-field__sub kwp-field__sub--full">
+              <span>コメント本文</span>
+              <input id="commentBody" name="commentBody" type="text" autocomplete="off" placeholder="例: スクショを追加しました">
+            </label>
+          </fieldset>
+        </section>
+
+        <section class="kwp-actions">
+          <button id="save" class="kwp-button kwp-button--primary" type="submit">保存する</button>
+          <button id="cancel" class="kwp-button" type="button">キャンセル</button>
+        </section>
+      </form>
+    </main>
+
+  </body>
+</html>

@@ -1,12 +1,11 @@
-
 <!DOCTYPE html>
 <meta charset="utf-8">
-<title>一覧日付スライダー 設定</title>
+<title>一覧日付スライダー 設定 / Date Slider Config</title>
 <link rel="stylesheet" href="config.css">
-<div class="kb-root" data-kb-theme="light">
+<div class="kb-root">
   <div class="kb-card" style="max-width:860px;margin:24px auto;">
     <h2 style="margin:0 0 8px">一覧日付スライダー / Date Slider (Config)</h2>
-    <p class="kb-label" style="margin:0 0 16px">保存後に再度開いても設定が保持されるように修正済みです。</p>
+    <p class="kb-label" style="margin:0 0 16px">保存後に再度開いても設定が保持されるように修正済みです / Settings persist after saving.</p>
 
     <div class="kb-row" style="margin-bottom:10px">
       <label class="kb-label" style="width:180px">対象日付フィールド / Field</label>
@@ -28,6 +27,7 @@
         <p class="kb-muted" style="margin:0">未選択の場合は全ビューに適用されます / Applies to all views when empty</p>
       </div>
     </div>
+
     <div class="kb-row" style="margin-bottom:10px; align-items:flex-start">
       <label class="kb-label" style="width:180px">プリセット / Presets</label>
       <div id="presetsBox" class="kb-row" style="flex-wrap:wrap; gap:8px"></div>
@@ -36,17 +36,6 @@
     <div class="kb-row" style="margin-bottom:10px">
       <label class="kb-label" style="width:180px">既定プリセット / Default</label>
       <select id="defaultPreset" class="kb-input"></select>
-    </div>
-
-    <div class="kb-row" style="margin-bottom:14px">
-      <label class="kb-label" style="width:180px">テーマ（アイコンのみ）/ Theme</label>
-      <select id="theme" class="kb-input">
-        <option value="light">light</option>
-        <option value="mono-blue">mono-blue</option>
-        <option value="mint">mint</option>
-        <option value="pale">pale</option>
-        <option value="rose">rose</option>
-      </select>
     </div>
 
     <div class="kb-row" style="gap:10px">

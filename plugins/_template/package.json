@@ -1,0 +1,16 @@
+{
+  "name": "my-plugin",
+  "private": true,
+  "scripts": {
+    "clean": "rimraf dist ship",
+    "build": "node -e \"console.log('build skipped')\"",
+    "lint": "eslint . || exit 0",
+    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/plugin.ppk --out dist/plugin.zip",
+    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/plugin.ppk --out dist/plugin.zip ."
+  },
+   "devDependencies": {
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

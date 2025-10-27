@@ -1,0 +1,21 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.0",
+  "type": "APP",
+  "name": { "en": "My Plugin", "ja": "マイプラグイン" },
+   "description": {
+    "ja": "説明",
+    "en": "explain"
+  },
+  "icon": "images/icon.png",
+  "config": {
+    "html": "config/config.html",
+    "js": ["config/config.js"],
+    "css": ["config/config.css"],
+    "required_params": []
+  },
+  "desktop": {
+    "js": ["app/plugin.js"],
+    "css": []
+  }
+}
