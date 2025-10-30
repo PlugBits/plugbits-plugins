@@ -586,6 +586,19 @@
       item.className = 'kwp-card';
       item.dataset.rowId = row.id;
 
+      if (state.canEdit) {
+        const deleteButton = document.createElement('button');
+        deleteButton.type = 'button';
+        deleteButton.className = 'kwp-card__delete';
+        deleteButton.setAttribute('aria-label', '証拠を削除');
+        deleteButton.innerHTML = '×';
+        deleteButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          handleDeleteRow(row);
+        });
+        item.appendChild(deleteButton);
+      }
+
       const thumbButton = document.createElement('button');
       thumbButton.type = 'button';
       thumbButton.className = 'kwp-card__thumb';
@@ -734,6 +747,55 @@
     const response = await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', body);
     state.revision = Number(response.revision);
     await refreshRecord({ silent: true });
+  }
+
+  function handleDeleteRow(row) {
+    if (!state.canEdit || state.busy) {
+      return;
+    }
+    const confirmed = window.confirm('この証拠を削除しますか？');
+    if (!confirmed) {
+      return;
+    }
+    deleteRow(row);
+  }
+
+  async function deleteRow(row) {
+    setBusy(true, '証拠を削除しています…');
+    try {
+      await ensureLatestRecord();
+      const subtable = state.record?.[state.settings.subtableCode];
+      if (!subtable || !Array.isArray(subtable.value)) {
+        throw new Error('サブテーブルを取得できませんでした。');
+      }
+      const filtered = subtable.value.filter((entry) => entry.id !== row.id);
+      if (filtered.length === subtable.value.length) {
+        throw new Error('対象の行が見つかりませんでした。');
+      }
+      const payloadRows = filtered.map((entry) => ({
+        id: entry.id,
+        value: JSON.parse(JSON.stringify(entry.value))
+      }));
+      const body = {
+        app: state.appId,
+        id: state.recordId,
+        revision: state.revision,
+        record: {
+          [state.settings.subtableCode]: {
+            value: payloadRows
+          }
+        }
+      };
+      const response = await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', body);
+      state.revision = Number(response.revision);
+      await refreshRecord({ silent: true });
+      pushToast('証拠を削除しました。', 'success');
+    } catch (error) {
+      console.error(error);
+      pushToast('証拠の削除に失敗しました。', 'error');
+    } finally {
+      setBusy(false);
+    }
   }
   function ensureLightbox() {
     if (state.lightbox && state.lightbox.overlay && state.lightbox.content) {
@@ -1700,6 +1762,7 @@
         padding-bottom: 6px;
       }
       .kwp-card {
+        position: relative;
         display: flex;
         align-items: center;
         gap: 12px;
@@ -2033,6 +2096,27 @@
         display: inline-flex;
         align-items: center;
         gap: 6px;
+      }
+      .kwp-card__delete {
+        position: absolute;
+        top: 6px;
+        right: 6px;
+        border: none;
+        background: transparent;
+        color: rgba(15, 23, 42, 0.35);
+        cursor: pointer;
+        font-size: 18px;
+        line-height: 1;
+        padding: 4px;
+        transition: color 0.15s ease, transform 0.15s ease;
+      }
+      .kwp-card__delete:hover {
+        color: #dc2626;
+        transform: scale(1.05);
+      }
+      .kwp-card__delete:focus {
+        outline: 2px solid #2563eb;
+        outline-offset: 2px;
       }
       .kwp-lightbox__zoom-btn {
         min-width: 56px;
