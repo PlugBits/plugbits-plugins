@@ -161,6 +161,32 @@
     status.textContent = message || status.dataset.kwpDefaultMessage;
   }
 
+  function extractExtension(name) {
+    if (!name) {
+      return '';
+    }
+    const dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot === name.length - 1) {
+      return '';
+    }
+    return name.slice(dot + 1).toLowerCase();
+  }
+
+  function describeFile(file) {
+    if (!file) {
+      return { kind: 'unknown', extension: '' };
+    }
+    const type = (file.contentType || '').toLowerCase();
+    const extension = extractExtension(file.name || '');
+    if (type.startsWith('image/')) {
+      return { kind: 'image', extension };
+    }
+    if (type === 'application/pdf' || extension === 'pdf') {
+      return { kind: 'pdf', extension: 'pdf' };
+    }
+    return { kind: 'other', extension };
+  }
+
   function placeControlPanel(controlPanel, fallbackSibling) {
     if (!controlPanel) {
       return;
@@ -500,15 +526,67 @@
       const thumbButton = document.createElement('button');
       thumbButton.type = 'button';
       thumbButton.className = 'kwp-card__thumb';
-      const img = document.createElement('img');
-      img.alt = row.memoText || '証拠画像';
-      img.loading = 'lazy';
-      thumbButton.appendChild(img);
-      assignImageSource(img, row.file.fileKey);
+      const fileName = row.file?.name || 'ファイル';
+      thumbButton.setAttribute('aria-label', `${fileName} を開く`);
+      thumbButton.title = fileName;
+
+      const { kind, extension } = describeFile(row.file);
+      if (kind === 'image') {
+        thumbButton.classList.add('kwp-card__thumb--image');
+        const img = document.createElement('img');
+        img.alt = row.memoText || fileName;
+        img.loading = 'lazy';
+        thumbButton.appendChild(img);
+        assignImageSource(img, row.file.fileKey);
+      } else if (kind === 'pdf') {
+        thumbButton.classList.add('kwp-card__thumb--pdf');
+        const frame = document.createElement('iframe');
+        frame.className = 'kwp-card__thumb-pdf-frame';
+        frame.setAttribute('title', `${fileName} プレビュー`);
+        frame.setAttribute('loading', 'lazy');
+        frame.setAttribute('tabindex', '-1');
+        frame.setAttribute('aria-hidden', 'true');
+        thumbButton.appendChild(frame);
+        const placeholder = document.createElement('span');
+        placeholder.className = 'kwp-card__thumb-pdf-fallback';
+        placeholder.textContent = 'PDF';
+        thumbButton.appendChild(placeholder);
+        let pdfLoaded = false;
+        frame.addEventListener('load', () => {
+          if (pdfLoaded) {
+            placeholder.classList.add('kwp-card__thumb-pdf-fallback--hidden');
+          }
+        });
+        ensureFileUrl(row.file.fileKey)
+          .then((objectUrl) => {
+            if (!frame.isConnected) {
+              return;
+            }
+            pdfLoaded = true;
+            frame.src = `${objectUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`;
+          })
+          .catch((error) => {
+            console.error(error);
+            placeholder.classList.add('kwp-card__thumb-pdf-fallback--error');
+            frame.remove();
+            pushToast('PDFプレビューの生成に失敗しました。', 'error');
+          });
+      } else {
+        thumbButton.classList.add('kwp-card__thumb--file');
+        const badge = document.createElement('span');
+        badge.className = 'kwp-card__thumb-file-icon';
+        badge.textContent = (extension || 'FILE').slice(0, 4).toUpperCase();
+        thumbButton.appendChild(badge);
+      }
       thumbButton.addEventListener('click', () => openLightbox(row));
 
       const body = document.createElement('div');
       body.className = 'kwp-card__body';
+
+      const filename = document.createElement('p');
+      filename.className = 'kwp-card__filename';
+      filename.textContent = fileName;
+      filename.title = fileName;
 
       const memo = document.createElement('button');
       memo.type = 'button';
@@ -527,6 +605,7 @@
         row.authorName ? `<span class="kwp-card__author">${row.authorName}</span>` : ''
       ].join('');
 
+      body.appendChild(filename);
       body.appendChild(memo);
       body.appendChild(meta);
       item.appendChild(thumbButton);
@@ -630,6 +709,21 @@
     if (!row.file) {
       return;
     }
+    const { kind } = describeFile(row.file);
+    if (kind !== 'image') {
+      ensureFileUrl(row.file.fileKey)
+        .then((objectUrl) => {
+          const opened = window.open(objectUrl, '_blank', 'noopener');
+          if (!opened) {
+            window.location.href = objectUrl;
+          }
+        })
+        .catch((error) => {
+          console.error(error);
+          pushToast('ファイルを開けませんでした。', 'error');
+        });
+      return;
+    }
     if (!state.lightbox) {
       const overlay = document.createElement('div');
       overlay.className = 'kwp-lightbox';
@@ -675,7 +769,7 @@
     header.className = 'kwp-panel__header';
     header.innerHTML = [
       '<div class="kwp-panel__title">',
-      '<h2>スクショギャラリー</h2>',
+      '<h2>証拠アップロード</h2>',
       '<p data-kwp-status class="kwp-panel__status">Ctrl/⌘+V でその場に貼り付けできます</p>',
       '</div>'
     ].join('');
@@ -685,7 +779,7 @@
 
     const uploadLabel = document.createElement('label');
     uploadLabel.className = 'kwp-upload';
-    uploadLabel.innerHTML = '<input type="file" accept="image/*" data-kwp-file multiple><span>ファイルを選択</span>';
+    uploadLabel.innerHTML = '<input type="file" data-kwp-file multiple><span>ファイルを選択</span>';
 
     const focusButton = document.createElement('button');
     focusButton.type = 'button';
@@ -703,8 +797,8 @@
     dropzone.dataset.kwpDropzone = 'true';
     dropzone.tabIndex = 0;
     dropzone.innerHTML = [
-      '<p class="kwp-dropzone__label">ここにドラッグ & ドロップ</p>',
-      '<p class="kwp-dropzone__hint">画像以外のデータは無視されます</p>'
+      '<p class="kwp-dropzone__label">ここにファイルをドラッグ & ドロップ</p>',
+      '<p class="kwp-dropzone__hint">画像・PDF・その他のファイルを追加できます</p>'
     ].join('');
 
     const bodyWrapper = document.createElement('div');
@@ -724,7 +818,7 @@
     galleryHeader.className = 'kwp-gallery-shell__header';
     const galleryTitle = document.createElement('h2');
     galleryTitle.className = 'kwp-gallery-shell__title';
-    galleryTitle.textContent = 'スクショギャラリー';
+    galleryTitle.textContent = '証拠ギャラリー';
     galleryHeader.appendChild(galleryTitle);
     galleryShell.appendChild(galleryHeader);
 
@@ -735,7 +829,7 @@
     const empty = document.createElement('p');
     empty.className = 'kwp-empty';
     empty.dataset.kwpEmpty = 'true';
-    empty.textContent = 'まだ証拠がありません。Ctrl/⌘+V で追加してください。';
+    empty.textContent = 'まだ証拠がありません。Ctrl/⌘+V やドラッグ&ドロップで追加できます。';
     empty.hidden = true;
 
     galleryShell.appendChild(list);
@@ -785,7 +879,7 @@
         })
         .filter(Boolean);
       if (!files.length) {
-        pushToast('画像データが見つかりませんでした。', 'info');
+        pushToast('貼り付け可能な画像が見つかりませんでした。', 'info');
         return;
       }
       event.preventDefault();
@@ -816,9 +910,9 @@
       }
       event.preventDefault();
       dropzone.classList.remove('kwp-dropzone--active');
-      const files = Array.from(event.dataTransfer.files || []).filter((file) => file.type.startsWith('image/'));
+      const files = Array.from(event.dataTransfer.files || []).filter((file) => file instanceof File);
       if (!files.length) {
-        pushToast('画像ファイルをドロップしてください。', 'info');
+        pushToast('読み取れるファイルがありませんでした。', 'info');
         return;
       }
       processFiles(files);
@@ -828,9 +922,9 @@
       if (!state.canEdit || state.busy) {
         return;
       }
-      const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith('image/'));
+      const files = Array.from(event.target.files || []).filter((file) => file instanceof File);
       if (!files.length) {
-        pushToast('画像ファイルを選択してください。', 'info');
+        pushToast('読み取れるファイルが選択されませんでした。', 'info');
         return;
       }
       processFiles(files);
@@ -1179,7 +1273,7 @@
     if (!files || !files.length) {
       return;
     }
-    setBusy(true, '画像を処理しています…');
+    setBusy(true, 'ファイルを処理しています…');
     try {
       await ensureLatestRecord();
       const processed = [];
@@ -1194,7 +1288,7 @@
         }
       }
       if (!processed.length) {
-        pushToast('アップロード可能な画像がありませんでした。', 'error');
+        pushToast('アップロード可能なファイルがありませんでした。', 'error');
         return;
       }
       await appendRows(processed);
@@ -1409,12 +1503,62 @@
         height: 96px;
         flex: 0 0 auto;
       }
-      .kwp-card__thumb img {
+      .kwp-card__thumb--image img {
         display: block;
         width: 100%;
         height: 100%;
         object-fit: cover;
         transition: transform 0.2s ease;
+      }
+      .kwp-card__thumb--pdf,
+      .kwp-card__thumb--file {
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .kwp-card__thumb-pdf-frame {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: none;
+        pointer-events: none;
+        background: #eef2ff;
+        border-radius: inherit;
+      }
+      .kwp-card__thumb-pdf-fallback {
+        position: relative;
+        z-index: 1;
+        font-size: 18px;
+        font-weight: 600;
+        color: #1e3a8a;
+        background: rgba(255, 255, 255, 0.86);
+        padding: 4px 10px;
+        border-radius: 6px;
+        transition: opacity 0.2s ease;
+      }
+      .kwp-card__thumb-pdf-fallback--hidden {
+        opacity: 0;
+        visibility: hidden;
+      }
+      .kwp-card__thumb-pdf-fallback--error {
+        color: #dc2626;
+        background: rgba(254, 242, 242, 0.9);
+      }
+      .kwp-card__thumb-file-icon {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        font-size: 16px;
+        font-weight: 600;
+        color: #0f172a;
+        background: linear-gradient(135deg, #e0f2fe, #f0f9ff);
+        border-radius: inherit;
       }
       @media (max-width: 900px) {
         .kwp-gallery--three {
@@ -1441,7 +1585,7 @@
         filter: grayscale(1);
         opacity: 0.25;
       }
-      .kwp-card__thumb:hover img {
+      .kwp-card__thumb--image:hover img {
         transform: scale(1.04);
       }
       .kwp-card__body {
@@ -1450,6 +1594,17 @@
         gap: 6px;
         flex: 1 1 auto;
         min-width: 0;
+      }
+      .kwp-card__filename {
+        margin: 0;
+        font-size: 12px;
+        color: #475569;
+        line-height: 1.3;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
       }
       .kwp-card__memo {
         border: none;
