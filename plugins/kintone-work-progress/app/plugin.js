@@ -38,7 +38,8 @@
     elements: {},
     lightbox: null,
     fieldTypes: {},
-    metadataLoaded: false
+    metadataLoaded: false,
+    commentObserver: null
   };
 
   const fileUrlCache = new Map();
@@ -101,16 +102,50 @@
 
   function resolveCommentAnchor() {
     const selectors = [
+      '.gaia-argoui-app-show-sidebar .ocean-ui-comments-commentform',
+      '.gaia-argoui-app-show-sidebar-content .ocean-ui-comments-commentform',
+      '.gaia-argoui-app-show-sidebar-content #sidebar-list-gaia',
+      '.gaia-argoui-app-show-sidebar-dragged .ocean-ui-comments-commentform',
+      '.gaia-argoui-app-show-sidebar',
+      '.gaia-argoui-app-show-sidebar-content',
+      '#record-comment-gaia',
+      '#recordCommentGaia',
+      '#record-comments-gaia',
+      '.record-gaia #record-comments-gaia',
       '.record-gaia .record-comments-gaia',
       '.record-gaia .record-comment-gaia',
+      '.record-gaia .record-activity-gaia',
       '.gaia-argoui-app-comment',
-      '.record-gaia .record-activity-gaia'
+      '.gaia-argoui-app-commentlist',
+      '.gaia-argoui-app-commentFeed',
+      '.gaia-argoui-app-comment-feed',
+      '.gaia-argoui-app-show-comment',
+      '.gaia-argoui-app-show-comments',
+      '.gaia-argoui-app-show-commentlist',
+      '.gaia-argoui-app-activity',
+      '.detail-comment-gaia',
+      '.contents-comment-gaia',
+      '[data-testid="comment-pane"]',
+      '[data-testid="detail-comment-wrapper"]',
+      '[data-test-id="detail-comment-wrapper"]',
+      '[data-test-id="comment-wrapper"]'
     ];
     for (const selector of selectors) {
       const element = document.querySelector(selector);
       if (element) {
         return element;
       }
+    }
+    const iframe = Array.from(document.querySelectorAll('iframe')).find((frame) => {
+      const id = frame.id || '';
+      const name = frame.name || '';
+      const cls = frame.className || '';
+      const src = frame.getAttribute('src') || '';
+      const haystack = `${id} ${name} ${cls} ${src}`.toLowerCase();
+      return haystack.includes('comment') || haystack.includes('activity');
+    });
+    if (iframe) {
+      return iframe;
     }
     return null;
   }
@@ -130,14 +165,47 @@
     if (!controlPanel) {
       return;
     }
+    if (state.commentObserver) {
+      state.commentObserver.disconnect();
+      state.commentObserver = null;
+    }
     const tryInsert = () => {
       const anchor = resolveCommentAnchor();
-      if (anchor && anchor.parentElement) {
-        anchor.parentElement.insertBefore(controlPanel, anchor);
-        controlPanel.dataset.kwpPlaced = 'comment';
-        return true;
+      if (!anchor) {
+        return false;
       }
-      return false;
+      let container = anchor.closest('.gaia-argoui-app-show-sidebar-content');
+      if (!container && anchor.classList.contains('gaia-argoui-app-show-sidebar')) {
+        container = anchor.querySelector('.gaia-argoui-app-show-sidebar-content') || anchor;
+      }
+      if (!container && anchor.classList.contains('gaia-argoui-app-show-sidebar-content')) {
+        container = anchor;
+      }
+      if (!container) {
+        container = anchor.parentElement;
+      }
+      if (!container) {
+        return false;
+      }
+
+      let reference = anchor;
+      if (container === anchor) {
+        reference = anchor.firstElementChild;
+      }
+      while (reference && reference.parentElement && reference.parentElement !== container) {
+        reference = reference.parentElement;
+      }
+      if (reference && reference.parentElement !== container) {
+        reference = container.firstElementChild;
+      }
+      if (reference && reference.parentElement !== container) {
+        reference = null;
+      }
+
+      const inSidebar = !!container.closest('.gaia-argoui-app-show-sidebar');
+      controlPanel.classList.toggle('kwp-panel--sidebar', inSidebar);
+      container.insertBefore(controlPanel, reference || null);
+      return true;
     };
 
     if (tryInsert()) {
@@ -157,31 +225,41 @@
     };
 
     fallbackMount();
+    controlPanel.classList.remove('kwp-panel--sidebar');
 
     if (tryInsert()) {
       return;
     }
 
-    let attempts = 0;
-    const maxAttempts = 12;
-    const interval = setInterval(() => {
-      attempts += 1;
-      if (tryInsert() || attempts >= maxAttempts) {
-        clearInterval(interval);
-      }
-    }, 250);
+    const delayedAttempts = [50, 200, 1000, 5000, 10000];
+    delayedAttempts.forEach((delay) => {
+      window.setTimeout(() => {
+        tryInsert();
+      }, delay);
+    });
+
+    if (typeof MutationObserver !== 'function') {
+      return;
+    }
 
     const observer = new MutationObserver(() => {
       if (tryInsert()) {
         observer.disconnect();
-        clearInterval(interval);
+        if (state.commentObserver === observer) {
+          state.commentObserver = null;
+        }
       }
     });
     observer.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => {
-      observer.disconnect();
-      clearInterval(interval);
-    }, 4000);
+    state.commentObserver = observer;
+
+    window.setTimeout(() => {
+      if (state.commentObserver === observer) {
+        observer.disconnect();
+        state.commentObserver = null;
+        tryInsert();
+      }
+    }, 15000);
   }
 
   function hideNativeSubtable() {
@@ -773,6 +851,10 @@
       previousGallery.parentNode.removeChild(previousGallery);
     }
     state.anchorSpace = null;
+    if (state.commentObserver) {
+      state.commentObserver.disconnect();
+      state.commentObserver = null;
+    }
 
     const { controlPanel, galleryShell } = createPanelElements();
 
@@ -786,19 +868,14 @@
       mount.insertBefore(galleryShell, mount.firstChild);
     }
 
-    const commentAnchor = resolveCommentAnchor();
-    if (commentAnchor && commentAnchor.parentElement) {
-      commentAnchor.parentElement.insertBefore(controlPanel, commentAnchor);
-    } else {
-      const fallbackMount = galleryShell.parentElement || resolveMountPoint();
-      fallbackMount.insertBefore(controlPanel, galleryShell.nextSibling);
-    }
+    placeControlPanel(controlPanel, galleryShell);
 
     normalizePanelContainer(controlPanel);
     normalizePanelContainer(galleryShell);
     attachPanelHandlers();
     updatePanelMode();
   }
+
   function sanitizeFileName(name) {
     const base = name.replace(/\.[^.]+$/, '');
     return `${base}.jpg`;
@@ -1159,6 +1236,19 @@
         flex-direction: column;
         gap: 12px;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      .kwp-panel--sidebar {
+        position: static;
+        box-shadow: none;
+        margin-bottom: 12px;
+        width: 100%;
+      }
+      .kwp-panel--sidebar .kwp-panel__controls {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+      }
+      .kwp-panel--sidebar .kwp-dropzone {
+        min-height: 120px;
       }
       .kwp-panel__header {
         display: flex;
