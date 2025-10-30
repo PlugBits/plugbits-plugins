@@ -187,6 +187,69 @@
     return { kind: 'other', extension };
   }
 
+  function formatFileSize(bytes) {
+    if (!bytes && bytes !== 0) {
+      return '';
+    }
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+    const precision = size >= 100 || unitIndex === 0 ? 0 : 1;
+    return `${size.toFixed(precision)} ${units[unitIndex]}`;
+  }
+
+  function clampZoom(lightbox, value) {
+    const min = typeof lightbox.zoomMin === 'number' ? lightbox.zoomMin : 0.5;
+    const max = typeof lightbox.zoomMax === 'number' ? lightbox.zoomMax : 4;
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function applyLightboxZoom(lightbox) {
+    if (!lightbox) {
+      return;
+    }
+    const zoomValue = lightbox.zoom || 1;
+    if (lightbox.zoomLabel) {
+      const percent = Math.round(zoomValue * 100);
+      lightbox.zoomLabel.textContent = `${percent}%`;
+    }
+    if (lightbox.kind === 'image' && lightbox.assetElement) {
+      lightbox.assetElement.style.transform = `scale(${zoomValue})`;
+    } else if (lightbox.kind === 'pdf' && lightbox.assetElement && lightbox.pdfBase) {
+      const percent = Math.round(zoomValue * 100);
+      const src = `${lightbox.pdfBase}&zoom=${percent}`;
+      if (lightbox.assetElement.dataset.currentSrc !== src) {
+        lightbox.assetElement.dataset.currentSrc = src;
+        lightbox.assetElement.src = src;
+      }
+    }
+  }
+
+  function setLightboxZoom(lightbox, nextZoom) {
+    if (!lightbox) {
+      return;
+    }
+    const clamped = clampZoom(lightbox, nextZoom);
+    if (clamped === lightbox.zoom) {
+      applyLightboxZoom(lightbox);
+      return;
+    }
+    lightbox.zoom = clamped;
+    applyLightboxZoom(lightbox);
+  }
+
+  function adjustLightboxZoom(lightbox, delta) {
+    if (!lightbox) {
+      return;
+    }
+    const current = typeof lightbox.zoom === 'number' ? lightbox.zoom : 1;
+    setLightboxZoom(lightbox, current + delta);
+  }
+
   function placeControlPanel(controlPanel, fallbackSibling) {
     if (!controlPanel) {
       return;
@@ -693,16 +756,43 @@
     overlay.appendChild(inner);
     document.body.appendChild(overlay);
 
+    const wheelHandler = (event) => {
+      if (!event.ctrlKey || !state.lightbox || state.lightbox !== lightbox || !overlay.classList.contains('kwp-lightbox--visible')) {
+        return;
+      }
+      if (lightbox.kind !== 'image' && lightbox.kind !== 'pdf') {
+        return;
+      }
+      event.preventDefault();
+      const delta = event.deltaY < 0 ? 0.15 : -0.15;
+      adjustLightboxZoom(lightbox, delta);
+    };
+
     const lightbox = {
       overlay,
       content,
-      currentFileKey: null
+      currentFileKey: null,
+      kind: null,
+      assetElement: null,
+      assetUrl: null,
+      pdfBase: null,
+      zoom: 1,
+      zoomMin: 0.5,
+      zoomMax: 4,
+      zoomLabel: null,
+      wheelHandler
     };
 
     const close = () => {
       overlay.classList.remove('kwp-lightbox--visible');
       content.innerHTML = '';
       lightbox.currentFileKey = null;
+      lightbox.kind = null;
+      lightbox.assetElement = null;
+      lightbox.assetUrl = null;
+      lightbox.pdfBase = null;
+      lightbox.zoomLabel = null;
+      lightbox.zoom = 1;
     };
     lightbox.close = close;
 
@@ -719,6 +809,7 @@
     };
     document.addEventListener('keydown', keyHandler);
     lightbox.keyHandler = keyHandler;
+    overlay.addEventListener('wheel', wheelHandler, { passive: false });
 
     state.lightbox = lightbox;
     return lightbox;
@@ -736,9 +827,34 @@
     content.innerHTML = '';
     lightbox.currentFileKey = row.file.fileKey;
 
+    const header = document.createElement('div');
+    header.className = 'kwp-lightbox__header';
+
     const title = document.createElement('h3');
     title.className = 'kwp-lightbox__title';
     title.textContent = fileName;
+    header.appendChild(title);
+
+    const metaParts = [];
+    const sizeBytes = Number(row.file.size);
+    if (!Number.isNaN(sizeBytes) && sizeBytes > 0) {
+      const sizeLabel = formatFileSize(sizeBytes);
+      if (sizeLabel) {
+        metaParts.push(sizeLabel);
+      }
+    }
+    if (row.timestamp) {
+      metaParts.push(formatTimestamp(row.timestamp));
+    }
+    if (row.authorName) {
+      metaParts.push(row.authorName);
+    }
+    if (metaParts.length) {
+      const meta = document.createElement('p');
+      meta.className = 'kwp-lightbox__meta';
+      meta.textContent = metaParts.join(' · ');
+      header.appendChild(meta);
+    }
 
     const body = document.createElement('div');
     body.className = 'kwp-lightbox__body';
@@ -751,11 +867,54 @@
     const actions = document.createElement('div');
     actions.className = 'kwp-lightbox__actions';
 
-    content.appendChild(title);
+    content.appendChild(header);
     content.appendChild(body);
     content.appendChild(actions);
 
+    lightbox.kind = kind;
+    lightbox.zoom = 1;
+    lightbox.zoomMin = kind === 'pdf' ? 0.6 : 0.5;
+    lightbox.zoomMax = kind === 'pdf' ? 2.5 : 4;
+    lightbox.zoomLabel = null;
+    lightbox.assetElement = null;
+    lightbox.assetUrl = null;
+    lightbox.pdfBase = null;
+
+    if (kind === 'image' || kind === 'pdf') {
+      const zoomControls = document.createElement('div');
+      zoomControls.className = 'kwp-lightbox__zoom';
+
+      const zoomOutBtn = document.createElement('button');
+      zoomOutBtn.type = 'button';
+      zoomOutBtn.className = 'kwp-button kwp-button--ghost kwp-lightbox__zoom-btn';
+      zoomOutBtn.textContent = '−';
+      zoomOutBtn.addEventListener('click', () => adjustLightboxZoom(lightbox, -0.25));
+
+      const zoomResetBtn = document.createElement('button');
+      zoomResetBtn.type = 'button';
+      zoomResetBtn.className = 'kwp-button kwp-button--ghost kwp-lightbox__zoom-btn';
+      zoomResetBtn.textContent = '100%';
+      zoomResetBtn.addEventListener('click', () => setLightboxZoom(lightbox, 1));
+
+      const zoomInBtn = document.createElement('button');
+      zoomInBtn.type = 'button';
+      zoomInBtn.className = 'kwp-button kwp-button--ghost kwp-lightbox__zoom-btn';
+      zoomInBtn.textContent = '+';
+      zoomInBtn.addEventListener('click', () => adjustLightboxZoom(lightbox, 0.25));
+
+      zoomControls.appendChild(zoomOutBtn);
+      zoomControls.appendChild(zoomResetBtn);
+      zoomControls.appendChild(zoomInBtn);
+      actions.classList.add('kwp-lightbox__actions--split');
+      actions.appendChild(zoomControls);
+      lightbox.zoomLabel = zoomResetBtn;
+    } else {
+      actions.classList.remove('kwp-lightbox__actions--split');
+    }
+    applyLightboxZoom(lightbox);
+
     const handleFailure = (message) => {
+      body.className = 'kwp-lightbox__body kwp-lightbox__body--unsupported';
       body.innerHTML = '';
       const error = document.createElement('p');
       error.className = 'kwp-lightbox__status';
@@ -776,9 +935,11 @@
         link.href = objectUrl;
         link.target = '_blank';
         link.rel = 'noopener';
-        link.textContent = '別タブで開く';
+        link.textContent = '外部で表示';
         actions.appendChild(link);
 
+        lightbox.assetUrl = objectUrl;
+        body.className = 'kwp-lightbox__body';
         if (kind === 'image') {
           body.classList.add('kwp-lightbox__body--image');
           body.innerHTML = '';
@@ -786,15 +947,21 @@
           img.className = 'kwp-lightbox__image';
           img.alt = row.memoText || fileName;
           img.src = objectUrl;
+          img.style.transform = 'scale(1)';
           body.appendChild(img);
+          lightbox.assetElement = img;
+          setLightboxZoom(lightbox, 1);
         } else if (kind === 'pdf') {
           body.classList.add('kwp-lightbox__body--pdf');
           body.innerHTML = '';
           const frame = document.createElement('iframe');
           frame.className = 'kwp-lightbox__pdf-frame';
-          frame.src = `${objectUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`;
           frame.setAttribute('title', `${fileName} プレビュー`);
+          frame.dataset.currentSrc = '';
           body.appendChild(frame);
+          lightbox.assetElement = frame;
+          lightbox.pdfBase = `${objectUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`;
+          setLightboxZoom(lightbox, 1);
         } else {
           body.classList.add('kwp-lightbox__body--unsupported');
           body.innerHTML = '';
@@ -1737,6 +1904,12 @@
         pointer-events: none;
         transition: opacity 0.2s ease;
         z-index: 1000;
+        backdrop-filter: blur(6px);
+      }
+      @supports not ((backdrop-filter: blur(6px))) {
+        .kwp-lightbox {
+          backdrop-filter: none;
+        }
       }
       .kwp-lightbox--visible {
         opacity: 1;
@@ -1757,6 +1930,13 @@
         display: flex;
         flex-direction: column;
         overflow: hidden;
+        transform: translateY(16px);
+        opacity: 0;
+        transition: transform 0.25s ease, opacity 0.25s ease;
+      }
+      .kwp-lightbox--visible .kwp-lightbox__inner {
+        transform: translateY(0);
+        opacity: 1;
       }
       .kwp-lightbox__close {
         position: absolute;
@@ -1778,10 +1958,21 @@
         padding: 32px 32px 28px;
         overflow: hidden;
       }
+      .kwp-lightbox__header {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
       .kwp-lightbox__title {
         margin: 0;
         font-size: 18px;
         color: #0f172a;
+      }
+      .kwp-lightbox__meta {
+        margin: 0;
+        font-size: 12px;
+        color: #64748b;
+        letter-spacing: 0.01em;
       }
       .kwp-lightbox__body {
         flex: 1 1 auto;
@@ -1799,6 +1990,7 @@
         background: transparent;
         border: none;
         padding: 0;
+        overflow: auto;
       }
       .kwp-lightbox__body--pdf {
         background: #ffffff;
@@ -1811,12 +2003,15 @@
         max-height: 100%;
         border-radius: 12px;
         box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+        transform-origin: center center;
+        transition: transform 0.15s ease;
       }
       .kwp-lightbox__pdf-frame {
         width: 100%;
         height: min(70vh, 640px);
         border: none;
         background: #ffffff;
+        border-radius: 8px;
       }
       .kwp-lightbox__status {
         margin: 0;
@@ -1829,9 +2024,27 @@
         justify-content: flex-end;
         gap: 8px;
         flex-wrap: wrap;
+        align-items: center;
+      }
+      .kwp-lightbox__actions--split {
+        justify-content: space-between;
+      }
+      .kwp-lightbox__zoom {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .kwp-lightbox__zoom-btn {
+        min-width: 56px;
+      }
+      .kwp-lightbox__zoom-btn:nth-child(2) {
+        font-weight: 600;
       }
       .kwp-lightbox__link {
         text-decoration: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
       }
       .kwp-button--primary {
         background: #2563eb;
@@ -1862,6 +2075,13 @@
         .kwp-lightbox__close {
           top: 12px;
           right: 12px;
+        }
+        .kwp-lightbox__actions {
+          justify-content: stretch;
+        }
+        .kwp-lightbox__link {
+          width: 100%;
+          justify-content: center;
         }
       }
     `;
