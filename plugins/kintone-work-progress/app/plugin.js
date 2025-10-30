@@ -538,44 +538,11 @@
         img.loading = 'lazy';
         thumbButton.appendChild(img);
         assignImageSource(img, row.file.fileKey);
-      } else if (kind === 'pdf') {
-        thumbButton.classList.add('kwp-card__thumb--pdf');
-        const frame = document.createElement('iframe');
-        frame.className = 'kwp-card__thumb-pdf-frame';
-        frame.setAttribute('title', `${fileName} プレビュー`);
-        frame.setAttribute('loading', 'lazy');
-        frame.setAttribute('tabindex', '-1');
-        frame.setAttribute('aria-hidden', 'true');
-        thumbButton.appendChild(frame);
-        const placeholder = document.createElement('span');
-        placeholder.className = 'kwp-card__thumb-pdf-fallback';
-        placeholder.textContent = 'PDF';
-        thumbButton.appendChild(placeholder);
-        let pdfLoaded = false;
-        frame.addEventListener('load', () => {
-          if (pdfLoaded) {
-            placeholder.classList.add('kwp-card__thumb-pdf-fallback--hidden');
-          }
-        });
-        ensureFileUrl(row.file.fileKey)
-          .then((objectUrl) => {
-            if (!frame.isConnected) {
-              return;
-            }
-            pdfLoaded = true;
-            frame.src = `${objectUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`;
-          })
-          .catch((error) => {
-            console.error(error);
-            placeholder.classList.add('kwp-card__thumb-pdf-fallback--error');
-            frame.remove();
-            pushToast('PDFプレビューの生成に失敗しました。', 'error');
-          });
       } else {
         thumbButton.classList.add('kwp-card__thumb--file');
         const badge = document.createElement('span');
         badge.className = 'kwp-card__thumb-file-icon';
-        badge.textContent = (extension || 'FILE').slice(0, 4).toUpperCase();
+        badge.textContent = kind === 'pdf' ? 'PDF' : (extension || 'FILE').slice(0, 4).toUpperCase();
         thumbButton.appendChild(badge);
       }
       thumbButton.addEventListener('click', () => openLightbox(row));
@@ -705,59 +672,144 @@
     state.revision = Number(response.revision);
     await refreshRecord({ silent: true });
   }
+  function ensureLightbox() {
+    if (state.lightbox && state.lightbox.overlay && state.lightbox.content) {
+      return state.lightbox;
+    }
+    const overlay = document.createElement('div');
+    overlay.className = 'kwp-lightbox';
+    overlay.innerHTML = '<div class="kwp-lightbox__backdrop"></div>';
+    const inner = document.createElement('div');
+    inner.className = 'kwp-lightbox__inner';
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'kwp-lightbox__close';
+    closeButton.setAttribute('aria-label', '閉じる');
+    closeButton.innerHTML = '×';
+    const content = document.createElement('div');
+    content.className = 'kwp-lightbox__content';
+    inner.appendChild(closeButton);
+    inner.appendChild(content);
+    overlay.appendChild(inner);
+    document.body.appendChild(overlay);
+
+    const lightbox = {
+      overlay,
+      content,
+      currentFileKey: null
+    };
+
+    const close = () => {
+      overlay.classList.remove('kwp-lightbox--visible');
+      content.innerHTML = '';
+      lightbox.currentFileKey = null;
+    };
+    lightbox.close = close;
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay || event.target.classList.contains('kwp-lightbox__backdrop')) {
+        close();
+      }
+    });
+    closeButton.addEventListener('click', close);
+    const keyHandler = (event) => {
+      if (event.key === 'Escape' && overlay.classList.contains('kwp-lightbox--visible')) {
+        close();
+      }
+    };
+    document.addEventListener('keydown', keyHandler);
+    lightbox.keyHandler = keyHandler;
+
+    state.lightbox = lightbox;
+    return lightbox;
+  }
+
   function openLightbox(row) {
     if (!row.file) {
       return;
     }
+    const lightbox = ensureLightbox();
+    const { overlay, content } = lightbox;
+    const fileName = row.file.name || 'ファイル';
     const { kind } = describeFile(row.file);
-    if (kind !== 'image') {
-      ensureFileUrl(row.file.fileKey)
-        .then((objectUrl) => {
-          const opened = window.open(objectUrl, '_blank', 'noopener');
-          if (!opened) {
-            window.location.href = objectUrl;
-          }
-        })
-        .catch((error) => {
-          console.error(error);
-          pushToast('ファイルを開けませんでした。', 'error');
-        });
-      return;
-    }
-    if (!state.lightbox) {
-      const overlay = document.createElement('div');
-      overlay.className = 'kwp-lightbox';
-      overlay.innerHTML = '<div class="kwp-lightbox__backdrop"></div><img class="kwp-lightbox__image" alt=""><button type="button" class="kwp-lightbox__close" aria-label="閉じる">×</button>';
-      document.body.appendChild(overlay);
-      overlay.addEventListener('click', (event) => {
-        if (event.target === overlay || event.target.classList.contains('kwp-lightbox__close') || event.target.classList.contains('kwp-lightbox__backdrop')) {
-          overlay.classList.remove('kwp-lightbox--visible');
-        }
-      });
-      document.addEventListener('keydown', (event) => {
-        if (event.key === 'Escape') {
-          overlay.classList.remove('kwp-lightbox--visible');
-        }
-      });
-      state.lightbox = {
-        overlay,
-        image: overlay.querySelector('.kwp-lightbox__image')
-      };
-    }
-    const imageEl = state.lightbox.image;
-    imageEl.removeAttribute('src');
-    imageEl.alt = row.memoText || row.file.name || '証拠画像';
-    state.lightbox.overlay.classList.add('kwp-lightbox--visible');
+
+    content.innerHTML = '';
+    lightbox.currentFileKey = row.file.fileKey;
+
+    const title = document.createElement('h3');
+    title.className = 'kwp-lightbox__title';
+    title.textContent = fileName;
+
+    const body = document.createElement('div');
+    body.className = 'kwp-lightbox__body';
+
+    const status = document.createElement('p');
+    status.className = 'kwp-lightbox__status';
+    status.textContent = '読み込み中…';
+    body.appendChild(status);
+
+    const actions = document.createElement('div');
+    actions.className = 'kwp-lightbox__actions';
+
+    content.appendChild(title);
+    content.appendChild(body);
+    content.appendChild(actions);
+
+    const handleFailure = (message) => {
+      body.innerHTML = '';
+      const error = document.createElement('p');
+      error.className = 'kwp-lightbox__status';
+      error.textContent = message || 'ファイルを読み込めませんでした。';
+      body.appendChild(error);
+    };
+
+    overlay.classList.add('kwp-lightbox--visible');
+
     ensureFileUrl(row.file.fileKey)
       .then((objectUrl) => {
-        if (state.lightbox && state.lightbox.image === imageEl && state.lightbox.overlay.classList.contains('kwp-lightbox--visible')) {
-          imageEl.src = objectUrl;
+        if (!state.lightbox || state.lightbox !== lightbox || lightbox.currentFileKey !== row.file.fileKey) {
+          return;
+        }
+
+        const link = document.createElement('a');
+        link.className = 'kwp-button kwp-button--primary kwp-lightbox__link';
+        link.href = objectUrl;
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = '別タブで開く';
+        actions.appendChild(link);
+
+        if (kind === 'image') {
+          body.classList.add('kwp-lightbox__body--image');
+          body.innerHTML = '';
+          const img = document.createElement('img');
+          img.className = 'kwp-lightbox__image';
+          img.alt = row.memoText || fileName;
+          img.src = objectUrl;
+          body.appendChild(img);
+        } else if (kind === 'pdf') {
+          body.classList.add('kwp-lightbox__body--pdf');
+          body.innerHTML = '';
+          const frame = document.createElement('iframe');
+          frame.className = 'kwp-lightbox__pdf-frame';
+          frame.src = `${objectUrl}#view=FitH&toolbar=0&navpanes=0&scrollbar=0`;
+          frame.setAttribute('title', `${fileName} プレビュー`);
+          body.appendChild(frame);
+        } else {
+          body.classList.add('kwp-lightbox__body--unsupported');
+          body.innerHTML = '';
+          const message = document.createElement('p');
+          message.className = 'kwp-lightbox__status';
+          message.textContent = 'このファイル形式はプレビューに対応していません。';
+          body.appendChild(message);
         }
       })
       .catch((error) => {
         console.error(error);
-        state.lightbox.overlay.classList.remove('kwp-lightbox--visible');
-        pushToast('画像の読み込みに失敗しました。', 'error');
+        if (state.lightbox !== lightbox || lightbox.currentFileKey !== row.file.fileKey) {
+          return;
+        }
+        handleFailure('ファイルを読み込めませんでした。');
       });
   }
 
@@ -1510,7 +1562,6 @@
         object-fit: cover;
         transition: transform 0.2s ease;
       }
-      .kwp-card__thumb--pdf,
       .kwp-card__thumb--file {
         background: #f8fafc;
         border: 1px solid #e2e8f0;
@@ -1519,39 +1570,21 @@
         align-items: center;
         justify-content: center;
       }
-      .kwp-card__thumb-pdf-frame {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        border: none;
-        pointer-events: none;
-        background: #eef2ff;
-        border-radius: inherit;
-      }
-      .kwp-card__thumb-pdf-fallback {
-        position: relative;
-        z-index: 1;
-        font-size: 18px;
-        font-weight: 600;
-        color: #1e3a8a;
-        background: rgba(255, 255, 255, 0.86);
-        padding: 4px 10px;
-        border-radius: 6px;
-        transition: opacity 0.2s ease;
-      }
-      .kwp-card__thumb-pdf-fallback--hidden {
-        opacity: 0;
-        visibility: hidden;
-      }
-      .kwp-card__thumb-pdf-fallback--error {
-        color: #dc2626;
-        background: rgba(254, 242, 242, 0.9);
-      }
       .kwp-card__thumb-file-icon {
-        display: flex;
+        display: inline-flex;
         align-items: center;
         justify-content: center;
+        width: 100%;
+        height: 100%;
+        padding: 12px;
+        font-size: 16px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        color: #0f172a;
+        background: linear-gradient(135deg, #e0f2fe, #f0f9ff);
+        border-radius: inherit;
+        text-transform: uppercase;
+      }
         width: 100%;
         height: 100%;
         font-size: 16px;
@@ -1698,7 +1731,8 @@
         display: flex;
         align-items: center;
         justify-content: center;
-        background: rgba(15, 23, 42, 0.8);
+        padding: 24px;
+        background: rgba(15, 23, 42, 0.75);
         opacity: 0;
         pointer-events: none;
         transition: opacity 0.2s ease;
@@ -1708,16 +1742,26 @@
         opacity: 1;
         pointer-events: auto;
       }
-      .kwp-lightbox__image {
+      .kwp-lightbox__backdrop {
+        position: absolute;
+        inset: 0;
+      }
+      .kwp-lightbox__inner {
+        position: relative;
+        background: #ffffff;
+        border-radius: 16px;
+        box-shadow: 0 16px 40px rgba(15, 23, 42, 0.35);
         max-width: 90vw;
+        width: min(960px, 90vw);
         max-height: 90vh;
-        border-radius: 12px;
-        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
       }
       .kwp-lightbox__close {
         position: absolute;
-        top: 24px;
-        right: 24px;
+        top: 16px;
+        right: 16px;
         background: rgba(15, 23, 42, 0.6);
         color: #fff;
         border: none;
@@ -1726,6 +1770,77 @@
         border-radius: 50%;
         font-size: 20px;
         cursor: pointer;
+      }
+      .kwp-lightbox__content {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        padding: 32px 32px 28px;
+        overflow: hidden;
+      }
+      .kwp-lightbox__title {
+        margin: 0;
+        font-size: 18px;
+        color: #0f172a;
+      }
+      .kwp-lightbox__body {
+        flex: 1 1 auto;
+        min-height: 220px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #f8fafc;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px;
+        overflow: hidden;
+      }
+      .kwp-lightbox__body--image {
+        background: transparent;
+        border: none;
+        padding: 0;
+      }
+      .kwp-lightbox__body--pdf {
+        background: #ffffff;
+      }
+      .kwp-lightbox__body--unsupported {
+        background: #f8fafc;
+      }
+      .kwp-lightbox__image {
+        max-width: 100%;
+        max-height: 100%;
+        border-radius: 12px;
+        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+      }
+      .kwp-lightbox__pdf-frame {
+        width: 100%;
+        height: min(70vh, 640px);
+        border: none;
+        background: #ffffff;
+      }
+      .kwp-lightbox__status {
+        margin: 0;
+        font-size: 14px;
+        color: #475569;
+        text-align: center;
+      }
+      .kwp-lightbox__actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .kwp-lightbox__link {
+        text-decoration: none;
+      }
+      .kwp-button--primary {
+        background: #2563eb;
+        border-color: #2563eb;
+        color: #ffffff;
+      }
+      .kwp-button--primary:hover {
+        background: #1d4ed8;
+        border-color: #1d4ed8;
       }
       @media (max-width: 768px) {
         .kwp-panel {
@@ -1737,6 +1852,16 @@
         }
         .kwp-toast {
           align-self: center;
+        }
+        .kwp-lightbox {
+          padding: 12px;
+        }
+        .kwp-lightbox__content {
+          padding: 24px;
+        }
+        .kwp-lightbox__close {
+          top: 12px;
+          right: 12px;
         }
       }
     `;
