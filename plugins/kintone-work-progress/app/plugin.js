@@ -250,6 +250,28 @@
     setLightboxZoom(lightbox, current + delta);
   }
 
+  function syncEditRecordBuffer() {
+    if (!state.record || !kintone?.app?.record) {
+      return;
+    }
+    if (typeof kintone.app.record.get !== 'function' || typeof kintone.app.record.set !== 'function') {
+      return;
+    }
+    try {
+      const current = kintone.app.record.get();
+      if (!current || typeof current !== 'object') {
+        return;
+      }
+      const next = {
+        ...current,
+        record: JSON.parse(JSON.stringify(state.record))
+      };
+      kintone.app.record.set(next);
+    } catch (error) {
+      console.warn('kintone-work-progress: 編集画面バッファの同期に失敗しました。', error);
+    }
+  }
+
   function placeControlPanel(controlPanel, fallbackSibling) {
     if (!controlPanel) {
       return;
@@ -789,6 +811,7 @@
       const response = await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', body);
       state.revision = Number(response.revision);
       await refreshRecord({ silent: true });
+      window.location.reload();
       pushToast('証拠を削除しました。', 'success');
     } catch (error) {
       console.error(error);
@@ -1574,7 +1597,10 @@
       }
       await appendRows(processed);
       await postComment(processed.length);
+      await refreshRecord({ silent: true });
+      syncEditRecordBuffer();
       pushToast(`証拠を${processed.length}件追加しました。`, 'success');
+      window.location.reload();
     } catch (error) {
       console.error(error);
       pushToast('証拠の追加に失敗しました。', 'error');
