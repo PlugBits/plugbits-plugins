@@ -21,7 +21,8 @@
     memoTemplate: 'スクショ追加',
     postAddBehavior: 'instant',
     commentEnabled: false,
-    commentBody: 'スクショを追加しました'
+    commentBody: 'スクショを追加しました',
+    galleryTitleMode: 'none'
   };
 
   const EVENT_TYPES = ['app.record.detail.show'];
@@ -39,11 +40,23 @@
     lightbox: null,
     fieldTypes: {},
     metadataLoaded: false,
-    commentObserver: null
+    commentObserver: null,
+    subtableLabel: ''
   };
 
   const fileUrlCache = new Map();
   const fileUrlPromises = new Map();
+
+  function normalizeGalleryTitleMode(value) {
+    if (!value) {
+      return 'none';
+    }
+    const lower = String(value).toLowerCase();
+    if (lower === 'subtable') {
+      return 'subtable';
+    }
+    return 'none';
+  }
 
   function parseSettings(raw) {
     if (!raw) {
@@ -51,9 +64,13 @@
     }
     try {
       if (raw.settings) {
-        return { ...DEFAULTS, ...JSON.parse(raw.settings) };
+        const parsed = { ...DEFAULTS, ...JSON.parse(raw.settings) };
+        parsed.galleryTitleMode = normalizeGalleryTitleMode(parsed.galleryTitleMode);
+        return parsed;
       }
-      return { ...DEFAULTS, ...raw };
+      const merged = { ...DEFAULTS, ...raw };
+      merged.galleryTitleMode = normalizeGalleryTitleMode(merged.galleryTitleMode);
+      return merged;
     } catch (error) {
       console.warn('kintone-work-progress: 設定の読み込みに失敗したため既定値を使用します。', error);
       return { ...DEFAULTS };
@@ -555,6 +572,7 @@
       return;
     }
     state.fieldTypes = {};
+    state.subtableLabel = state.settings.subtableCode || '';
     try {
       const response = await kintone.api(kintone.api.url('/k/v1/app/form/fields', true), 'GET', {
         app: state.appId
@@ -567,12 +585,17 @@
           acc[code] = fields[code].type;
           return acc;
         }, {});
+        if (typeof subtable.label === 'string' && subtable.label.trim()) {
+          state.subtableLabel = subtable.label.trim();
+        }
       }
     } catch (error) {
       console.warn('kintone-work-progress: フィールド情報の取得に失敗しました。', error);
       state.fieldTypes = {};
+      state.subtableLabel = state.settings.subtableCode || '';
     } finally {
       state.metadataLoaded = true;
+      updateGalleryTitle();
     }
   }
 
@@ -1073,7 +1096,7 @@
     header.className = 'kwp-panel__header';
     header.innerHTML = [
       '<div class="kwp-panel__title">',
-      '<h2>証拠アップロード</h2>',
+      '<h2>アップロード</h2>',
       '<p data-kwp-status class="kwp-panel__status">Ctrl/⌘+V でその場に貼り付けできます</p>',
       '</div>'
     ].join('');
@@ -1118,13 +1141,16 @@
     const galleryShell = document.createElement('section');
     galleryShell.className = 'kwp-panel kwp-gallery-shell';
 
-    const galleryHeader = document.createElement('header');
-    galleryHeader.className = 'kwp-gallery-shell__header';
-    const galleryTitle = document.createElement('h2');
-    galleryTitle.className = 'kwp-gallery-shell__title';
-    galleryTitle.textContent = '証拠ギャラリー';
-    galleryHeader.appendChild(galleryTitle);
-    galleryShell.appendChild(galleryHeader);
+    const titleMode = normalizeGalleryTitleMode(state.settings.galleryTitleMode);
+    if (titleMode === 'subtable') {
+      const galleryHeader = document.createElement('header');
+      galleryHeader.className = 'kwp-gallery-shell__header';
+      const galleryTitle = document.createElement('h2');
+      galleryTitle.className = 'kwp-gallery-shell__title';
+      galleryTitle.textContent = state.subtableLabel || state.settings.subtableCode || 'ギャラリー';
+      galleryHeader.appendChild(galleryTitle);
+      galleryShell.appendChild(galleryHeader);
+    }
 
     const list = document.createElement('ul');
     list.className = 'kwp-gallery';
@@ -1133,7 +1159,7 @@
     const empty = document.createElement('p');
     empty.className = 'kwp-empty';
     empty.dataset.kwpEmpty = 'true';
-    empty.textContent = 'まだ証拠がありません。Ctrl/⌘+V やドラッグ&ドロップで追加できます。';
+    empty.textContent = 'まだファイルがありません。Ctrl/⌘+V やドラッグ&ドロップで追加できます。';
     empty.hidden = true;
 
     galleryShell.appendChild(list);
@@ -1155,7 +1181,39 @@
       state.elements.status.dataset.kwpDefaultMessage = state.elements.status.textContent;
     }
 
+    updateGalleryTitle();
+
     return { controlPanel, galleryShell };
+  }
+
+  function updateGalleryTitle() {
+    const shell = state.elements.galleryShell;
+    if (!shell) {
+      return;
+    }
+    const titleMode = normalizeGalleryTitleMode(state.settings.galleryTitleMode);
+    let header = shell.querySelector('.kwp-gallery-shell__header');
+    if (titleMode !== 'subtable') {
+      if (header) {
+        header.remove();
+      }
+      return;
+    }
+    const label = state.subtableLabel || state.settings.subtableCode || 'ギャラリー';
+    if (!header) {
+      header = document.createElement('header');
+      header.className = 'kwp-gallery-shell__header';
+      const title = document.createElement('h2');
+      title.className = 'kwp-gallery-shell__title';
+      title.textContent = label;
+      header.appendChild(title);
+      shell.insertBefore(header, shell.firstChild);
+      return;
+    }
+    const titleEl = header.querySelector('.kwp-gallery-shell__title');
+    if (titleEl) {
+      titleEl.textContent = label;
+    }
   }
 
 
@@ -2206,6 +2264,7 @@
     }
     state.metadataLoaded = false;
     state.fieldTypes = {};
+    state.subtableLabel = state.settings.subtableCode || '';
     injectStyles();
     return true;
   }

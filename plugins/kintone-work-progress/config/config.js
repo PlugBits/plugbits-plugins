@@ -21,7 +21,8 @@
     memoTemplate: 'スクショ追加',
     postAddBehavior: 'instant',
     commentEnabled: false,
-    commentBody: 'スクショを追加しました'
+    commentBody: 'スクショを追加しました',
+    galleryTitleMode: 'none'
   };
 
   const form = document.getElementById('config-form');
@@ -34,6 +35,7 @@
     spaceFieldCode: document.getElementById('spaceFieldCode'),
     gridColumns: document.getElementById('gridColumns'),
     layout: document.getElementById('layout'),
+    galleryTitleMode: document.getElementById('galleryTitleMode'),
     compressionEnabled: document.getElementById('compressionEnabled'),
     maxImageEdge: document.getElementById('maxImageEdge'),
     imageQuality: document.getElementById('imageQuality'),
@@ -68,6 +70,13 @@
     }
     return 'auto';
   }
+  function normalizeGalleryTitleMode(value) {
+    const lower = String(value || '').toLowerCase();
+    if (lower === 'subtable') {
+      return 'subtable';
+    }
+    return 'none';
+  }
 
   function parseConfig(rawConfig) {
     let settings = { ...DEFAULTS };
@@ -83,6 +92,7 @@
       }
     }
     settings.gridColumns = normalizeGridColumnsValue(settings.gridColumns);
+    settings.galleryTitleMode = normalizeGalleryTitleMode(settings.galleryTitleMode);
     return settings;
   }
 
@@ -321,6 +331,7 @@
     controls.commentEnabled.checked = Boolean(settings.commentEnabled);
     controls.commentBody.value = settings.commentBody || '';
     controls.gridColumns.value = normalizeGridColumnsValue(settings.gridColumns);
+    controls.galleryTitleMode.value = normalizeGalleryTitleMode(settings.galleryTitleMode);
 
     toggleCompressionFields(controls.compressionEnabled.checked);
     toggleCommentBody(controls.commentEnabled.checked);
@@ -356,7 +367,8 @@
       memoTemplate: controls.memoTemplate.value,
       postAddBehavior: controls.postAddBehaviorToast.checked ? 'toast' : 'instant',
       commentEnabled: controls.commentEnabled.checked,
-      commentBody: controls.commentBody.value
+      commentBody: controls.commentBody.value,
+      galleryTitleMode: controls.galleryTitleMode.value
     };
   }
 
@@ -384,6 +396,9 @@
     }
     if (!['auto', 'two', 'three'].includes(normalizeGridColumnsValue(settings.gridColumns))) {
       errors.push('グリッド列数の設定が不正です。');
+    }
+    if (!['none', 'subtable'].includes(normalizeGalleryTitleMode(settings.galleryTitleMode))) {
+      errors.push('ギャラリータイトルの設定が不正です。');
     }
     if (!state.metadataLoaded) {
       errors.push('フィールド情報が取得できていません。ページを再読み込みしてから保存してください。');

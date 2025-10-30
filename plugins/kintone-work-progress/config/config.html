@@ -62,10 +62,18 @@
           <div class="kwp-field">
             <label class="kwp-field__label" for="layout">表示レイアウト</label>
             <select class="kwp-field__input" id="layout" name="layout">
-              <option value="grid">グリッド（2列）</option>
+              <option value="grid">グリッド</option>
               <option value="scroll">横スクロール</option>
             </select>
             <p class="kwp-field__hint">ギャラリーのレイアウトを選択します。</p>
+          </div>
+          <div class="kwp-field">
+            <label class="kwp-field__label" for="galleryTitleMode">ギャラリータイトル</label>
+            <select class="kwp-field__input" id="galleryTitleMode" name="galleryTitleMode">
+              <option value="none">表示しない</option>
+              <option value="subtable">サブテーブル名を表示</option>
+            </select>
+            <p class="kwp-field__hint">スペースに表示するギャラリーの見出しを選択します（表示名はサブテーブルコードを使用）。</p>
           </div>
           <fieldset class="kwp-field kwp-field--group">
             <legend class="kwp-field__label">画像圧縮</legend>
