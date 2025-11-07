@@ -12,6 +12,7 @@
     memoFieldCode: 'メモ',
     authorFieldCode: '',
     timestampFieldCode: '',
+    timestampFieldType: '',
     spaceFieldCode: '',
     gridColumns: 'auto',
     layout: 'grid',
@@ -84,6 +85,28 @@
     return true;
   }
 
+  function hydrateFieldTypesFromRecord(record) {
+    if (!record || !state.settings || !state.settings.subtableCode) {
+      return;
+    }
+    const subtable = record[state.settings.subtableCode];
+    if (!subtable || subtable.type !== 'SUBTABLE' || !Array.isArray(subtable.value)) {
+      return;
+    }
+    subtable.value.forEach((row) => {
+      const value = row?.value;
+      if (!value) {
+        return;
+      }
+      Object.keys(value).forEach((code) => {
+        const field = value[code];
+        if (field && field.type && !state.fieldTypes[code]) {
+          state.fieldTypes[code] = field.type;
+        }
+      });
+    });
+  }
+
   function formatTimestamp(isoLike) {
     if (!isoLike) {
       return '---';
@@ -94,6 +117,34 @@
     }
     const pad = (value) => String(value).padStart(2, '0');
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function formatLocalDateString(date = new Date()) {
+    const pad = (value) => String(Math.abs(value)).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+  }
+
+  function formatLocalDateTimeString(date = new Date()) {
+    // Generates an ISO-8601 string that preserves the user's local timezone offset.
+    const pad = (value) => String(Math.abs(value)).padStart(2, '0');
+    const datePart = formatLocalDateString(date);
+    const timePart = `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    const offsetMinutes = date.getTimezoneOffset();
+    const sign = offsetMinutes <= 0 ? '+' : '-';
+    const offsetHours = pad(Math.floor(Math.abs(offsetMinutes) / 60));
+    const offsetRemainder = pad(Math.abs(offsetMinutes) % 60);
+    return `${datePart}T${timePart}${sign}${offsetHours}:${offsetRemainder}`;
+  }
+
+  function getTimestampFieldType() {
+    if (!state.settings || !state.settings.timestampFieldCode) {
+      return null;
+    }
+    const code = state.settings.timestampFieldCode;
+    if (state.fieldTypes && state.fieldTypes[code]) {
+      return state.fieldTypes[code];
+    }
+    return state.settings.timestampFieldType || null;
   }
 
   function getRequestToken() {
@@ -238,7 +289,9 @@
       lightbox.assetElement.style.transform = `scale(${zoomValue})`;
     } else if (lightbox.kind === 'pdf' && lightbox.assetElement && lightbox.pdfBase) {
       const percent = Math.round(zoomValue * 100);
-      const src = `${lightbox.pdfBase}&zoom=${percent}`;
+      const isPageWidth = Math.abs(zoomValue - 1) < 0.001;
+      const zoomParam = isPageWidth ? 'page-width' : percent;
+      const src = `${lightbox.pdfBase}&zoom=${zoomParam}`;
       if (lightbox.assetElement.dataset.currentSrc !== src) {
         lightbox.assetElement.dataset.currentSrc = src;
         lightbox.assetElement.src = src;
@@ -551,6 +604,7 @@
       state.revision = revisionNumber;
     }
     state.canEdit = detectEditable(record);
+    hydrateFieldTypesFromRecord(record);
     state.rows = mapRows(record);
     updatePanelMode();
     renderGallery();
@@ -580,9 +634,14 @@
       const properties = response.properties || {};
       const subtable = properties[state.settings.subtableCode];
       if (subtable && subtable.type === 'SUBTABLE') {
-        const fields = subtable.fields || {};
-        state.fieldTypes = Object.keys(fields).reduce((acc, code) => {
-          acc[code] = fields[code].type;
+        const rawFields = subtable.fields || {};
+        const normalizedFields = Array.isArray(rawFields)
+          ? rawFields
+          : Object.keys(rawFields).map((code) => ({ code, ...(rawFields[code] || {}) }));
+        state.fieldTypes = normalizedFields.reduce((acc, field) => {
+          if (field && field.code) {
+            acc[field.code] = field.type;
+          }
           return acc;
         }, {});
         if (typeof subtable.label === 'string' && subtable.label.trim()) {
@@ -1068,7 +1127,7 @@
           frame.dataset.currentSrc = '';
           body.appendChild(frame);
           lightbox.assetElement = frame;
-          lightbox.pdfBase = `${objectUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`;
+          lightbox.pdfBase = `${objectUrl}#toolbar=0&navpanes=0&scrollbar=0`;
           setLightboxZoom(lightbox, 1);
         } else {
           body.classList.add('kwp-lightbox__body--unsupported');
@@ -1561,10 +1620,14 @@
       if (!state.metadataLoaded) {
         await loadFieldMetadata();
       }
-      timestampType = state.fieldTypes[state.settings.timestampFieldCode] || null;
+      timestampType = getTimestampFieldType();
+      if (timestampType && !state.settings.timestampFieldType) {
+        state.settings.timestampFieldType = timestampType;
+      }
     }
     uploads.forEach(({ uploaded }) => {
-      const createdAt = new Date().toISOString();
+      const now = new Date();
+      const createdAt = formatLocalDateTimeString(now);
       const rowValue = {};
       rowValue[state.settings.fileFieldCode] = {
         value: [
@@ -1587,7 +1650,7 @@
       if (state.settings.timestampFieldCode) {
         let timestampValue = createdAt;
         if (timestampType === 'DATE') {
-          timestampValue = createdAt.slice(0, 10);
+          timestampValue = formatLocalDateString(now);
         }
         rowValue[state.settings.timestampFieldCode] = {
           value: timestampValue

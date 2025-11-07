@@ -12,6 +12,7 @@
     memoFieldCode: 'メモ',
     authorFieldCode: '',
     timestampFieldCode: '',
+    timestampFieldType: '',
     spaceFieldCode: '',
     gridColumns: 'auto',
     layout: 'grid',
@@ -156,6 +157,17 @@
         value: field.code,
         label: `${field.label || field.code} (${field.code})`
       }));
+  }
+
+  function findFieldDefinition(subtableCode, fieldCode) {
+    if (!subtableCode || !fieldCode) {
+      return null;
+    }
+    const fields = state.subtableMap[subtableCode];
+    if (!Array.isArray(fields)) {
+      return null;
+    }
+    return fields.find((field) => field.code === fieldCode) || null;
   }
 
   function setSelectValue(select, value) {
@@ -352,12 +364,20 @@
   }
 
   function collectSettings() {
+    const subtableCode = controls.subtableCode.value;
+    const fileFieldCode = controls.fileFieldCode.value;
+    const memoFieldCode = controls.memoFieldCode.value;
+    const authorFieldCode = controls.authorFieldCode.value;
+    const timestampFieldCode = controls.timestampFieldCode.value;
+    const timestampFieldDefinition = findFieldDefinition(subtableCode, timestampFieldCode);
+
     return {
-      subtableCode: controls.subtableCode.value,
-      fileFieldCode: controls.fileFieldCode.value,
-      memoFieldCode: controls.memoFieldCode.value,
-      authorFieldCode: controls.authorFieldCode.value,
-      timestampFieldCode: controls.timestampFieldCode.value,
+      subtableCode,
+      fileFieldCode,
+      memoFieldCode,
+      authorFieldCode,
+      timestampFieldCode,
+      timestampFieldType: timestampFieldDefinition?.type || '',
       spaceFieldCode: controls.spaceFieldCode.value,
       gridColumns: controls.gridColumns.value,
       layout: controls.layout.value,
