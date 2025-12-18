@@ -66,6 +66,8 @@
     if (elSpeed) elSpeed.value = n(cfg.speedMsPerPx, '50');
     const elStop = /** @type {HTMLInputElement|null} */($('stopSec'));
     if (elStop) elStop.value = n(cfg.stopSec, '2');
+    const elStopTop = /** @type {HTMLInputElement|null} */($('stopTopSec'));
+    if (elStopTop) elStopTop.value = n(cfg.stopTopSec, '0');
     const elLoops = /** @type {HTMLInputElement|null} */($('loops'));
     if (elLoops) elLoops.value = n(cfg.loops, '5');
     const elReload = /** @type {HTMLInputElement|null} */($('reloadEnabled'));
@@ -90,6 +92,7 @@
       scrollEnabled: String((/** @type {HTMLInputElement} */($('scrollEnabled')))?.checked || false),
       speedMsPerPx: (/** @type {HTMLInputElement} */($('speedMsPerPx')))?.value.trim() || '',
       stopSec: (/** @type {HTMLInputElement} */($('stopSec')))?.value.trim() || '',
+      stopTopSec: (/** @type {HTMLInputElement} */($('stopTopSec')))?.value.trim() || '',
       loops: (/** @type {HTMLInputElement} */($('loops')))?.value.trim() || '',
       reloadEnabled: String((/** @type {HTMLInputElement} */($('reloadEnabled')))?.checked || false),
       intervalSec: (/** @type {HTMLInputElement} */($('intervalSec')))?.value.trim() || '',
@@ -98,7 +101,7 @@
     };
 
     // 軽バリデーション（数値）
-    for (const k of ['speedMsPerPx','stopSec','loops','intervalSec','zoom']) {
+    for (const k of ['speedMsPerPx','stopSec','stopTopSec','loops','intervalSec','zoom']) {
       const v = out[k];
       if (v !== '' && !Number.isFinite(Number(v))) {
         alert(`${k} は数値で入力してください。`);

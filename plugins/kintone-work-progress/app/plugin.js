@@ -908,7 +908,14 @@
     }
     const overlay = document.createElement('div');
     overlay.className = 'kwp-lightbox';
-    overlay.innerHTML = '<div class="kwp-lightbox__backdrop"></div>';
+    const backdrop = document.createElement('div');
+    backdrop.className = 'kwp-lightbox__backdrop';
+    overlay.appendChild(backdrop);
+    const dismissZone = document.createElement('button');
+    dismissZone.type = 'button';
+    dismissZone.className = 'kwp-lightbox__dismiss';
+    dismissZone.setAttribute('aria-label', 'プレビューを閉じる');
+    overlay.appendChild(dismissZone);
     const inner = document.createElement('div');
     inner.className = 'kwp-lightbox__inner';
     const closeButton = document.createElement('button');
@@ -964,10 +971,15 @@
     lightbox.close = close;
 
     overlay.addEventListener('click', (event) => {
-      if (event.target === overlay || event.target.classList.contains('kwp-lightbox__backdrop')) {
+      if (
+        event.target === overlay ||
+        event.target.classList.contains('kwp-lightbox__backdrop') ||
+        event.target.classList.contains('kwp-lightbox__dismiss')
+      ) {
         close();
       }
     });
+    dismissZone.addEventListener('click', close);
     closeButton.addEventListener('click', close);
     const keyHandler = (event) => {
       if (event.key === 'Escape' && overlay.classList.contains('kwp-lightbox--visible')) {
@@ -1047,7 +1059,7 @@
     lightbox.assetUrl = null;
     lightbox.pdfBase = null;
 
-    if (kind === 'image' || kind === 'pdf') {
+    if (kind === 'image') {
       const zoomControls = document.createElement('div');
       zoomControls.className = 'kwp-lightbox__zoom';
 
@@ -1127,7 +1139,8 @@
           frame.dataset.currentSrc = '';
           body.appendChild(frame);
           lightbox.assetElement = frame;
-          lightbox.pdfBase = `${objectUrl}#toolbar=0&navpanes=0&scrollbar=0`;
+          lightbox.pdfBase = null;
+          frame.src = objectUrl;
           setLightboxZoom(lightbox, 1);
         } else {
           body.classList.add('kwp-lightbox__body--unsupported');
@@ -1615,14 +1628,20 @@
       value: JSON.parse(JSON.stringify(row.value))
     }));
     const loginUser = kintone.getLoginUser();
-    let timestampType = null;
+    let canWriteTimestamp = false;
     if (state.settings.timestampFieldCode) {
       if (!state.metadataLoaded) {
         await loadFieldMetadata();
       }
-      timestampType = getTimestampFieldType();
-      if (timestampType && !state.settings.timestampFieldType) {
-        state.settings.timestampFieldType = timestampType;
+      const timestampType = getTimestampFieldType();
+      if (timestampType === 'DATETIME') {
+        canWriteTimestamp = true;
+        if (state.settings.timestampFieldType !== 'DATETIME') {
+          state.settings.timestampFieldType = 'DATETIME';
+        }
+      } else if (timestampType) {
+        console.warn('kintone-work-progress: timestamp field must be DATETIME, but detected', timestampType);
+        pushToast('作成日時フィールドには日時フィールドのみ対応しています。設定を見直してください。', 'warning');
       }
     }
     uploads.forEach(({ uploaded }) => {
@@ -1647,13 +1666,9 @@
           value: loginUser ? [{ code: loginUser.code, name: loginUser.name }] : []
         };
       }
-      if (state.settings.timestampFieldCode) {
-        let timestampValue = createdAt;
-        if (timestampType === 'DATE') {
-          timestampValue = formatLocalDateString(now);
-        }
+      if (state.settings.timestampFieldCode && canWriteTimestamp) {
         rowValue[state.settings.timestampFieldCode] = {
-          value: timestampValue
+          value: createdAt
         };
       }
       existing.push({ value: rowValue });
@@ -2106,15 +2121,16 @@
         position: fixed;
         inset: 0;
         display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 24px;
-        background: rgba(15, 23, 42, 0.75);
+        justify-content: flex-end;
+        align-items: stretch;
+        padding: 0;
+        background: rgba(2, 6, 23, 0.55);
         opacity: 0;
         pointer-events: none;
         transition: opacity 0.2s ease;
         z-index: 1000;
         backdrop-filter: blur(6px);
+        --kwp-dismiss-width: clamp(32px, 6vw, 96px);
       }
       @supports not ((backdrop-filter: blur(6px))) {
         .kwp-lightbox {
@@ -2129,23 +2145,34 @@
         position: absolute;
         inset: 0;
       }
+      .kwp-lightbox__dismiss {
+        flex: 0 0 var(--kwp-dismiss-width);
+        background: transparent;
+        border: none;
+        cursor: pointer;
+        padding: 0;
+        margin: 0;
+        z-index: 1;
+      }
       .kwp-lightbox__inner {
         position: relative;
-        background: #ffffff;
-        border-radius: 16px;
-        box-shadow: 0 16px 40px rgba(15, 23, 42, 0.35);
-        max-width: 90vw;
-        width: min(960px, 90vw);
-        max-height: 90vh;
+        background: rgba(248, 250, 252, 0.92);
+        border-radius: 24px 0 0 24px;
+        border: 1px solid rgba(148, 163, 184, 0.35);
+        box-shadow: -24px 0 60px rgba(15, 23, 42, 0.2);
+        width: min(1600px, calc(100vw - var(--kwp-dismiss-width)));
+        max-width: 100%;
+        height: 100vh;
         display: flex;
         flex-direction: column;
         overflow: hidden;
-        transform: translateY(16px);
+        transform: translateX(32px);
         opacity: 0;
         transition: transform 0.25s ease, opacity 0.25s ease;
+        backdrop-filter: blur(18px);
       }
       .kwp-lightbox--visible .kwp-lightbox__inner {
-        transform: translateY(0);
+        transform: translateX(0);
         opacity: 1;
       }
       .kwp-lightbox__close {
@@ -2160,13 +2187,15 @@
         border-radius: 50%;
         font-size: 20px;
         cursor: pointer;
+        z-index: 2;
       }
       .kwp-lightbox__content {
         display: flex;
         flex-direction: column;
-        gap: 16px;
-        padding: 32px 32px 28px;
-        overflow: hidden;
+        gap: 12px;
+        padding: 28px 28px 24px;
+        flex: 1 1 auto;
+        min-height: 0;
       }
       .kwp-lightbox__header {
         display: flex;
@@ -2181,19 +2210,19 @@
       .kwp-lightbox__meta {
         margin: 0;
         font-size: 12px;
-        color: #64748b;
+        color: #475569;
         letter-spacing: 0.01em;
       }
       .kwp-lightbox__body {
         flex: 1 1 auto;
-        min-height: 220px;
+        min-height: 0;
         display: flex;
         align-items: center;
         justify-content: center;
-        background: #f8fafc;
-        border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 16px;
+        background: rgba(148, 163, 184, 0.12);
+        border: 1px solid rgba(148, 163, 184, 0.25);
+        border-radius: 18px;
+        padding: 12px;
         overflow: hidden;
       }
       .kwp-lightbox__body--image {
@@ -2203,7 +2232,10 @@
         overflow: auto;
       }
       .kwp-lightbox__body--pdf {
-        background: #ffffff;
+        background: transparent;
+        border: none;
+        padding: 0;
+        display: block;
       }
       .kwp-lightbox__body--unsupported {
         background: #f8fafc;
@@ -2211,17 +2243,16 @@
       .kwp-lightbox__image {
         max-width: 100%;
         max-height: 100%;
-        border-radius: 12px;
-        box-shadow: 0 12px 30px rgba(15, 23, 42, 0.35);
+        border-radius: 18px;
+        box-shadow: 0 18px 40px rgba(15, 23, 42, 0.25);
         transform-origin: center center;
         transition: transform 0.15s ease;
       }
       .kwp-lightbox__pdf-frame {
         width: 100%;
-        height: min(70vh, 640px);
+        height: 100%;
         border: none;
         background: #ffffff;
-        border-radius: 8px;
       }
       .kwp-lightbox__status {
         margin: 0;
@@ -2297,8 +2328,9 @@
         .kwp-toast {
           align-self: center;
         }
-        .kwp-lightbox {
-          padding: 12px;
+        .kwp-lightbox__inner {
+          width: 100%;
+          border-radius: 0;
         }
         .kwp-lightbox__content {
           padding: 24px;

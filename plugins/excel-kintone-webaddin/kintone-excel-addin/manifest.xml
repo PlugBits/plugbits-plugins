@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OfficeApp
+  xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:type="TaskPaneApp">
+
+  <Id>c6e5a6d0-1234-4a89-9f11-9c0f1e0a0002</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Kintone Connector</ProviderName>
+  <DefaultLocale>ja-JP</DefaultLocale>
+
+  <DisplayName DefaultValue="Kintone Connector" />
+  <Description DefaultValue="Kintone → Excel 連携アドイン" />
+
+  <IconUrl DefaultValue="https://plugbits.github.io/Microsoft-Add-ons/icon-32.png" />
+  <HighResolutionIconUrl DefaultValue="https://plugbits.github.io/Microsoft-Add-ons/icon-80.png" />
+
+  <SupportUrl DefaultValue="https://plugbits.github.io/Microsoft-Add-ons/" />
+
+  <AppDomains>
+    <AppDomain>https://plugbits.github.io</AppDomain>
+  </AppDomains>
+
+  <Hosts>
+    <Host Name="Workbook" />
+  </Hosts>
+
+  <DefaultSettings>
+    <SourceLocation DefaultValue="https://plugbits.github.io/Microsoft-Add-ons/index.html" />
+  </DefaultSettings>
+
+  <Permissions>ReadWriteDocument</Permissions>
+</OfficeApp>

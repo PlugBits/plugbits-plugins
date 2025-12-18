@@ -6,7 +6,7 @@
     "build": "node -e \"console.log('build skipped')\"",
     "lint": "eslint . || exit 0",
     "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --out dist/work-progress-plugin.zip",
-    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/work-progress.ppk --out dist/work-progress-pluginplugin.zip ."
+    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/work-progress.ppk --out dist/work-progress-plugin.zip ."
   },
   "devDependencies": {},
   "engines": {

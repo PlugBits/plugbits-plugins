@@ -198,7 +198,7 @@
       populateSelect(controls.fileFieldCode, [], { value: '', label: 'サブテーブルを選択してください', disabled: true });
       populateSelect(controls.memoFieldCode, [], { value: '', label: 'サブテーブルを選択してください', disabled: true });
       populateSelect(controls.authorFieldCode, [{ value: '', label: '未設定' }]);
-      populateSelect(controls.timestampFieldCode, [{ value: '', label: '未設定' }]);
+      populateSelect(controls.timestampFieldCode, [{ value: '', label: '未設定（日時フィールドのみ）' }]);
       controls.fileFieldCode.disabled = true;
       controls.memoFieldCode.disabled = true;
       controls.authorFieldCode.disabled = true;
@@ -209,7 +209,7 @@
     const fileOptions = findFieldOptions(subtableCode, (field) => field.type === 'FILE');
     const memoOptions = findFieldOptions(subtableCode, (field) => ['SINGLE_LINE_TEXT', 'MULTI_LINE_TEXT', 'RICH_TEXT'].includes(field.type));
     const authorOptions = findFieldOptions(subtableCode, (field) => field.type === 'USER_SELECT');
-    const timestampOptions = findFieldOptions(subtableCode, (field) => field.type === 'DATETIME' || field.type === 'DATE');
+    const timestampOptions = findFieldOptions(subtableCode, (field) => field.type === 'DATETIME');
 
     populateSelect(
       controls.fileFieldCode,
@@ -226,7 +226,7 @@
         : { value: '', label: '選択できるフィールドがありません', disabled: true }
     );
     populateSelect(controls.authorFieldCode, [{ value: '', label: '未設定' }, ...authorOptions]);
-    populateSelect(controls.timestampFieldCode, [{ value: '', label: '未設定' }, ...timestampOptions]);
+    populateSelect(controls.timestampFieldCode, [{ value: '', label: '未設定（日時フィールドのみ）' }, ...timestampOptions]);
 
     controls.fileFieldCode.disabled = fileOptions.length === 0;
     controls.memoFieldCode.disabled = memoOptions.length === 0;
@@ -413,6 +413,9 @@
     }
     if (settings.commentEnabled && !settings.commentBody.trim()) {
       errors.push('コメント本文を入力してください。');
+    }
+    if (settings.timestampFieldCode && settings.timestampFieldType !== 'DATETIME') {
+      errors.push('作成日時フィールドには日時フィールドのみ指定できます。');
     }
     if (!['auto', 'two', 'three'].includes(normalizeGridColumnsValue(settings.gridColumns))) {
       errors.push('グリッド列数の設定が不正です。');

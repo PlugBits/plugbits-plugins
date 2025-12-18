@@ -1,0 +1,31 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.0",
+  "type": "APP",
+  "name": { "en": "Cross Search Plugin", "ja": "横断検索プラグイン" },
+  "description": {
+    "en": "Provide a cross-app search workspace with filters, unified results, and inline previews.",
+    "ja": "複数アプリを横断して検索し、一覧・プレビュー・フィルタ付きで一画面に表示します。"
+  },
+  "desktop": {
+    "js": [
+      "app/plugin.js"
+    ],
+    "css": [
+      "app/kb-shell.css",
+      "app/plugin.css"
+    ]
+  },
+  "mobile": { "js": [], "css": [] },
+  "config": {
+    "html": "config/config.html",
+    "js": [
+      "config/config.js"
+    ],
+    "css": [
+      "config/kb-shell.css",
+      "config/config.css"
+    ]
+  },
+  "icon": "images/icon.png"
+}

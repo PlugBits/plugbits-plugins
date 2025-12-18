@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kintone Connector Add-in</title>
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+    <script defer src="taskpane.js"></script>
+  </head>
+  <body>
+    <h1>Kintone Connector</h1>
+    <p class="description">
+      kintone の REST API を利用してレコードを取得し、アクティブシートに貼り付けます。
+    </p>
+
+    <label for="domain">ドメイン (例: example.cybozu.com)</label>
+    <input id="domain" type="text" placeholder="your-domain.cybozu.com" />
+
+    <label for="appId">アプリID</label>
+    <input id="appId" type="number" min="1" placeholder="123" />
+
+    <label for="token">APIトークン</label>
+    <input id="token" type="password" placeholder="API token" />
+
+    <label for="condition">検索条件 (kintone query、省略可)</label>
+    <input id="condition" type="text" placeholder="status = \"完了\"" />
+
+    <button id="fetchButton" type="button">レコード取得</button>
+
+    <div id="status" role="status" aria-live="polite"></div>
+  </body>
+</html>

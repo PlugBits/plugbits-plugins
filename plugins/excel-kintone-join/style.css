@@ -1,0 +1,104 @@
+﻿/* PlugBits kb-shell shared UI */
+:root {
+  --kb-bg: #f7f7f9;
+  --kb-surface: #ffffff;
+  --kb-text: #1f2328;
+  --kb-sub: #5f6b7a;
+  --kb-line: #dfe3eb;
+  --kb-primary: #2563eb;
+  --kb-primary-hover: #1d4ed8;
+  --kb-primary-ink: #ffffff;
+  --kb-danger: #dc2626;
+  --kb-danger-hover: #b91c1c;
+  --kb-focus: #3b82f6;
+  --kb-radius: 10px;
+  --kb-gap: 12px;
+  --kb-gap-lg: 20px;
+  --kb-shadow: 0 10px 40px rgba(15, 23, 42, 0.08);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --kb-bg: #0f1115;
+    --kb-surface: #16191f;
+    --kb-text: #f3f4f6;
+    --kb-sub: #9ca3af;
+    --kb-line: #272c36;
+    --kb-primary: #3b82f6;
+    --kb-primary-hover: #2563eb;
+    --kb-primary-ink: #0b1220;
+    --kb-danger: #ef4444;
+    --kb-danger-hover: #dc2626;
+    --kb-focus: #60a5fa;
+    --kb-shadow: 0 10px 50px rgba(0, 0, 0, 0.4);
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif; background: var(--kb-bg); color: var(--kb-text); }
+
+.kb-root { font: 14px/1.6 'Segoe UI', system-ui, -apple-system, BlinkMacSystemFont, sans-serif; color: var(--kb-text); }
+.kb-page { min-height: 100vh; padding: 32px 16px; background: var(--kb-bg); }
+.kb-container { width: min(960px, 100%); margin: 0 auto; }
+.kb-card { background: var(--kb-surface); border: 1px solid var(--kb-line); border-radius: var(--kb-radius); padding: var(--kb-gap-lg); box-shadow: var(--kb-shadow); }
+.kb-title { margin: 0 0 8px; font-size: 20px; font-weight: 700; }
+.kb-desc { margin: 0 0 20px; color: var(--kb-sub); font-size: 13px; }
+.kb-muted { color: var(--kb-sub); font-size: 12px; }
+.kb-row { display: flex; gap: var(--kb-gap); align-items: center; }
+.kb-label { min-width: 120px; font-weight: 600; color: var(--kb-sub); }
+
+.kb-input-field,
+.kb-select,
+.kb-textarea { width: 100%; padding: 8px 10px; border: 1px solid var(--kb-line); border-radius: 8px; background: var(--kb-surface); color: var(--kb-text); font-size: 14px; }
+.kb-input-field:focus,
+.kb-select:focus,
+.kb-textarea:focus { outline: 2px solid var(--kb-focus); outline-offset: 0; }
+
+.kb-btn { appearance: none; border: 1px solid var(--kb-line); border-radius: 8px; background: var(--kb-surface); color: var(--kb-text); height: 36px; padding: 0 16px; font-size: 14px; display: inline-flex; align-items: center; justify-content: center; gap: 8px; cursor: pointer; transition: background 0.2s ease, box-shadow 0.2s ease; }
+.kb-btn:hover { background: rgba(37, 99, 235, 0.04); }
+.kb-btn:focus { outline: 2px solid var(--kb-focus); outline-offset: 1px; }
+.kb-btn.kb-primary { background: var(--kb-primary); border-color: var(--kb-primary); color: var(--kb-primary-ink); }
+.kb-btn.kb-primary:hover { background: var(--kb-primary-hover); }
+.kb-btn.kb-danger { background: var(--kb-danger); border-color: var(--kb-danger); color: #fff; }
+.kb-btn.kb-danger:hover { background: var(--kb-danger-hover); }
+.kb-btn[disabled] { cursor: not-allowed; opacity: 0.6; }
+
+.kb-toolbar { display: flex; justify-content: flex-end; gap: 12px; padding-top: 16px; margin-top: 24px; border-top: 1px dashed var(--kb-line); }
+
+.kb-head { display: inline-flex; gap: 8px; }
+.kb-inline-btn { height: 28px; padding: 0 10px; font-size: 12px; }
+.kb-pill { display: inline-flex; align-items: center; gap: 6px; padding: 2px 10px; border-radius: 999px; font-size: 12px; background: rgba(37, 99, 235, 0.08); color: var(--kb-primary); }
+
+.kb-toast { position: fixed; top: 18px; left: 50%; transform: translateX(-50%); background: var(--kb-surface); border: 1px solid var(--kb-line); border-radius: 999px; padding: 10px 18px; box-shadow: var(--kb-shadow); z-index: 9999; animation: toast-in 0.2s ease; }
+@keyframes toast-in { from { opacity: 0; transform: translate(-50%, -12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+
+.kb-backdrop { position: fixed; inset: 0; background: rgba(15, 17, 21, 0.5); backdrop-filter: blur(3px); z-index: 9998; }
+.kb-modal { position: fixed; inset: 0; display: grid; place-items: center; z-index: 9999; }
+.kb-modal .kb-card { width: min(640px, 92vw); max-height: 80vh; overflow-y: auto; }
+
+/* Excel Join specific */
+.join-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.step-card { display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--kb-line); border-radius: var(--kb-radius); padding: 16px; background: rgba(255, 255, 255, 0.65); }
+.step-card__title { display: flex; align-items: center; gap: 10px; font-weight: 600; margin: 0; }
+.step-number { width: 26px; height: 26px; border-radius: 50%; background: var(--kb-primary); color: var(--kb-primary-ink); display: inline-flex; align-items: center; justify-content: center; font-size: 12px; }
+.dropzone { border: 2px dashed var(--kb-line); border-radius: var(--kb-radius); padding: 28px; text-align: center; cursor: pointer; transition: border-color 0.2s ease, background 0.2s ease; }
+.dropzone:hover { border-color: var(--kb-primary); }
+.dropzone.is-dragover { border-color: var(--kb-primary); background: rgba(37, 99, 235, 0.05); }
+.sheet-selectors { display: flex; flex-direction: column; gap: 8px; }
+.mapping-table { border: 1px solid var(--kb-line); border-radius: var(--kb-radius); overflow: hidden; }
+.mapping-table table { width: 100%; border-collapse: collapse; }
+.mapping-table th, .mapping-table td { padding: 8px 12px; border-bottom: 1px solid var(--kb-line); font-size: 13px; text-align: left; }
+.mapping-table th { background: rgba(15, 23, 42, 0.04); color: var(--kb-sub); }
+.mapping-table tr:last-child td { border-bottom: none; }
+.status-banner { border: 1px solid var(--kb-line); border-radius: var(--kb-radius); padding: 12px; background: rgba(15, 23, 42, 0.02); font-size: 13px; }
+.status-banner.is-error { border-color: var(--kb-danger); color: var(--kb-danger); background: rgba(220, 38, 38, 0.08); }
+.status-banner.is-success { border-color: var(--kb-primary); color: var(--kb-primary); background: rgba(37, 99, 235, 0.08); }
+.progress-indicator { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--kb-sub); }
+.file-chip { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border-radius: 999px; background: rgba(37, 99, 235, 0.08); color: var(--kb-primary); font-size: 13px; }
+.file-chip button { border: none; background: transparent; color: inherit; cursor: pointer; font-weight: 600; }
+
+@media (max-width: 720px) {
+  .kb-row { flex-direction: column; align-items: flex-start; }
+  .kb-label { min-width: auto; }
+  .kb-toolbar { flex-direction: column; align-items: stretch; }
+}

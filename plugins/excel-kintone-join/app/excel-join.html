@@ -1,0 +1,78 @@
+﻿<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Excel Join</title>
+    <link rel="stylesheet" href="../style.css" />
+  </head>
+  <body>
+    <div class="kb-root kb-page" id="joinApp">
+      <div class="kb-container">
+        <div class="kb-card">
+          <header>
+            <h1 class="kb-title" data-i18n="title"></h1>
+            <p class="kb-desc" data-i18n="lead"></p>
+          </header>
+
+          <div id="status" class="status-banner" style="display:none;"></div>
+
+          <section class="join-grid">
+            <article class="step-card">
+              <h2 class="step-card__title"><span class="step-number">1</span><span data-i18n="stepFile"></span></h2>
+              <label class="dropzone" id="dropzone">
+                <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" hidden />
+                <img src="./icons/upload.svg" alt="" width="32" height="32" aria-hidden="true" />
+                <strong data-i18n="filePicker"></strong>
+                <p class="kb-muted" data-i18n="fileHint"></p>
+                <div class="file-chip" id="fileChip" style="display:none;"></div>
+              </label>
+            </article>
+
+            <article class="step-card">
+              <h2 class="step-card__title"><span class="step-number">2</span><span data-i18n="stepSheet"></span></h2>
+              <div class="sheet-selectors">
+                <label class="kb-label" for="sheetSelect" data-i18n="sheetLabel"></label>
+                <select id="sheetSelect" class="kb-select" disabled></select>
+                <span class="kb-muted" data-i18n="sheetHint"></span>
+              </div>
+            </article>
+
+            <article class="step-card">
+              <h2 class="step-card__title"><span class="step-number">3</span><span data-i18n="stepKey"></span></h2>
+              <div class="sheet-selectors">
+                <label class="kb-label" for="keySelect" data-i18n="keyLabel"></label>
+                <select id="keySelect" class="kb-select" disabled></select>
+                <span class="kb-muted" data-i18n="keyHint"></span>
+              </div>
+            </article>
+
+            <article class="step-card">
+              <h2 class="step-card__title"><span class="step-number">4</span><span data-i18n="stepMaster"></span></h2>
+              <div class="sheet-selectors">
+                <label class="kb-label" for="masterSelect" data-i18n="masterLabel"></label>
+                <select id="masterSelect" class="kb-select"></select>
+                <span class="kb-muted" data-i18n="masterHint"></span>
+              </div>
+              <div class="mapping-table" id="mappingTable" style="display:none;"></div>
+            </article>
+          </section>
+
+          <div class="progress-indicator" id="progress" style="display:none;"></div>
+
+          <div class="kb-toolbar">
+            <button type="button" class="kb-btn" id="closeWindow" data-i18n="close"></button>
+            <button type="button" class="kb-btn kb-primary" id="runJoin" data-i18n="run"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js"></script>
+    <script src="../storage.js"></script>
+    <script src="../kintoneClient.js"></script>
+    <script src="../excelUtil.js"></script>
+    <script src="../excel-join.js"></script>
+  </body>
+</html>

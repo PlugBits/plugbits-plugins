@@ -1,0 +1,20 @@
+{
+  "name": "kintone-cross-search-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Cross-app search UI for kintone.",
+  "scripts": {
+    "clean": "rimraf dist ship",
+    "build": "node -e \"console.log('build skipped')\"",
+    "lint": "eslint . || exit 0",
+    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --out dist/kintone-cross-search_plugin.zip",
+    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/kintone-cross-search.ppk --out dist/kintone-cross-search_plugin.zip"
+  },
+  "devDependencies": {
+  
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

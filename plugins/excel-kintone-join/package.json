@@ -1,0 +1,19 @@
+{
+  "name": "excel-kintone-join-plugin",
+  "private": true,
+  "scripts": {
+    "clean": "rimraf dist ship",
+    "build": "node -e \"console.log('build skipped')\"",
+    "lint": "eslint . || exit 0",
+    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --out dist/excel-kintone-join.zip",
+    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/excel-join.ppk --out dist/excel-kintone-join.zip ."
+  },
+  "devDependencies": {
+    "kintone-plugin-packer": "^9.0.0",
+    "mkdirp": "^1.0.4",
+    "rimraf": "^5.0.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

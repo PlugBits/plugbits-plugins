@@ -1,0 +1,33 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.0",
+  "type": "APP",
+  "name": {
+    "en": "Excel Master Joiner",
+    "ja": "Excel JOIN for kintone"
+  },
+  "description": {
+    "ja": "ExcelやCSVにkintoneマスターをJOINして新しいExcelをダウンロードします。",
+    "en": "Upload Excel or CSV, join it with pre-defined kintone masters, and download the merged file."
+  },
+  "icon": "images/icon.png",
+  "config": {
+    "html": "config/config.html",
+    "js": [
+      "storage.js",
+      "kintoneClient.js",
+      "config/config.js"
+    ],
+    "css": [
+      "style.css",
+      "config/config.css"
+    ],
+    "required_params": []
+  },
+  "desktop": {
+    "js": [
+      "app/plugin.js"
+    ],
+    "css": []
+  }
+}

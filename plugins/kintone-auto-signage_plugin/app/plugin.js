@@ -45,6 +45,7 @@
       scrollEnabled: toBool('scrollEnabled'),
       speedMsPerPx: toNum('speedMsPerPx'),
       stopSec: toNum('stopSec'),
+      stopTopSec: toNum('stopTopSec'),
       loops: toNum('loops'),
       reloadEnabled: toBool('reloadEnabled'),
       intervalSec: toNum('intervalSec'),
@@ -193,7 +194,8 @@
   }
 
   // ===== Auto Scroll (element-based) =====
-  function runAutoScroll({ target = resolveScrollTarget(), speedMsPerPx = 50, stopSec = 2, loops = 5, onFinish }) {
+  function runAutoScroll({ target = resolveScrollTarget(), speedMsPerPx = 50, stopSec = 2, stopTopSec = 0, loops = 5, onFinish }) {
+    // Behavior: smooth scroll DOWN only. When bottom reached -> wait stopSec -> jump to top instantly -> wait stopTopSec -> resume smooth down.
     let loop = 0;
     let timer = null;
     let paused = false;
@@ -203,18 +205,34 @@
 
     const step = () => {
       if (paused) return;
+
       const before = target.scrollTop;
-      target.scrollTop = before + 1;
-      if (target.scrollTop === before) { // ターゲットが変わったかも → 再解決
-        target = resolveScrollTarget();
-        target.scrollTop = target.scrollTop + 1;
-      }
+
+      // If reached bottom, perform wait -> jump to top -> wait -> continue
       if (atBottom()) {
         loop += 1;
         if (loop >= loops) { clear(); onFinish && onFinish(); return; }
         clear();
-        setTimeout(() => { target.scrollTop = 0; timer = setTimeout(step, Math.max(1, speedMsPerPx)); }, Math.max(0, stopSec * 1000));
+        // wait at bottom for stopSec, then jump to top
+        timer = setTimeout(() => {
+          // instant jump to top (HOME-like)
+          try { target.scrollTop = 0; } catch (e) { /* ignore */ }
+          // wait at top for stopTopSec, then resume smooth scrolling
+          if (stopTopSec > 0) {
+            timer = setTimeout(() => { timer = setTimeout(step, Math.max(1, speedMsPerPx)); }, stopTopSec * 1000);
+          } else {
+            timer = setTimeout(step, Math.max(1, speedMsPerPx));
+          }
+        }, stopSec > 0 ? stopSec * 1000 : 0);
         return;
+      }
+
+      // Normal smooth downward movement
+      const next = before + 1;
+      target.scrollTop = next;
+      if (target.scrollTop === before) { // maybe target changed -> re-resolve
+        target = resolveScrollTarget();
+        target.scrollTop = target.scrollTop + 1;
       }
       timer = setTimeout(step, Math.max(1, speedMsPerPx));
     };
@@ -267,7 +285,8 @@
         } else {
           sc?.resume?.();
           const t = getTarget?.();
-          if (t) lockManualScroll(t);
+          // Only lock manual scroll when an auto-scroller exists (i.e. auto-scroll enabled)
+          if (t && sc) lockManualScroll(t);
           paused = false;
           toast('再開');
         }
@@ -300,7 +319,11 @@
     if (cfg.kiosk) {
       applyKioskHide();
       ensureBottomSpacer();
-      lockManualScroll(resolveScrollTarget());
+      // Only lock manual scroll when auto-scroll is enabled. Allow manual scrolling
+      // if user disabled auto-scroll but still wants kiosk UI (header hidden).
+      if (cfg.scrollEnabled) {
+        lockManualScroll(resolveScrollTarget());
+      }
     }
 
     let cancelReload = () => {};
@@ -314,6 +337,7 @@
         target: resolveScrollTarget(),
         speedMsPerPx: clamp(cfg.speedMsPerPx ?? 50, 5, 2000),
         stopSec: clamp(cfg.stopSec ?? 2, 0, 60),
+        stopTopSec: clamp(cfg.stopTopSec ?? 0, 0, 60),
         loops: clamp(cfg.loops ?? 5, 1, 999),
         onFinish: () => location.reload() // ループ終了時は必ず更新
       });
