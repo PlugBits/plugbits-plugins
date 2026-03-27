@@ -1,0 +1,184 @@
+<!doctype html>
+<html lang="">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="page_title">View Tabs + Date Filter + Aggregates Config</title>
+</head>
+<body>
+  <div class="kvtdf-page">
+    <h1 class="kvtdf-title" data-i18n="page_heading">View Tabs + Date Filter + Aggregates</h1>
+    <p class="kvtdf-desc" data-i18n="page_desc">Configure view tabs, date filter, and aggregates separately from the left menu.</p>
+
+    <div class="kvtdf-shell">
+      <aside class="kvtdf-sidebar">
+        <div class="kvtdf-sidebar-title" data-i18n="menu_title">Menu</div>
+        <div class="kvtdf-nav">
+          <button id="kvtdf-nav-view-tabs" class="kvtdf-nav-btn is-active" type="button" data-i18n="nav_view_tabs">View tabs</button>
+          <button id="kvtdf-nav-date-filter" class="kvtdf-nav-btn" type="button" data-i18n="nav_date_filter">Date filter</button>
+          <button id="kvtdf-nav-aggregates" class="kvtdf-nav-btn" type="button" data-i18n="nav_aggregates">Aggregates</button>
+        </div>
+      </aside>
+
+      <div class="kvtdf-content">
+        <section id="kvtdf-panel-view-tabs" class="kvtdf-card kvtdf-panel">
+          <h2 data-i18n="view_tabs_title">View tabs</h2>
+          <p class="kvtdf-help" data-i18n="view_tabs_help">Choose visible views and their order.</p>
+
+          <div class="kvtdf-field-row">
+            <div class="kvtdf-label" data-i18n="enable_view_tabs_label">Enable view tabs</div>
+            <label class="kvtdf-toggle">
+              <input id="kvtdf-enable-view-tabs" type="checkbox" checked>
+              <span class="kvtdf-toggle-ui" aria-hidden="true"></span>
+              <span class="kvtdf-toggle-text" data-i18n="enable_view_tabs_help">Show tabs in the list header</span>
+            </label>
+          </div>
+
+          <div id="kvtdf-view-tabs-body" class="kvtdf-panel-body">
+            <div class="kvtdf-dual">
+              <div class="kvtdf-list-card">
+                <div class="kvtdf-list-head">
+                  <div class="kvtdf-label" data-i18n="available_views">Available views</div>
+                  <input id="kvtdf-search-available" class="kvtdf-search" type="text" placeholder="Filter by name" data-i18n-placeholder="filter_views_placeholder">
+                </div>
+                <div id="kvtdf-available-list" class="kvtdf-list-body"></div>
+              </div>
+
+              <div class="kvtdf-col-actions">
+                <button id="kvtdf-add" class="kvtdf-btn" type="button" data-i18n="add_button">Add -&gt;</button>
+                <button id="kvtdf-remove" class="kvtdf-btn danger" type="button" data-i18n="remove_button">&lt;- Remove</button>
+                <button id="kvtdf-up" class="kvtdf-btn" type="button" data-i18n="move_up_button">Up</button>
+                <button id="kvtdf-down" class="kvtdf-btn" type="button" data-i18n="move_down_button">Down</button>
+              </div>
+
+              <div class="kvtdf-list-card">
+                <div class="kvtdf-list-head">
+                  <div class="kvtdf-label" data-i18n="selected_views">Display order</div>
+                  <div class="kvtdf-muted" data-i18n="selected_views_help">Rendered from top to bottom</div>
+                </div>
+                <div id="kvtdf-selected-list" class="kvtdf-list-body"></div>
+              </div>
+            </div>
+
+            <div class="kvtdf-field-row">
+              <div class="kvtdf-label"><span data-i18n="inline_tabs_label">Inline count</span>
+                <span class="kvtdf-note" data-i18n="inline_tabs_note">Overflow goes to Other</span>
+              </div>
+              <input id="kvtdf-max-inline" class="kvtdf-input" type="number" min="0" max="20" value="6">
+            </div>
+
+            <div class="kvtdf-field-row">
+              <div class="kvtdf-label" data-i18n="show_icons_label">Show icons</div>
+              <label class="kvtdf-checkbox">
+                <input id="kvtdf-show-icons" type="checkbox" checked>
+                <span data-i18n="show_icons_help">Render view type icons</span>
+              </label>
+            </div>
+          </div>
+        </section>
+
+        <section id="kvtdf-panel-date-filter" class="kvtdf-card kvtdf-panel" hidden>
+          <h2 data-i18n="date_filter_title">Date filter</h2>
+          <p class="kvtdf-help" data-i18n="date_filter_help">Choose the field and display conditions.</p>
+
+          <div class="kvtdf-field-row">
+            <div class="kvtdf-label" data-i18n="enable_date_filter_label">Enable date filter</div>
+            <label class="kvtdf-toggle">
+              <input id="kvtdf-enable-date-filter" type="checkbox" checked>
+              <span class="kvtdf-toggle-ui" aria-hidden="true"></span>
+              <span class="kvtdf-toggle-text" data-i18n="enable_date_filter_help">Show the filter in the list header</span>
+            </label>
+          </div>
+
+          <div id="kvtdf-date-filter-body" class="kvtdf-panel-body">
+            <div class="kvtdf-field-row">
+              <div class="kvtdf-label"><span data-i18n="date_field_label">Target date field</span>
+                <span class="kvtdf-note" data-i18n="date_field_note">Auto-select when empty</span>
+              </div>
+              <select id="kvtdf-date-field" class="kvtdf-select"></select>
+            </div>
+
+            <div class="kvtdf-field-row">
+              <div class="kvtdf-label" data-i18n="week_start_label">Week start</div>
+              <select id="kvtdf-week-start" class="kvtdf-select">
+                <option value="0" data-i18n="sunday">Sunday</option>
+                <option value="1" data-i18n="monday">Monday</option>
+              </select>
+            </div>
+
+            <div class="kvtdf-field-row">
+              <div class="kvtdf-label"><span data-i18n="visible_presets_label">Visible presets</span>
+                <span class="kvtdf-note" data-i18n="visible_presets_note">Choose only the presets to show</span>
+              </div>
+              <div id="kvtdf-presets" class="kvtdf-presets"></div>
+            </div>
+
+            <div class="kvtdf-field-row">
+              <div class="kvtdf-label" data-i18n="default_preset_label">Default preset</div>
+              <select id="kvtdf-default-preset" class="kvtdf-select"></select>
+            </div>
+
+            <div class="kvtdf-field-row">
+              <div class="kvtdf-label"><span data-i18n="filter_target_views_label">Target views</span>
+                <span class="kvtdf-note" data-i18n="filter_target_views_note">All views when empty</span>
+              </div>
+              <div id="kvtdf-target-views" class="kvtdf-checkcard-grid"></div>
+            </div>
+          </div>
+        </section>
+
+        <section id="kvtdf-panel-aggregates" class="kvtdf-card kvtdf-panel" hidden>
+          <h2 data-i18n="aggregates_title">Aggregates</h2>
+          <p class="kvtdf-help" data-i18n="aggregates_help">Show aggregate chips for numeric fields in the list header.</p>
+
+          <div class="kvtdf-field-row">
+            <div class="kvtdf-label" data-i18n="enable_aggregates_label">Enable aggregates</div>
+            <label class="kvtdf-toggle">
+              <input id="kvtdf-enable-aggregates" type="checkbox">
+              <span class="kvtdf-toggle-ui" aria-hidden="true"></span>
+              <span class="kvtdf-toggle-text" data-i18n="enable_aggregates_help">Show aggregate chips in the list header</span>
+            </label>
+          </div>
+
+          <div id="kvtdf-aggregates-body" class="kvtdf-panel-body">
+            <div class="kvtdf-field-row">
+              <div class="kvtdf-label"><span data-i18n="aggregate_target_views_label">Target views</span>
+                <span class="kvtdf-note" data-i18n="aggregate_target_views_note">All views when empty</span>
+              </div>
+              <div id="kvtdf-aggregate-target-views" class="kvtdf-checkcard-grid"></div>
+            </div>
+
+            <div class="kvtdf-toolbar">
+              <button id="kvtdf-aggregate-add" class="kvtdf-btn" type="button" data-i18n="aggregate_add_row">Add row</button>
+            </div>
+
+            <div class="kvtdf-table-wrap">
+              <table class="kvtdf-table">
+                <thead>
+                  <tr>
+                    <th data-i18n="aggregate_field">Field</th>
+                    <th data-i18n="aggregate_op">Operation</th>
+                    <th data-i18n="aggregate_digits">Decimals</th>
+                    <th data-i18n="aggregate_prefix">Prefix</th>
+                    <th data-i18n="aggregate_suffix">Suffix</th>
+                    <th data-i18n="aggregate_actions">Actions</th>
+                  </tr>
+                </thead>
+                <tbody id="kvtdf-aggregate-body"></tbody>
+              </table>
+            </div>
+            <div id="kvtdf-aggregate-empty" class="kvtdf-muted" data-i18n="aggregate_empty">No numeric or calc fields found.</div>
+          </div>
+        </section>
+
+        <section class="kvtdf-card">
+          <div class="kvtdf-footer">
+            <button id="kvtdf-save" class="kvtdf-btn primary" type="button" data-i18n="save_button">Save</button>
+            <button id="kvtdf-cancel" class="kvtdf-btn" type="button" data-i18n="cancel_button">Cancel</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

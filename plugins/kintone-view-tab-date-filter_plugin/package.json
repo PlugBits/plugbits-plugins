@@ -1,0 +1,17 @@
+{
+  "name": "kintone-view-tab-date-filter",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "clean": "rimraf dist ship",
+    "build": "node -e \"console.log('build skipped')\"",
+    "lint": "eslint . || exit 0",
+    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/view-tab-date-filter.ppk --out dist/view-tab-date-filter.zip .",
+    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --out dist/view-tab-date-filter.zip"
+  },
+  "devDependencies": {},
+  "engines": {
+    "node": ">=18"
+  }
+}
