@@ -1,3 +1,5 @@
+/* global cybozu */
+
 (function(PLUGIN_ID) {
   'use strict';
 
@@ -361,7 +363,7 @@
     setQueryOnUrl(url, effectiveQuery);
     clearLegacyStateParams(url);
     if (url.toString() !== before) {
-      history.replaceState(history.state, document.title, url.toString());
+      window.history.replaceState(window.history.state, document.title, url.toString());
       return true;
     }
     return false;
@@ -397,7 +399,7 @@
     return String(text || '').replace(/\s+/g, ' ').trim();
   }
 
-  function normalizeCustomQuery(customQuery) {
+  function _normalizeCustomQuery(customQuery) {
     return {
       condition: normalizeQueryText(customQuery && customQuery.condition),
       tail: normalizeQueryText(customQuery && customQuery.tail)
@@ -451,7 +453,7 @@
     return next;
   }
 
-  function splitTopLevelAnd(condition) {
+  function _splitTopLevelAnd(condition) {
     const text = String(condition || '').trim();
     if (!text) {
       return [];
@@ -503,7 +505,7 @@
     return parts;
   }
 
-  function removeTopLevelClause(parts, clause) {
+  function _removeTopLevelClause(parts, clause) {
     const normalizedClause = unwrapOuterParens(clause);
     if (!normalizedClause) {
       return parts.slice();
@@ -885,7 +887,7 @@
   async function fetchAllRecordsSmart(appId, query, fields) {
     try {
       return await fetchAllRecordsByCursor(appId, query, fields);
-    } catch (error) {
+    } catch {
       return fetchAllRecordsByPaging(appId, query, fields);
     }
   }
