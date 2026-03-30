@@ -1,0 +1,27 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.0",
+  "type": "APP",
+  "name": {
+    "ja": "文字列条件分岐ビルダープラグイン",
+    "en": "Text Rule Builder Plugin"
+  },
+  "description": {
+    "ja": "条件分岐ルールを設定画面で組み立て、指定した文字列フィールドへ自動出力します。",
+    "en": "Build conditional text-output rules in the config screen and write the result into a text field."
+  },
+  "desktop": {
+    "js": ["app/plugin.js"],
+    "css": []
+  },
+  "mobile": {
+    "js": [],
+    "css": []
+  },
+  "config": {
+    "html": "config/config.html",
+    "js": ["config/config.js"],
+    "css": ["config/config.css"]
+  },
+  "icon": "images/icon.png"
+}

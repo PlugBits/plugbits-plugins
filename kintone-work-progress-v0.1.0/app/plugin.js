@@ -14,7 +14,6 @@
     timestampFieldCode: '',
     timestampFieldType: '',
     spaceFieldCode: '',
-    hideNativeSubtable: false,
     gridColumns: 'auto',
     layout: 'grid',
     compressionEnabled: true,
@@ -27,7 +26,6 @@
   };
 
   const EVENT_TYPES = ['app.record.detail.show'];
-  const RELOAD_STATE_STORAGE_KEY = 'kintone-work-progress:reload-state';
 
   const state = {
     settings: null,
@@ -42,75 +40,12 @@
     lightbox: null,
     fieldTypes: {},
     metadataLoaded: false,
+    commentObserver: null,
     subtableLabel: ''
   };
 
   const fileUrlCache = new Map();
   const fileUrlPromises = new Map();
-
-  function getReloadStateKey() {
-    return [
-      RELOAD_STATE_STORAGE_KEY,
-      state.appId || '',
-      state.recordId || ''
-    ].join(':');
-  }
-
-  function persistReloadState(message, tone) {
-    try {
-      sessionStorage.setItem(getReloadStateKey(), JSON.stringify({
-        message: message || '',
-        tone: tone || 'success',
-        scrollX: window.scrollX || 0,
-        scrollY: window.scrollY || 0,
-        timestamp: Date.now()
-      }));
-    } catch (error) {
-      console.warn('kintone-work-progress: reload state could not be saved.', error);
-    }
-  }
-
-  function consumeReloadState() {
-    try {
-      const key = getReloadStateKey();
-      const raw = sessionStorage.getItem(key);
-      if (!raw) {
-        return null;
-      }
-      sessionStorage.removeItem(key);
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') {
-        return null;
-      }
-      if (parsed.timestamp && Date.now() - parsed.timestamp > 60000) {
-        return null;
-      }
-      return parsed;
-    } catch (error) {
-      console.warn('kintone-work-progress: reload state could not be restored.', error);
-      return null;
-    }
-  }
-
-  function restoreReloadState() {
-    const reloadState = consumeReloadState();
-    if (!reloadState) {
-      return;
-    }
-    const scrollX = Number.isFinite(Number(reloadState.scrollX)) ? Number(reloadState.scrollX) : 0;
-    const scrollY = Number.isFinite(Number(reloadState.scrollY)) ? Number(reloadState.scrollY) : 0;
-    window.requestAnimationFrame(() => {
-      window.scrollTo(scrollX, scrollY);
-      if (reloadState.message) {
-        pushToast(reloadState.message, reloadState.tone || 'success');
-      }
-    });
-  }
-
-  function reloadDetailWithFeedback(message, tone) {
-    persistReloadState(message, tone);
-    window.location.reload();
-  }
 
   function normalizeGalleryTitleMode(value) {
     if (!value) {
@@ -219,11 +154,67 @@
     return token ? token.value : '';
   }
 
-  function getConfiguredSpaceElement() {
-    if (!state.settings || !state.settings.spaceFieldCode) {
-      return null;
+  function resolveMountPoint() {
+    const sidebar = document.querySelector('.gaia-argoui-app-show-sidebar');
+    if (sidebar) {
+      return sidebar;
     }
-    return kintone.app.record.getSpaceElement(state.settings.spaceFieldCode);
+    const detail = document.querySelector('.gaia-argoui-app-show');
+    if (detail) {
+      return detail;
+    }
+    const recordView = document.querySelector('.record-gaia');
+    return recordView || document.body;
+  }
+
+  function resolveCommentAnchor() {
+    const selectors = [
+      '.gaia-argoui-app-show-sidebar .ocean-ui-comments-commentform',
+      '.gaia-argoui-app-show-sidebar-content .ocean-ui-comments-commentform',
+      '.gaia-argoui-app-show-sidebar-content #sidebar-list-gaia',
+      '.gaia-argoui-app-show-sidebar-dragged .ocean-ui-comments-commentform',
+      '.gaia-argoui-app-show-sidebar',
+      '.gaia-argoui-app-show-sidebar-content',
+      '#record-comment-gaia',
+      '#recordCommentGaia',
+      '#record-comments-gaia',
+      '.record-gaia #record-comments-gaia',
+      '.record-gaia .record-comments-gaia',
+      '.record-gaia .record-comment-gaia',
+      '.record-gaia .record-activity-gaia',
+      '.gaia-argoui-app-comment',
+      '.gaia-argoui-app-commentlist',
+      '.gaia-argoui-app-commentFeed',
+      '.gaia-argoui-app-comment-feed',
+      '.gaia-argoui-app-show-comment',
+      '.gaia-argoui-app-show-comments',
+      '.gaia-argoui-app-show-commentlist',
+      '.gaia-argoui-app-activity',
+      '.detail-comment-gaia',
+      '.contents-comment-gaia',
+      '[data-testid="comment-pane"]',
+      '[data-testid="detail-comment-wrapper"]',
+      '[data-test-id="detail-comment-wrapper"]',
+      '[data-test-id="comment-wrapper"]'
+    ];
+    for (const selector of selectors) {
+      const element = document.querySelector(selector);
+      if (element) {
+        return element;
+      }
+    }
+    const iframe = Array.from(document.querySelectorAll('iframe')).find((frame) => {
+      const id = frame.id || '';
+      const name = frame.name || '';
+      const cls = frame.className || '';
+      const src = frame.getAttribute('src') || '';
+      const haystack = `${id} ${name} ${cls} ${src}`.toLowerCase();
+      return haystack.includes('comment') || haystack.includes('activity');
+    });
+    if (iframe) {
+      return iframe;
+    }
+    return null;
   }
 
   function setStatusMessage(message) {
@@ -330,6 +321,107 @@
 
 
 
+  function placeControlPanel(controlPanel, fallbackSibling) {
+    if (!controlPanel) {
+      return;
+    }
+    if (state.commentObserver) {
+      state.commentObserver.disconnect();
+      state.commentObserver = null;
+    }
+    const tryInsert = () => {
+      const anchor = resolveCommentAnchor();
+      if (!anchor) {
+        return false;
+      }
+      let container = anchor.closest('.gaia-argoui-app-show-sidebar-content');
+      if (!container && anchor.classList.contains('gaia-argoui-app-show-sidebar')) {
+        container = anchor.querySelector('.gaia-argoui-app-show-sidebar-content') || anchor;
+      }
+      if (!container && anchor.classList.contains('gaia-argoui-app-show-sidebar-content')) {
+        container = anchor;
+      }
+      if (!container) {
+        container = anchor.parentElement;
+      }
+      if (!container) {
+        return false;
+      }
+
+      let reference = anchor;
+      if (container === anchor) {
+        reference = anchor.firstElementChild;
+      }
+      while (reference && reference.parentElement && reference.parentElement !== container) {
+        reference = reference.parentElement;
+      }
+      if (reference && reference.parentElement !== container) {
+        reference = container.firstElementChild;
+      }
+      if (reference && reference.parentElement !== container) {
+        reference = null;
+      }
+
+      const inSidebar = !!container.closest('.gaia-argoui-app-show-sidebar');
+      controlPanel.classList.toggle('kwp-panel--sidebar', inSidebar);
+      container.insertBefore(controlPanel, reference || null);
+      return true;
+    };
+
+    if (tryInsert()) {
+      return;
+    }
+
+    const fallbackMount = () => {
+      if (controlPanel.isConnected) {
+        return;
+      }
+      if (fallbackSibling && fallbackSibling.parentElement) {
+        fallbackSibling.parentElement.insertBefore(controlPanel, fallbackSibling.nextSibling);
+        return;
+      }
+      const mount = resolveMountPoint();
+      mount.appendChild(controlPanel);
+    };
+
+    fallbackMount();
+    controlPanel.classList.remove('kwp-panel--sidebar');
+
+    if (tryInsert()) {
+      return;
+    }
+
+    const delayedAttempts = [50, 200, 1000, 5000, 10000];
+    delayedAttempts.forEach((delay) => {
+      window.setTimeout(() => {
+        tryInsert();
+      }, delay);
+    });
+
+    if (typeof MutationObserver !== 'function') {
+      return;
+    }
+
+    const observer = new MutationObserver(() => {
+      if (tryInsert()) {
+        observer.disconnect();
+        if (state.commentObserver === observer) {
+          state.commentObserver = null;
+        }
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    state.commentObserver = observer;
+
+    window.setTimeout(() => {
+      if (state.commentObserver === observer) {
+        observer.disconnect();
+        state.commentObserver = null;
+        tryInsert();
+      }
+    }, 15000);
+  }
+
   function hideNativeSubtable() {
     const element = kintone.app.record.getFieldElement(state.settings.subtableCode);
     if (element) {
@@ -428,12 +520,12 @@
 
   function setBusy(isBusy, message) {
     state.busy = isBusy;
-    const { root, status } = state.elements;
-    if (root) {
-      root.classList.toggle('kwp-root--busy', isBusy);
+    const { panel, status } = state.elements;
+    if (panel) {
+      panel.classList.toggle('kwp-panel--busy', isBusy);
     }
     if (status) {
-      status.textContent = message || (isBusy ? '処理中です…' : '画像・PDF・その他のファイルを追加できます');
+      status.textContent = message || (isBusy ? '処理中です…' : 'Ctrl/⌘+V ですぐに貼り付けられます');
     }
   }
 
@@ -546,11 +638,10 @@
   }
 
   function updatePanelMode() {
-    const uploadCard = state.elements.uploadCard;
-    if (uploadCard) {
-      uploadCard.classList.toggle('kwp-card--readonly', !state.canEdit);
+    const panel = state.elements.panel;
+    if (panel) {
+      panel.classList.toggle('kwp-panel--readonly', !state.canEdit);
     }
-    setStatusMessage(!state.canEdit ? '閲覧専用です' : '');
     applyGridColumns();
   }
 
@@ -562,14 +653,17 @@
   }
 
   function renderGallery() {
-    const { list, empty, uploadCard } = state.elements;
-    if (!list || !empty || !uploadCard) {
+    const { list, empty } = state.elements;
+    if (!list || !empty) {
       return;
     }
     clearGallery();
+    if (!state.rows.length) {
+      empty.hidden = false;
+      return;
+    }
+    empty.hidden = true;
     const fragment = document.createDocumentFragment();
-    fragment.appendChild(uploadCard);
-    empty.hidden = state.rows.length > 0;
     state.rows.forEach((row) => {
       const item = document.createElement('li');
       item.className = 'kwp-card';
@@ -579,7 +673,7 @@
         const deleteButton = document.createElement('button');
         deleteButton.type = 'button';
         deleteButton.className = 'kwp-card__delete';
-        deleteButton.setAttribute('aria-label', 'ファイルを削除');
+        deleteButton.setAttribute('aria-label', '証拠を削除');
         deleteButton.innerHTML = '×';
         deleteButton.addEventListener('click', (event) => {
           event.stopPropagation();
@@ -683,8 +777,7 @@
         memoButton.disabled = true;
         try {
           await updateMemo(row.id, newValue);
-          reloadDetailWithFeedback('メモを更新しました。', 'success');
-          return;
+          window.location.reload();
         } catch (error) {
           console.error(error);
           pushToast('メモの更新に失敗しました。', 'error');
@@ -742,7 +835,7 @@
     if (!state.canEdit || state.busy) {
       return;
     }
-    const confirmed = window.confirm('このファイルを削除しますか？');
+    const confirmed = window.confirm('この証拠を削除しますか？');
     if (!confirmed) {
       return;
     }
@@ -750,7 +843,7 @@
   }
 
   async function deleteRow(row) {
-    setBusy(true, 'ファイルを削除しています…');
+    setBusy(true, '証拠を削除しています…');
     try {
       await ensureLatestRecord();
       const subtable = state.record?.[state.settings.subtableCode];
@@ -777,11 +870,10 @@
       };
       const response = await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', body);
       state.revision = Number(response.revision);
-      reloadDetailWithFeedback('ファイルを削除しました。', 'success');
-      return;
+      window.location.reload();
     } catch (error) {
       console.error(error);
-      pushToast('ファイルの削除に失敗しました。', 'error');
+      pushToast('証拠の削除に失敗しました。', 'error');
     } finally {
       setBusy(false);
     }
@@ -1045,12 +1137,54 @@
   }
 
   function createPanelElements() {
-    const root = document.createElement('section');
-    root.className = 'kwp-root';
+    const controlPanel = document.createElement('section');
+    controlPanel.className = 'kwp-panel kwp-panel--controls';
+
+    const header = document.createElement('header');
+    header.className = 'kwp-panel__header';
+    header.innerHTML = [
+      '<div class="kwp-panel__title">',
+      '<h2>アップロード</h2>',
+      '<p data-kwp-status class="kwp-panel__status">Ctrl/⌘+V でその場に貼り付けできます</p>',
+      '</div>'
+    ].join('');
+
+    const controls = document.createElement('div');
+    controls.className = 'kwp-panel__controls';
+
+    const uploadLabel = document.createElement('label');
+    uploadLabel.className = 'kwp-upload';
+    uploadLabel.innerHTML = '<input type="file" data-kwp-file multiple><span>ファイルを選択</span>';
+
+    const focusButton = document.createElement('button');
+    focusButton.type = 'button';
+    focusButton.className = 'kwp-button kwp-button--ghost';
+    focusButton.dataset.kwpFocus = 'true';
+    focusButton.textContent = '貼り付けボックスをフォーカス';
+
+    controls.appendChild(uploadLabel);
+    controls.appendChild(focusButton);
+    header.appendChild(controls);
+    controlPanel.appendChild(header);
+
+    const dropzone = document.createElement('div');
+    dropzone.className = 'kwp-dropzone';
+    dropzone.dataset.kwpDropzone = 'true';
+    dropzone.tabIndex = 0;
+    dropzone.innerHTML = [
+      '<p class="kwp-dropzone__label">ここにファイルをドラッグ & ドロップ</p>',
+      '<p class="kwp-dropzone__hint">画像・PDF・その他のファイルを追加できます</p>'
+    ].join('');
+
+    const bodyWrapper = document.createElement('div');
+    bodyWrapper.className = 'kwp-panel__body';
+    bodyWrapper.appendChild(dropzone);
+    controlPanel.appendChild(bodyWrapper);
 
     const toastStack = document.createElement('div');
     toastStack.className = 'kwp-toast-stack';
     toastStack.dataset.kwpToast = 'true';
+    controlPanel.appendChild(toastStack);
 
     const galleryShell = document.createElement('section');
     galleryShell.className = 'kwp-panel kwp-gallery-shell';
@@ -1070,56 +1204,22 @@
     list.className = 'kwp-gallery';
     list.dataset.kwpList = 'true';
 
-    const uploadCard = document.createElement('li');
-    uploadCard.className = 'kwp-card kwp-card--upload';
-    uploadCard.dataset.kwpUploadCard = 'true';
-
-    const uploadInner = document.createElement('div');
-    uploadInner.className = 'kwp-card__upload';
-
-    const uploadLabel = document.createElement('label');
-    uploadLabel.className = 'kwp-upload';
-    uploadLabel.innerHTML = '<input type="file" data-kwp-file multiple><span>ファイルを選択</span>';
-
-    const uploadActions = document.createElement('div');
-    uploadActions.className = 'kwp-card__upload-actions';
-    uploadActions.appendChild(uploadLabel);
-
-    const dropzone = document.createElement('div');
-    dropzone.className = 'kwp-dropzone kwp-dropzone--compact';
-    dropzone.dataset.kwpDropzone = 'true';
-    dropzone.tabIndex = 0;
-    dropzone.innerHTML = [
-      '<p class="kwp-dropzone__label">ドラッグ&ドロップ、または貼り付けで追加</p>',
-      '<p data-kwp-status class="kwp-dropzone__hint">画像・PDF・その他のファイルを追加できます</p>'
-    ].join('');
-
-    const uploadStatus = dropzone.querySelector('[data-kwp-status]');
-
-    uploadInner.appendChild(uploadActions);
-    uploadInner.appendChild(dropzone);
-    uploadCard.appendChild(uploadInner);
-
     const empty = document.createElement('p');
     empty.className = 'kwp-empty';
     empty.dataset.kwpEmpty = 'true';
-    empty.textContent = 'まだファイルがありません';
+    empty.textContent = 'まだファイルがありません。Ctrl/⌘+V やドラッグ&ドロップで追加できます。';
     empty.hidden = true;
 
     galleryShell.appendChild(list);
     galleryShell.appendChild(empty);
 
-    root.appendChild(galleryShell);
-    root.appendChild(toastStack);
-
     state.elements = {
-      root,
-      panel: galleryShell,
+      panel: controlPanel,
       galleryShell,
-      uploadCard,
-      status: uploadStatus,
+      status: controlPanel.querySelector('[data-kwp-status]'),
       dropzone,
-      fileInput: uploadLabel.querySelector('[data-kwp-file]'),
+      fileInput: controlPanel.querySelector('[data-kwp-file]'),
+      focusButton,
       list,
       empty,
       toastStack
@@ -1131,7 +1231,7 @@
 
     updateGalleryTitle();
 
-    return { root, galleryShell };
+    return { controlPanel, galleryShell };
   }
 
   function updateGalleryTitle() {
@@ -1166,8 +1266,8 @@
 
 
   function attachPanelHandlers() {
-    const { panel, dropzone, fileInput } = state.elements;
-    if (!panel || !dropzone || !fileInput) {
+    const { panel, dropzone, fileInput, focusButton } = state.elements;
+    if (!panel || !dropzone || !fileInput || !focusButton) {
       return;
     }
 
@@ -1239,25 +1339,45 @@
       }
       processFiles(files);
     });
+
+    focusButton.addEventListener('click', () => {
+      dropzone.focus();
+    });
   }
 
   function insertPanel() {
-    const previousRoot = state.elements.root;
-    if (previousRoot && previousRoot.parentNode) {
-      previousRoot.parentNode.removeChild(previousRoot);
+    const previousPanel = state.elements.panel;
+    if (previousPanel && previousPanel.parentNode) {
+      previousPanel.parentNode.removeChild(previousPanel);
+    }
+    const previousGallery = state.elements.galleryShell;
+    if (previousGallery && previousGallery.parentNode) {
+      previousGallery.parentNode.removeChild(previousGallery);
+    }
+    state.anchorSpace = null;
+    if (state.commentObserver) {
+      state.commentObserver.disconnect();
+      state.commentObserver = null;
     }
 
-    const { root } = createPanelElements();
-    const spaceElement = getConfiguredSpaceElement();
-    if (!spaceElement) {
-      console.warn('kintone-work-progress: 表示スペースを取得できないため描画を中止します。');
-      state.elements = {};
-      return false;
+    const { controlPanel, galleryShell } = createPanelElements();
+
+    const spaceElement = state.settings.spaceFieldCode ? kintone.app.record.getSpaceElement(state.settings.spaceFieldCode) : null;
+    if (spaceElement) {
+      relaxSpaceConstraints(spaceElement);
+      spaceElement.appendChild(galleryShell);
+      state.anchorSpace = spaceElement;
+    } else {
+      const mount = resolveMountPoint();
+      mount.insertBefore(galleryShell, mount.firstChild);
     }
-    spaceElement.appendChild(root);
+
+    placeControlPanel(controlPanel, galleryShell);
+
+    normalizePanelContainer(controlPanel);
+    normalizePanelContainer(galleryShell);
     attachPanelHandlers();
     updatePanelMode();
-    return true;
   }
 
   function sanitizeFileName(name) {
@@ -1292,6 +1412,92 @@
       return 'three';
     }
     return 'auto';
+  }
+
+  function relaxSpaceConstraints(spaceElement) {
+    if (!spaceElement) {
+      return;
+    }
+    if (spaceElement.dataset.kwpRelaxed === '1') {
+      ensureSpaceLayoutStyles(spaceElement);
+      return;
+    }
+    spaceElement.dataset.kwpRelaxed = '1';
+    Object.assign(spaceElement.style, {
+      width: '100%',
+      maxWidth: 'none',
+      height: 'auto',
+      maxHeight: 'none',
+      overflow: 'visible'
+    });
+    const ancestors = [
+      spaceElement.parentElement,
+      spaceElement.closest('.control-value-gaia'),
+      spaceElement.closest('.value-outer-gaia'),
+      spaceElement.closest('.subtable-row-gaia'),
+      document.querySelector('.record-gaia .box-right-gaia')
+    ].filter(Boolean);
+    ancestors.forEach((el) => {
+      if (el.dataset.kwpRelaxed === '1') {
+        return;
+      }
+      el.dataset.kwpRelaxed = '1';
+      Object.assign(el.style, {
+        width: '100%',
+        maxWidth: 'none',
+        height: 'auto',
+        maxHeight: 'none',
+        overflow: 'visible'
+      });
+    });
+    ensureSpaceLayoutStyles(spaceElement);
+  }
+
+  function ensureSpaceLayoutStyles(spaceElement) {
+    const code = state.settings.spaceFieldCode;
+    if (!spaceElement || !code) {
+      return;
+    }
+    const styleId = `kwp-space-style-${code}`;
+    if (document.getElementById(styleId)) {
+      return;
+    }
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+      #space_${code} {
+        width: 100% !important;
+        max-width: none !important;
+        overflow: visible !important;
+      }
+      #space_${code} * {
+        max-height: none !important;
+      }
+      #space_${code} .kwp-panel {
+        width: 100%;
+        max-width: none;
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function normalizePanelContainer(panel) {
+    if (!panel) {
+      return;
+    }
+    panel.style.width = '100%';
+    panel.style.boxSizing = 'border-box';
+    panel.style.maxWidth = '100%';
+    const parent = panel.parentElement;
+    if (!parent) {
+      return;
+    }
+    const style = window.getComputedStyle(parent);
+    if (style.display === 'grid') {
+      panel.style.gridColumn = '1 / -1';
+    } else if (style.display === 'flex') {
+      panel.style.flex = '1 1 100%';
+    }
   }
 
   async function createDrawableSource(file) {
@@ -1498,11 +1704,10 @@
       }
       await appendRows(processed);
       await postComment(processed.length);
-      reloadDetailWithFeedback(`${processed.length}件のファイルを追加しました。`, 'success');
-      return;
+      window.location.reload();
     } catch (error) {
       console.error(error);
-      pushToast('ファイルの追加に失敗しました。', 'error');
+      pushToast('証拠の追加に失敗しました。', 'error');
     } finally {
       setBusy(false);
       if (state.elements.fileInput) {
@@ -1537,18 +1742,18 @@
         gap: 12px;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       }
-      .kwp-root {
-        position: relative;
-        display: flex;
-        flex-direction: column;
-        gap: 0;
+      .kwp-panel--sidebar {
+        position: static;
+        box-shadow: none;
+        margin-bottom: 12px;
         width: 100%;
-        box-sizing: border-box;
       }
-      .kwp-root .kwp-panel {
-        width: 100%;
-        max-width: 100%;
-        box-sizing: border-box;
+      .kwp-panel--sidebar .kwp-panel__controls {
+        flex-wrap: wrap;
+        justify-content: flex-start;
+      }
+      .kwp-panel--sidebar .kwp-dropzone {
+        min-height: 120px;
       }
       .kwp-panel__header {
         display: flex;
@@ -1590,11 +1795,6 @@
       }
       .kwp-button--ghost {
         border: 1px dashed #cbd5e1;
-      }
-      .kwp-button--compact {
-        height: 30px;
-        padding: 0 10px;
-        font-size: 12px;
       }
       .kwp-upload {
         position: relative;
@@ -1704,24 +1904,6 @@
       .kwp-gallery--scroll .kwp-card {
         flex: 0 0 220px;
       }
-      .kwp-card--upload {
-        align-items: stretch;
-        background: linear-gradient(135deg, #f8fbff, #f5f9ff);
-        border-style: dashed;
-      }
-      .kwp-card__upload {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        width: 100%;
-        min-height: 0;
-      }
-      .kwp-card__upload-actions {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-        flex-wrap: wrap;
-      }
       .kwp-card__thumb {
         border: none;
         background: transparent;
@@ -1795,15 +1977,6 @@
       .kwp-card__thumb-img--error {
         filter: grayscale(1);
         opacity: 0.25;
-      }
-      .kwp-dropzone--compact {
-        min-height: 56px;
-        padding: 8px 12px;
-        text-align: left;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-start;
-        justify-content: center;
       }
       .kwp-card__thumb--image:hover img {
         transform: scale(1.04);
@@ -1900,20 +2073,16 @@
       .kwp-toast--error {
         background: #dc2626;
       }
-      .kwp-toast--warning {
-        background: #d97706;
-      }
-      .kwp-root--busy::after {
+      .kwp-panel--busy::after {
         content: '';
         position: absolute;
         inset: 0;
         background: rgba(255, 255, 255, 0.6);
         border-radius: 12px;
         pointer-events: none;
-        z-index: 1;
       }
-      .kwp-card--readonly .kwp-card__upload-actions,
-      .kwp-card--readonly .kwp-dropzone {
+      .kwp-panel--readonly .kwp-panel__controls,
+      .kwp-panel--readonly .kwp-dropzone {
         display: none;
       }
       .kwp-lightbox {
@@ -2156,10 +2325,6 @@
       console.warn('kintone-work-progress: 設定が不足しているため停止します。');
       return false;
     }
-    if (!state.settings.spaceFieldCode) {
-      console.warn('kintone-work-progress: 表示スペースが未設定のため停止します。');
-      return false;
-    }
     state.metadataLoaded = false;
     state.fieldTypes = {};
     state.subtableLabel = state.settings.subtableCode || '';
@@ -2173,21 +2338,16 @@
         return event;
       }
       state.recordId = event.recordId || kintone.app.record.getId();
-      if (!insertPanel()) {
-        return event;
-      }
-      if (state.settings.hideNativeSubtable) {
-        hideNativeSubtable();
-      }
+      hideNativeSubtable();
+      insertPanel();
       await loadFieldMetadata();
       applyRecordSnapshot(event.record);
       try {
         await refreshRecord({ silent: true });
       } catch (error) {
         console.error(error);
-        pushToast('ファイルを読み込めませんでした。', 'error');
+        pushToast('証拠を読み込めませんでした。', 'error');
       }
-      restoreReloadState();
       return event;
     });
   });

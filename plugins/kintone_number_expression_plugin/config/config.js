@@ -40,11 +40,44 @@
     var M = L==='ja'?JA:EN; return M[key]||key;
   }
 
+  function getAppIdFromUrl(urlLike){
+    if (!urlLike) return '';
+    try{
+      var url = new URL(urlLike, location.origin);
+      var app = url.searchParams.get('app');
+      if (app) return app;
+      var parts = url.pathname.split('/').filter(Boolean);
+      for (var i = 0; i < parts.length - 1; i++){
+        if (parts[i] === 'app' && /^\d+$/.test(parts[i + 1])) return parts[i + 1];
+      }
+    }catch(_){ }
+    return '';
+  }
+
   function getAppId(){
-    var qs = new URLSearchParams(location.search);
-    if (qs.get('app')) return qs.get('app');
-    var m = location.pathname.match(/\/k\/admin\/app\/(\d+)\/plugin/);
-    return m ? m[1] : '';
+    return getAppIdFromUrl(location.href) || getAppIdFromUrl(document.referrer);
+  }
+
+  function getPluginListUrl(){
+    try{
+      var url = new URL(location.href);
+      var idx = url.pathname.indexOf('/plugin');
+      if (idx >= 0){
+        return url.origin + url.pathname.slice(0, idx + '/plugin'.length) + '/#/';
+      }
+    }catch(_){ }
+    return document.referrer || '';
+  }
+
+  function navigateToPluginList(){
+    var url = getPluginListUrl();
+    if (url){
+      location.href = url;
+      return;
+    }
+    if (history.length > 1){
+      history.back();
+    }
   }
 
   async function fetchForm(){
@@ -262,10 +295,10 @@
         });
       })();
       saveConfig({ top: selTop, sub: selSub }, { mapTop: newMapTop, mapSub: newMapSub }, function(){
-        var app = getAppId(); location.href = '/k/admin/app/' + app + '/plugin/#/';
+        navigateToPluginList();
       });
     };
-    $('#cancel').onclick = function(){ var app = getAppId(); location.href = '/k/admin/app/' + app + '/plugin/#/'; };
+    $('#cancel').onclick = function(){ navigateToPluginList(); };
 
     // 現在の設定のサマリ
     var summary = el('div', { style:'margin-top:8px; font-size:12px; color:#6b7280;' }, [

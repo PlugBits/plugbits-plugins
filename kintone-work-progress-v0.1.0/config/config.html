@@ -51,9 +51,9 @@
           </div>
 
           <div class="kwp-field">
-            <label class="kwp-field__label" for="spaceFieldCode">表示スペース<span class="kwp-field__required">必須</span></label>
+            <label class="kwp-field__label" for="spaceFieldCode">表示スペース</label>
             <select class="kwp-field__input" id="spaceFieldCode" name="spaceFieldCode" disabled></select>
-            <p class="kwp-field__hint">ギャラリーとアップロードUIを表示するスペースフィールドを選択します。DOM自動配置は使用しません。</p>
+            <p class="kwp-field__hint">ギャラリーを表示するスペースフィールド。未選択の場合は既定位置に挿入します。</p>
           </div>
         </section>
 
@@ -107,14 +107,6 @@
             <input class="kwp-field__input" id="memoTemplate" name="memoTemplate" type="text" autocomplete="off" placeholder="例: スクショ追加">
             <p class="kwp-field__hint">新規追加時にメモへ挿入する初期文字列。</p>
           </div>
-          <fieldset class="kwp-field kwp-field--group">
-            <legend class="kwp-field__label">元サブテーブル表示</legend>
-            <label class="kwp-switch">
-              <input id="hideNativeSubtable" name="hideNativeSubtable" type="checkbox">
-              <span>kintone標準のサブテーブルを隠す</span>
-            </label>
-            <p class="kwp-field__hint">既定では表示したままにします。他プラグインや障害時の退避経路を残すためです。</p>
-          </fieldset>
           <fieldset class="kwp-field kwp-field--group">
             <legend class="kwp-field__label">レコードコメント</legend>
             <label class="kwp-switch">
