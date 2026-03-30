@@ -14,7 +14,6 @@
     timestampFieldCode: '',
     timestampFieldType: '',
     spaceFieldCode: '',
-    hideNativeSubtable: false,
     gridColumns: 'auto',
     layout: 'grid',
     compressionEnabled: true,
@@ -41,7 +40,6 @@
     maxImageEdge: document.getElementById('maxImageEdge'),
     imageQuality: document.getElementById('imageQuality'),
     memoTemplate: document.getElementById('memoTemplate'),
-    hideNativeSubtable: document.getElementById('hideNativeSubtable'),
     commentEnabled: document.getElementById('commentEnabled'),
     commentBody: document.getElementById('commentBody'),
     save: document.getElementById('save'),
@@ -144,6 +142,7 @@
       select.appendChild(createOption(opt.value, opt.label));
     });
   }
+
   function findFieldOptions(subtableCode, predicate) {
     const fields = state.subtableMap[subtableCode];
     if (!Array.isArray(fields)) {
@@ -246,22 +245,10 @@
     setLoadingState({ loading: true });
     try {
       const appId = kintone.app.getId();
-      const previewRequests = [
-        kintone.api(kintone.api.url('/k/v1/preview/app/form/fields', true), 'GET', { app: appId }),
-        kintone.api(kintone.api.url('/k/v1/preview/app/form/layout', true), 'GET', { app: appId })
-      ];
-      const liveRequests = [
+      const [fieldsResponse, layoutResponse] = await Promise.all([
         kintone.api(kintone.api.url('/k/v1/app/form/fields', true), 'GET', { app: appId }),
         kintone.api(kintone.api.url('/k/v1/app/form/layout', true), 'GET', { app: appId })
-      ];
-      let fieldsResponse;
-      let layoutResponse;
-      try {
-        [fieldsResponse, layoutResponse] = await Promise.all(previewRequests);
-      } catch (previewError) {
-        console.warn('kintone-work-progress: preview form metadata lookup failed, falling back to live metadata.', previewError);
-        [fieldsResponse, layoutResponse] = await Promise.all(liveRequests);
-      }
+      ]);
 
       const properties = fieldsResponse.properties || {};
       const subtableEntries = Object.keys(properties)
@@ -283,7 +270,7 @@
 
       const spaceEntries = Object.keys(properties)
         .map((code) => properties[code])
-        .filter((prop) => prop.type === 'SPACER' || prop.type === 'SPACE');
+        .filter((prop) => prop.type === 'SPACER');
 
       const spaceMap = new Map();
       spaceEntries.forEach((prop) => {
@@ -301,7 +288,7 @@
           node.forEach((child) => walk(child));
           return;
         }
-        if (node.type === 'SPACER' || node.type === 'SPACE') {
+        if (node.type === 'SPACER') {
           const spaceId = node.elementId || node.code;
           if (spaceId && !spaceMap.has(spaceId)) {
             spaceMap.set(spaceId, node.label || spaceId);
@@ -327,14 +314,8 @@
       );
       controls.subtableCode.disabled = state.subtableOptions.length === 0;
 
-      populateSelect(
-        controls.spaceFieldCode,
-        state.spaceOptions,
-        state.spaceOptions.length
-          ? { value: '', label: '選択してください', disabled: true }
-          : { value: '', label: 'スペースフィールドが見つかりません', disabled: true }
-      );
-      controls.spaceFieldCode.disabled = state.spaceOptions.length === 0;
+      populateSelect(controls.spaceFieldCode, [{ value: '', label: '自動配置（推奨）' }, ...state.spaceOptions]);
+      controls.spaceFieldCode.disabled = false;
 
       state.metadataLoaded = true;
       setLoadingState({ loading: false });
@@ -351,7 +332,6 @@
     controls.maxImageEdge.value = settings.maxImageEdge;
     controls.imageQuality.value = settings.imageQuality;
     controls.memoTemplate.value = settings.memoTemplate || '';
-    controls.hideNativeSubtable.checked = Boolean(settings.hideNativeSubtable);
     controls.commentEnabled.checked = Boolean(settings.commentEnabled);
     controls.commentBody.value = settings.commentBody || '';
     controls.gridColumns.value = normalizeGridColumnsValue(settings.gridColumns);
@@ -372,7 +352,7 @@
     handleSubtableChange(controls.subtableCode.value, settings);
 
     setSelectValue(controls.spaceFieldCode, settings.spaceFieldCode || '');
-    ensureFirstEnabledOption(controls.spaceFieldCode);
+    ensureFirstEnabledOption(controls.spaceFieldCode, true);
   }
 
   function collectSettings() {
@@ -391,7 +371,6 @@
       timestampFieldCode,
       timestampFieldType: timestampFieldDefinition?.type || '',
       spaceFieldCode: controls.spaceFieldCode.value,
-      hideNativeSubtable: controls.hideNativeSubtable.checked,
       gridColumns: controls.gridColumns.value,
       layout: controls.layout.value,
       compressionEnabled: controls.compressionEnabled.checked,
@@ -414,9 +393,6 @@
     }
     if (!settings.memoFieldCode) {
       errors.push('メモフィールドを選択してください。');
-    }
-    if (!settings.spaceFieldCode) {
-      errors.push('表示スペースを選択してください。');
     }
     if (settings.compressionEnabled) {
       if (!Number.isFinite(settings.maxImageEdge) || settings.maxImageEdge < 200 || settings.maxImageEdge > 4000) {
