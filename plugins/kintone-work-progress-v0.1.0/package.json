@@ -1,5 +1,5 @@
 {
-  "name": "kintone-work-progress",
+  "name": "kintone-subtable-gallery",
   "private": true,
   "scripts": {
     "clean": "rimraf dist ship",
