@@ -1,0 +1,34 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.0",
+  "type": "APP",
+  "name": {
+    "ja": "サブテーブルギャラリー化プラグイン",
+    "en": "Work Progress Gallery"
+  },
+  "description": {
+    "ja": "詳細画面に添付ファイルのギャラリーを追加し、貼り付けやドラッグ&ドロップで画像を保存します。",
+    "en": "Adds a work progress gallery on record details so teams can paste or drop screenshots and keep lightweight progress logs."
+  },
+  "icon": "images/icon.png",
+  "homepage_url": {
+    "ja": "https://plugbits.app",
+    "en": "https://plugbits.app"
+  },
+  "config": {
+    "html": "config/config.html",
+    "js": [
+      "config/config.js"
+    ],
+    "css": [
+      "config/config.css"
+    ],
+    "required_params": []
+  },
+  "desktop": {
+    "js": [
+      "app/plugin.js"
+    ],
+    "css": []
+  }
+}
