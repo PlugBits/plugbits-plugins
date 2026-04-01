@@ -7,8 +7,8 @@
     "clean": "rimraf dist ship",
     "build": "node -e \"console.log('build skipped')\"",
     "lint": "eslint . || exit 0",
-    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/outlook-template.ppk --out dist/outlook-template.zip",
-    "pack": "mkdirp dist && kintone-plugin-packer . --ppk .keys/outlook-template.ppk --out dist/outlook-template.zip"
+    "pack:init": "node ../../scripts/pack-plugin.mjs --out dist/outlook-template.zip .",
+    "pack": "node ../../scripts/pack-plugin.mjs --out dist/outlook-template.zip --ppk .keys/outlook-template.ppk ."
  
   },
   "devDependencies": {

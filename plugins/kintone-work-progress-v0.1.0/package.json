@@ -5,8 +5,8 @@
     "clean": "rimraf dist ship",
     "build": "node -e \"console.log('build skipped')\"",
     "lint": "eslint . || exit 0",
-    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --out dist/subtable-gallery-plugin.zip",
-    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/work-progress.ppk --out dist/subtable-gallery-plugin.zip ."
+    "pack:init": "node ../../scripts/pack-plugin.mjs --out dist/subtable-gallery-plugin.zip .",
+    "pack": "node ../../scripts/pack-plugin.mjs --out dist/subtable-gallery-plugin.zip --ppk .keys/work-progress.ppk ."
   },
   "devDependencies": {},
   "engines": {
