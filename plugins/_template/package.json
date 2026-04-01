@@ -5,8 +5,8 @@
     "clean": "rimraf dist ship",
     "build": "node -e \"console.log('build skipped')\"",
     "lint": "eslint . || exit 0",
-    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/plugin.ppk --out dist/plugin.zip",
-    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/plugin.ppk --out dist/plugin.zip ."
+    "pack:init": "node -e \"console.log('template pack:init skipped')\"",
+    "pack": "node -e \"console.log('template pack skipped')\""
   },
    "devDependencies": {
   },

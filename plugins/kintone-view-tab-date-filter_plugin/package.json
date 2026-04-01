@@ -7,8 +7,8 @@
     "clean": "rimraf dist ship",
     "build": "node -e \"console.log('build skipped')\"",
     "lint": "eslint . || exit 0",
-    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/view-tab-date-filter.ppk --out dist/view-tab-date-filter.zip .",
-    "pack:init": "mkdirp .keys dist && kintone-plugin-packer . --out dist/view-tab-date-filter.zip"
+    "pack": "node ../../scripts/pack-plugin.mjs --out dist/view-tab-date-filter.zip --ppk .keys/view-tab-date-filter.ppk .",
+    "pack:init": "node ../../scripts/pack-plugin.mjs --out dist/view-tab-date-filter.zip ."
   },
   "devDependencies": {},
   "engines": {

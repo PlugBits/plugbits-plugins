@@ -6,8 +6,8 @@
     "clean": "rimraf dist ship",
     "build": "node -e \"console.log('build skipped')\"",
     "lint": "eslint . || exit 0",
-    "pack": "mkdirp .keys dist && kintone-plugin-packer . --ppk .keys/auto-signage.ppk --out dist/auto-signage-plugin.zip .",
-    "pack_init": "kintone-plugin-packer --out dist/auto-signage-plugin.zip ."
+    "pack": "node ../../scripts/pack-plugin.mjs --out dist/auto-signage-plugin.zip --ppk .keys/auto-signage.ppk .",
+    "pack:init": "node ../../scripts/pack-plugin.mjs --out dist/auto-signage-plugin.zip ."
   },
     "devDependencies": {
   },
