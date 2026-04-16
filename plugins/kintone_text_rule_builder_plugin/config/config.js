@@ -3,6 +3,7 @@
 
   var SUPPORTED_FIELD_TYPES = {
     NUMBER: 'number',
+    CALC: 'number',
     SINGLE_LINE_TEXT: 'text',
     RADIO_BUTTON: 'choice',
     DROP_DOWN: 'choice',
@@ -103,15 +104,70 @@
     return Array.isArray(value) ? value.slice() : value;
   }
 
+  function usesRangeValue(op) {
+    return op === 'between' || op === 'notBetween';
+  }
+
+  function usesListValue(op) {
+    return op === 'in' || op === 'notIn';
+  }
+
+  function supportsFieldReference(type, op) {
+    if (isValueLessOperator(op) || usesRangeValue(op) || usesListValue(op)) return false;
+    if (type === 'number') return ['=', '!=', '>', '>=', '<', '<='].indexOf(op) >= 0;
+    if (type === 'choice') return ['=', '!='].indexOf(op) >= 0;
+    if (type === 'date' || type === 'datetime') return ['=', '!=', 'before', 'after'].indexOf(op) >= 0;
+    return ['=', '!=', 'contains', 'notContains', 'startsWith', 'endsWith'].indexOf(op) >= 0;
+  }
+
+  function supportsExpressionReference(type, op) {
+    return type === 'number' && ['=', '!=', '>', '>=', '<', '<='].indexOf(op) >= 0;
+  }
+
+  function getAvailableValueModes(condition) {
+    var current = condition || {};
+    var modes = ['literal'];
+    var type = current.type || 'text';
+    var op = current.op || '=';
+    if (supportsFieldReference(type, op)) modes.push('field');
+    if (supportsExpressionReference(type, op)) modes.push('expression');
+    return modes;
+  }
+
+  function getNormalizedValueMode(condition) {
+    var mode = condition && condition.valueMode ? condition.valueMode : 'literal';
+    return getAvailableValueModes(condition).indexOf(mode) >= 0 ? mode : 'literal';
+  }
+
+  function resetConditionValueInputs(condition) {
+    condition.valueMode = 'literal';
+    condition.valueField = '';
+    condition.valueExpression = '';
+    if (usesRangeValue(condition.op)) {
+      condition.value = ['', ''];
+      return;
+    }
+    if (condition.type === 'choice' && usesListValue(condition.op)) {
+      condition.value = [];
+      return;
+    }
+    condition.value = '';
+  }
+
   function normalizeCondition(condition) {
     var normalized = condition && typeof condition === 'object' ? condition : {};
-    return {
+    var next = {
       id: normalized.id || newId('cond'),
       field: normalized.field || '',
       type: normalized.type || 'text',
       op: normalized.op || '=',
-      value: cloneValue(normalized.value)
+      value: cloneValue(normalized.value),
+      valueMode: normalized.valueMode || 'literal',
+      valueField: normalized.valueField || '',
+      valueExpression: normalized.valueExpression == null ? '' : String(normalized.valueExpression)
     };
+    next.valueMode = getNormalizedValueMode(next);
+    return next;
   }
 
   function createDefaultCondition(fieldMeta) {
@@ -210,7 +266,10 @@
                   field: condition.field,
                   type: condition.type,
                   op: condition.op,
-                  value: cloneValue(condition.value)
+                  value: cloneValue(condition.value),
+                  valueMode: getNormalizedValueMode(condition),
+                  valueField: condition.valueField || '',
+                  valueExpression: condition.valueExpression == null ? '' : String(condition.valueExpression)
                 };
               })
             };
@@ -342,6 +401,25 @@
   function getFieldLabel(code) {
     var field = fieldByCode(state.form.conditionFields, code) || fieldByCode(state.form.outputFields, code);
     return field ? field.label : code;
+  }
+
+  function isComparableFieldType(leftType, rightType) {
+    if (leftType === 'date' || leftType === 'datetime') {
+      return rightType === 'date' || rightType === 'datetime';
+    }
+    return leftType === rightType;
+  }
+
+  function getComparableFieldOptions(condition) {
+    var expectedType = condition && condition.type ? condition.type : 'text';
+    return state.form.conditionFields.filter(function(field) {
+      return isComparableFieldType(expectedType, field.conditionType);
+    }).map(function(field) {
+      return {
+        value: field.code,
+        label: field.label || field.code
+      };
+    });
   }
 
   function getRuleSetById(ruleSetId) {
@@ -499,6 +577,153 @@
     return text ? Number(text) : NaN;
   }
 
+  function tokenizeNumericExpression(expression) {
+    var source = String(expression == null ? '' : expression);
+    var tokens = [];
+    var index = 0;
+
+    while (index < source.length) {
+      var char = source.charAt(index);
+      if (/\s/.test(char)) {
+        index += 1;
+        continue;
+      }
+      if ('+-*/()'.indexOf(char) >= 0) {
+        tokens.push({ type: char, value: char });
+        index += 1;
+        continue;
+      }
+      if (char === '[') {
+        var endIndex = source.indexOf(']', index + 1);
+        if (endIndex < 0) throw new Error('Invalid expression');
+        var code = source.slice(index + 1, endIndex).trim();
+        if (!code) throw new Error('Invalid expression');
+        tokens.push({ type: 'field', value: code });
+        index = endIndex + 1;
+        continue;
+      }
+      if ((char >= '0' && char <= '9') || char === '.') {
+        var cursor = index + 1;
+        while (cursor < source.length && /[\d,.]/.test(source.charAt(cursor))) cursor += 1;
+        var numberToken = source.slice(index, cursor);
+        if (isNaN(parseNumber(numberToken))) throw new Error('Invalid expression');
+        tokens.push({ type: 'number', value: numberToken });
+        index = cursor;
+        continue;
+      }
+      throw new Error('Invalid expression');
+    }
+
+    return tokens;
+  }
+
+  function runNumericExpression(expression, resolveField) {
+    try {
+      var tokens = tokenizeNumericExpression(expression);
+      var index = 0;
+
+      function peek() {
+        return tokens[index] || null;
+      }
+
+      function consume(expectedType) {
+        var token = peek();
+        if (!token || (expectedType && token.type !== expectedType)) throw new Error('Unexpected token');
+        index += 1;
+        return token;
+      }
+
+      function parsePrimary() {
+        var token = peek();
+        if (!token) throw new Error('Unexpected end');
+        if (token.type === 'number') return parseNumber(consume('number').value);
+        if (token.type === 'field') {
+          var resolved = resolveField ? resolveField(consume('field').value) : NaN;
+          if (isNaN(resolved)) throw new Error('Invalid field value');
+          return resolved;
+        }
+        if (token.type === '(') {
+          consume('(');
+          var value = parseExpression();
+          consume(')');
+          return value;
+        }
+        throw new Error('Unexpected token');
+      }
+
+      function parseUnary() {
+        var token = peek();
+        if (token && (token.type === '+' || token.type === '-')) {
+          consume(token.type);
+          var value = parseUnary();
+          return token.type === '-' ? -value : value;
+        }
+        return parsePrimary();
+      }
+
+      function parseMulDiv() {
+        var value = parseUnary();
+        while (true) {
+          var token = peek();
+          if (!token || (token.type !== '*' && token.type !== '/')) return value;
+          consume(token.type);
+          var right = parseUnary();
+          value = token.type === '*' ? value * right : value / right;
+          if (!isFinite(value)) throw new Error('Non-finite result');
+        }
+      }
+
+      function parseExpression() {
+        var value = parseMulDiv();
+        while (true) {
+          var token = peek();
+          if (!token || (token.type !== '+' && token.type !== '-')) return value;
+          consume(token.type);
+          var right = parseMulDiv();
+          value = token.type === '+' ? value + right : value - right;
+          if (!isFinite(value)) throw new Error('Non-finite result');
+        }
+      }
+
+      if (!tokens.length) return NaN;
+      var result = parseExpression();
+      if (index !== tokens.length || !isFinite(result)) return NaN;
+      return result;
+    } catch (_) {
+      return NaN;
+    }
+  }
+
+  function getExpressionFieldCodes(expression) {
+    try {
+      var seen = Object.create(null);
+      var codes = [];
+      tokenizeNumericExpression(expression).forEach(function(token) {
+        if (token.type !== 'field' || seen[token.value]) return;
+        seen[token.value] = true;
+        codes.push(token.value);
+      });
+      return codes;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function isValidNumericExpression(expression) {
+    return !isNaN(runNumericExpression(expression, function() { return 0; }));
+  }
+
+  function getRecordFieldValue(record, code) {
+    var field = record[code];
+    return field ? field.value : '';
+  }
+
+  function evaluateNumericExpression(expression, record) {
+    return runNumericExpression(expression, function(code) {
+      return parseNumber(getRecordFieldValue(record, code));
+    });
+  }
+
   function parseDayValue(value) {
     if (!value) return null;
     if (value instanceof Date) return new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -535,7 +760,7 @@
     condition.field = code;
     condition.type = meta ? meta.conditionType : 'text';
     condition.op = (OPERATOR_MAP[condition.type] || ['='])[0];
-    condition.value = condition.type === 'choice' ? [] : '';
+    resetConditionValueInputs(condition);
   }
 
   function createRecordFromValues(values) {
@@ -546,10 +771,58 @@
     return record;
   }
 
+  function resolveNumberComparisonValue(condition, record) {
+    var mode = getNormalizedValueMode(condition);
+    if (mode === 'field') {
+      if (!condition.valueField) return NaN;
+      return parseNumber(getRecordFieldValue(record, condition.valueField));
+    }
+    if (mode === 'expression') return evaluateNumericExpression(condition.valueExpression, record);
+    return parseNumber(condition.value);
+  }
+
+  function resolveTextComparisonValue(condition, record) {
+    var mode = getNormalizedValueMode(condition);
+    if (mode === 'field') {
+      if (!condition.valueField) return null;
+      return normalizeText(getRecordFieldValue(record, condition.valueField));
+    }
+    return normalizeText(condition.value);
+  }
+
+  function resolveDateComparisonValue(condition, record) {
+    var mode = getNormalizedValueMode(condition);
+    if (mode === 'field') {
+      if (!condition.valueField) return null;
+      return parseDayValue(getRecordFieldValue(record, condition.valueField));
+    }
+    return parseDayValue(condition.value);
+  }
+
+  function getConditionReferencedFieldCodes(condition) {
+    var seen = Object.create(null);
+    var codes = [];
+
+    function add(code) {
+      if (!code || seen[code]) return;
+      seen[code] = true;
+      codes.push(code);
+    }
+
+    if (!condition) return codes;
+
+    add(condition.field);
+    if (getNormalizedValueMode(condition) === 'field') add(condition.valueField);
+    if (getNormalizedValueMode(condition) === 'expression') {
+      getExpressionFieldCodes(condition.valueExpression).forEach(add);
+    }
+
+    return codes;
+  }
+
   function matchesCondition(condition, record) {
     if (!condition || !condition.field) return false;
-    var field = record[condition.field];
-    var rawValue = field ? field.value : '';
+    var rawValue = getRecordFieldValue(record, condition.field);
     var op = condition.op || '=';
     var type = condition.type || 'text';
 
@@ -567,7 +840,7 @@
         var inRange = numberValue >= Math.min(from, to) && numberValue <= Math.max(from, to);
         return op === 'between' ? inRange : !inRange;
       }
-      var compareNumber = parseNumber(condition.value);
+      var compareNumber = resolveNumberComparisonValue(condition, record);
       if (isNaN(compareNumber)) return false;
       if (op === '=') return numberValue === compareNumber;
       if (op === '!=') return numberValue !== compareNumber;
@@ -580,8 +853,10 @@
 
     if (type === 'choice') {
       var currentChoice = normalizeText(rawValue);
-      if (op === '=') return currentChoice === normalizeText(condition.value);
-      if (op === '!=') return currentChoice !== normalizeText(condition.value);
+      var compareChoice = resolveTextComparisonValue(condition, record);
+      if (compareChoice == null) return false;
+      if (op === '=') return currentChoice === compareChoice;
+      if (op === '!=') return currentChoice !== compareChoice;
       var list = Array.isArray(condition.value) ? condition.value : [condition.value];
       var normalizedList = list.map(normalizeText);
       if (op === 'in') return normalizedList.indexOf(currentChoice) >= 0;
@@ -600,7 +875,7 @@
       if (op === 'withinDays') return Math.abs(dayDiff(dateValue, currentDay)) <= (parseNumber(condition.value) || 0);
       if (op === 'olderThanDays') return dayDiff(currentDay, dateValue) > (parseNumber(condition.value) || 0);
 
-      var compareDate = parseDayValue(condition.value);
+      var compareDate = resolveDateComparisonValue(condition, record);
       if (!compareDate) return false;
       if (op === '=') return dayDiff(dateValue, compareDate) === 0;
       if (op === '!=') return dayDiff(dateValue, compareDate) !== 0;
@@ -610,7 +885,8 @@
     }
 
     var textValue = normalizeText(rawValue);
-    var compareText = normalizeText(condition.value);
+    var compareText = resolveTextComparisonValue(condition, record);
+    if (compareText == null) return false;
     if (op === '=') return textValue === compareText;
     if (op === '!=') return textValue !== compareText;
     if (op === 'contains') return textValue.indexOf(compareText) >= 0;
@@ -652,7 +928,18 @@
     return value == null || value === '' ? '空欄' : String(value);
   }
 
+  function formatExpressionDisplay(expression) {
+    if (!expression) return '';
+    return String(expression).replace(/\[([^\]]+)\]/g, function(_, code) {
+      var trimmed = code.trim();
+      return '[' + getFieldLabel(trimmed) + ']';
+    });
+  }
+
   function formatConditionValue(condition) {
+    var mode = getNormalizedValueMode(condition);
+    if (mode === 'field') return displayValue(getFieldLabel(condition.valueField));
+    if (mode === 'expression') return displayValue(formatExpressionDisplay(condition.valueExpression));
     if (condition.op === 'between' || condition.op === 'notBetween') {
       var pair = Array.isArray(condition.value) ? condition.value : ['', ''];
       return displayValue(pair[0]) + ' から ' + displayValue(pair[1]);
@@ -747,9 +1034,11 @@
     var codes = [];
     (ruleSet.rules || []).forEach(function(branch) {
       (branch.conditions || []).forEach(function(condition) {
-        if (!condition.field || seen[condition.field]) return;
-        seen[condition.field] = true;
-        codes.push(condition.field);
+        getConditionReferencedFieldCodes(condition).forEach(function(code) {
+          if (seen[code]) return;
+          seen[code] = true;
+          codes.push(code);
+        });
       });
     });
     return codes;
@@ -792,16 +1081,39 @@
         for (var c = 0; c < branch.conditions.length; c++) {
           var condition = branch.conditions[c];
           if (!condition.field) return '見る項目を選んでください。';
-          if (targetFieldCodes.indexOf(condition.field) >= 0) return '文字を入れる項目そのものは条件に使えません。';
+          var referencedCodes = getConditionReferencedFieldCodes(condition);
+          if (referencedCodes.some(function(code) { return targetFieldCodes.indexOf(code) >= 0; })) {
+            return '文字を入れる項目そのものは条件や比較式に使えません。';
+          }
           if (isValueLessOperator(condition.op)) continue;
-          if (condition.op === 'between' || condition.op === 'notBetween') {
+          if (usesRangeValue(condition.op)) {
             if (!Array.isArray(condition.value) || condition.value.length < 2 || condition.value[0] === '' || condition.value[1] === '') {
               return '比較する値を2つ入れてください。';
             }
             continue;
           }
-          if ((condition.op === 'in' || condition.op === 'notIn') && (!Array.isArray(condition.value) || !condition.value.length)) {
+          if (usesListValue(condition.op) && (!Array.isArray(condition.value) || !condition.value.length)) {
             return '比較する値を1つ以上選んでください。';
+          }
+          var valueMode = getNormalizedValueMode(condition);
+          if (valueMode === 'field') {
+            if (!condition.valueField) return '比較先の項目を選んでください。';
+            if (!getComparableFieldOptions(condition).some(function(option) { return option.value === condition.valueField; })) {
+              return '比較先の項目の型が合っていません。';
+            }
+            continue;
+          }
+          if (valueMode === 'expression') {
+            if (condition.valueExpression == null || normalizeText(condition.valueExpression) === '') return '数式を入れてください。';
+            if (!isValidNumericExpression(condition.valueExpression)) return '数式の書き方が正しくありません。';
+            var expressionCodes = getExpressionFieldCodes(condition.valueExpression);
+            for (var e = 0; e < expressionCodes.length; e++) {
+              var expressionMeta = getConditionFieldMeta(expressionCodes[e]);
+              if (!expressionMeta || expressionMeta.conditionType !== 'number') {
+                return '数式では数値項目だけを参照できます。';
+              }
+            }
+            continue;
           }
           if (condition.value == null || condition.value === '') return '比較する値を入れてください。';
         }
@@ -833,12 +1145,13 @@
     var type = condition.type || 'text';
     var op = condition.op || '=';
     var fieldMeta = getConditionFieldMeta(condition.field);
+    var valueMode = getNormalizedValueMode(condition);
 
     if (isValueLessOperator(op)) {
       return createElement('div', { class: 'ktrb-help', text: 'この比較方法では値は不要です。' });
     }
 
-    if (type === 'number' && (op === 'between' || op === 'notBetween')) {
+    if (type === 'number' && usesRangeValue(op)) {
       var pair = Array.isArray(condition.value) ? condition.value : ['', ''];
       var wrap = createElement('div', { class: 'ktrb-inline' });
       ['ここから', 'ここまで'].forEach(function(label, index) {
@@ -858,8 +1171,46 @@
       return wrap;
     }
 
+    if (valueMode === 'field') {
+      var valueFieldSelect = createElement('select', { class: 'ktrb-select' });
+      renderSelectOptions(valueFieldSelect, getComparableFieldOptions(condition), condition.valueField, '比較先の項目を選んでください');
+      valueFieldSelect.addEventListener('change', function() {
+        onChange({
+          valueMode: 'field',
+          valueField: valueFieldSelect.value,
+          value: '',
+          valueExpression: ''
+        });
+      });
+      return valueFieldSelect;
+    }
+
+    if (valueMode === 'expression') {
+      var expressionWrap = createElement('div', { class: 'ktrb-stack' });
+      var expressionInput = createElement('input', {
+        class: 'ktrb-input',
+        type: 'text',
+        value: condition.valueExpression == null ? '' : condition.valueExpression,
+        placeholder: '例: [unit_price] * [quantity]'
+      });
+      expressionInput.addEventListener('input', function() {
+        onChange({
+          valueMode: 'expression',
+          valueExpression: expressionInput.value,
+          valueField: '',
+          value: ''
+        });
+      });
+      expressionWrap.appendChild(expressionInput);
+      expressionWrap.appendChild(createElement('div', {
+        class: 'ktrb-help',
+        text: '数式では [項目コード] を使えます。利用できるのは数値項目のみです。'
+      }));
+      return expressionWrap;
+    }
+
     if (type === 'choice') {
-      if (op === 'in' || op === 'notIn') {
+      if (usesListValue(op)) {
         var choiceWrap = createElement('div', { class: 'ktrb-choice-group' });
         var selected = Array.isArray(condition.value) ? condition.value : [];
         (fieldMeta && fieldMeta.options || []).forEach(function(option) {
@@ -937,16 +1288,47 @@
     }), condition.op, '');
     operatorSelect.addEventListener('change', function() {
       condition.op = operatorSelect.value;
-      if (condition.op === 'between' || condition.op === 'notBetween') condition.value = ['', ''];
-      else if (condition.type === 'choice' && (condition.op === 'in' || condition.op === 'notIn')) condition.value = [];
-      else if (isValueLessOperator(condition.op)) condition.value = '';
-      else if (Array.isArray(condition.value)) condition.value = '';
+      resetConditionValueInputs(condition);
       invalidateTestResult();
       renderRuleEditor();
     });
 
+    var valueModeInput = createElement('div', { class: 'ktrb-help', text: '固定値' });
+    var valueModes = getAvailableValueModes(condition);
+    if (valueModes.length > 1) {
+      var valueModeSelect = createElement('select', { class: 'ktrb-select' });
+      renderSelectOptions(valueModeSelect, valueModes.map(function(mode) {
+        return {
+          value: mode,
+          label: mode === 'field' ? '他の項目' : (mode === 'expression' ? '数式' : '固定値')
+        };
+      }), getNormalizedValueMode(condition), '');
+      valueModeSelect.addEventListener('change', function() {
+        condition.valueMode = valueModeSelect.value;
+        condition.valueField = '';
+        condition.valueExpression = '';
+        condition.value = '';
+        invalidateTestResult();
+        renderRuleEditor();
+      });
+      valueModeInput = valueModeSelect;
+    } else if (isValueLessOperator(condition.op)) {
+      valueModeInput = createElement('div', { class: 'ktrb-help', text: '不要' });
+    }
+
     var valueInput = createValueInput(condition, function(value) {
-      condition.value = value;
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        condition.valueMode = value.valueMode || condition.valueMode;
+        condition.valueField = value.valueField || '';
+        condition.valueExpression = value.valueExpression || '';
+        condition.value = Object.prototype.hasOwnProperty.call(value, 'value') ? value.value : '';
+      } else {
+        condition.value = value;
+        if (getNormalizedValueMode(condition) === 'literal') {
+          condition.valueField = '';
+          condition.valueExpression = '';
+        }
+      }
       invalidateTestResult();
       if (onUpdatePreview) onUpdatePreview();
     });
@@ -965,6 +1347,7 @@
 
     row.appendChild(fieldSelect);
     row.appendChild(operatorSelect);
+    row.appendChild(valueModeInput);
     row.appendChild(valueInput);
     row.appendChild(actionCell);
     return row;
@@ -993,6 +1376,14 @@
     var conditionHead = createElement('div', { class: 'ktrb-condition-head' }, [
       createElement('span', { text: '見る項目' }),
       createElement('span', { text: '比較方法' }),
+      createElement('span', { text: '比較する値' }),
+      createElement('span', { text: '操作' })
+    ]);
+
+    conditionHead = createElement('div', { class: 'ktrb-condition-head' }, [
+      createElement('span', { text: '見る項目' }),
+      createElement('span', { text: '比較のしかた' }),
+      createElement('span', { text: '比較先' }),
       createElement('span', { text: '比較する値' }),
       createElement('span', { text: '操作' })
     ]);
