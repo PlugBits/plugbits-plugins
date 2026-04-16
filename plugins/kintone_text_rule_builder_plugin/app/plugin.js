@@ -15,15 +15,59 @@
     }
   }
 
+  function usesRangeValue(op) {
+    return op === 'between' || op === 'notBetween';
+  }
+
+  function usesListValue(op) {
+    return op === 'in' || op === 'notIn';
+  }
+
+  function isValueLessOperator(op) {
+    return op === 'isEmpty' || op === 'isNotEmpty' || op === 'today' || op === 'yesterday' || op === 'tomorrow';
+  }
+
+  function supportsFieldReference(type, op) {
+    if (isValueLessOperator(op) || usesRangeValue(op) || usesListValue(op)) return false;
+    if (type === 'number') return ['=', '!=', '>', '>=', '<', '<='].indexOf(op) >= 0;
+    if (type === 'choice') return ['=', '!='].indexOf(op) >= 0;
+    if (type === 'date' || type === 'datetime') return ['=', '!=', 'before', 'after'].indexOf(op) >= 0;
+    return ['=', '!=', 'contains', 'notContains', 'startsWith', 'endsWith'].indexOf(op) >= 0;
+  }
+
+  function supportsExpressionReference(type, op) {
+    return type === 'number' && ['=', '!=', '>', '>=', '<', '<='].indexOf(op) >= 0;
+  }
+
+  function getAvailableValueModes(condition) {
+    var current = condition || {};
+    var modes = ['literal'];
+    var type = current.type || 'text';
+    var op = current.op || '=';
+    if (supportsFieldReference(type, op)) modes.push('field');
+    if (supportsExpressionReference(type, op)) modes.push('expression');
+    return modes;
+  }
+
+  function getNormalizedValueMode(condition) {
+    var mode = condition && condition.valueMode ? condition.valueMode : 'literal';
+    return getAvailableValueModes(condition).indexOf(mode) >= 0 ? mode : 'literal';
+  }
+
   function normalizeCondition(condition) {
     var normalized = condition && typeof condition === 'object' ? condition : {};
-    return {
+    var next = {
       id: normalized.id || '',
       field: normalized.field || '',
       type: normalized.type || 'text',
       op: normalized.op || '=',
-      value: normalized.value
+      value: normalized.value,
+      valueMode: normalized.valueMode || 'literal',
+      valueField: normalized.valueField || '',
+      valueExpression: normalized.valueExpression == null ? '' : String(normalized.valueExpression)
     };
+    next.valueMode = getNormalizedValueMode(next);
+    return next;
   }
 
   function normalizeBranch(branch) {
@@ -115,6 +159,149 @@
     return text ? Number(text) : NaN;
   }
 
+  function tokenizeNumericExpression(expression) {
+    var source = String(expression == null ? '' : expression);
+    var tokens = [];
+    var index = 0;
+
+    while (index < source.length) {
+      var char = source.charAt(index);
+      if (/\s/.test(char)) {
+        index += 1;
+        continue;
+      }
+      if ('+-*/()'.indexOf(char) >= 0) {
+        tokens.push({ type: char, value: char });
+        index += 1;
+        continue;
+      }
+      if (char === '[') {
+        var endIndex = source.indexOf(']', index + 1);
+        if (endIndex < 0) throw new Error('Invalid expression');
+        var code = source.slice(index + 1, endIndex).trim();
+        if (!code) throw new Error('Invalid expression');
+        tokens.push({ type: 'field', value: code });
+        index = endIndex + 1;
+        continue;
+      }
+      if ((char >= '0' && char <= '9') || char === '.') {
+        var cursor = index + 1;
+        while (cursor < source.length && /[\d,.]/.test(source.charAt(cursor))) cursor += 1;
+        var numberToken = source.slice(index, cursor);
+        if (isNaN(parseNumber(numberToken))) throw new Error('Invalid expression');
+        tokens.push({ type: 'number', value: numberToken });
+        index = cursor;
+        continue;
+      }
+      throw new Error('Invalid expression');
+    }
+
+    return tokens;
+  }
+
+  function runNumericExpression(expression, resolveField) {
+    try {
+      var tokens = tokenizeNumericExpression(expression);
+      var index = 0;
+
+      function peek() {
+        return tokens[index] || null;
+      }
+
+      function consume(expectedType) {
+        var token = peek();
+        if (!token || (expectedType && token.type !== expectedType)) throw new Error('Unexpected token');
+        index += 1;
+        return token;
+      }
+
+      function parsePrimary() {
+        var token = peek();
+        if (!token) throw new Error('Unexpected end');
+        if (token.type === 'number') return parseNumber(consume('number').value);
+        if (token.type === 'field') {
+          var resolved = resolveField ? resolveField(consume('field').value) : NaN;
+          if (isNaN(resolved)) throw new Error('Invalid field value');
+          return resolved;
+        }
+        if (token.type === '(') {
+          consume('(');
+          var value = parseExpression();
+          consume(')');
+          return value;
+        }
+        throw new Error('Unexpected token');
+      }
+
+      function parseUnary() {
+        var token = peek();
+        if (token && (token.type === '+' || token.type === '-')) {
+          consume(token.type);
+          var value = parseUnary();
+          return token.type === '-' ? -value : value;
+        }
+        return parsePrimary();
+      }
+
+      function parseMulDiv() {
+        var value = parseUnary();
+        while (true) {
+          var token = peek();
+          if (!token || (token.type !== '*' && token.type !== '/')) return value;
+          consume(token.type);
+          var right = parseUnary();
+          value = token.type === '*' ? value * right : value / right;
+          if (!isFinite(value)) throw new Error('Non-finite result');
+        }
+      }
+
+      function parseExpression() {
+        var value = parseMulDiv();
+        while (true) {
+          var token = peek();
+          if (!token || (token.type !== '+' && token.type !== '-')) return value;
+          consume(token.type);
+          var right = parseMulDiv();
+          value = token.type === '+' ? value + right : value - right;
+          if (!isFinite(value)) throw new Error('Non-finite result');
+        }
+      }
+
+      if (!tokens.length) return NaN;
+      var result = parseExpression();
+      if (index !== tokens.length || !isFinite(result)) return NaN;
+      return result;
+    } catch (_) {
+      return NaN;
+    }
+  }
+
+  function getExpressionFieldCodes(expression) {
+    try {
+      var seen = Object.create(null);
+      var codes = [];
+      tokenizeNumericExpression(expression).forEach(function(token) {
+        if (token.type !== 'field' || seen[token.value]) return;
+        seen[token.value] = true;
+        codes.push(token.value);
+      });
+      return codes;
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function getRecordFieldValue(record, code) {
+    var field = record[code];
+    return field ? field.value : '';
+  }
+
+  function evaluateNumericExpression(expression, record) {
+    return runNumericExpression(expression, function(code) {
+      return parseNumber(getRecordFieldValue(record, code));
+    });
+  }
+
   function parseDayValue(value) {
     if (!value) return null;
     if (value instanceof Date) return new Date(value.getFullYear(), value.getMonth(), value.getDate());
@@ -144,10 +331,58 @@
     return value == null || String(value) === '';
   }
 
+  function resolveNumberComparisonValue(condition, record) {
+    var mode = getNormalizedValueMode(condition);
+    if (mode === 'field') {
+      if (!condition.valueField) return NaN;
+      return parseNumber(getRecordFieldValue(record, condition.valueField));
+    }
+    if (mode === 'expression') return evaluateNumericExpression(condition.valueExpression, record);
+    return parseNumber(condition.value);
+  }
+
+  function resolveTextComparisonValue(condition, record) {
+    var mode = getNormalizedValueMode(condition);
+    if (mode === 'field') {
+      if (!condition.valueField) return null;
+      return normalizeText(getRecordFieldValue(record, condition.valueField));
+    }
+    return normalizeText(condition.value);
+  }
+
+  function resolveDateComparisonValue(condition, record) {
+    var mode = getNormalizedValueMode(condition);
+    if (mode === 'field') {
+      if (!condition.valueField) return null;
+      return parseDayValue(getRecordFieldValue(record, condition.valueField));
+    }
+    return parseDayValue(condition.value);
+  }
+
+  function getConditionReferencedFieldCodes(condition) {
+    var seen = Object.create(null);
+    var codes = [];
+
+    function add(code) {
+      if (!code || seen[code]) return;
+      seen[code] = true;
+      codes.push(code);
+    }
+
+    if (!condition) return codes;
+
+    add(condition.field);
+    if (getNormalizedValueMode(condition) === 'field') add(condition.valueField);
+    if (getNormalizedValueMode(condition) === 'expression') {
+      getExpressionFieldCodes(condition.valueExpression).forEach(add);
+    }
+
+    return codes;
+  }
+
   function matchesCondition(condition, record) {
     if (!condition || !condition.field) return false;
-    var field = record[condition.field];
-    var rawValue = field ? field.value : '';
+    var rawValue = getRecordFieldValue(record, condition.field);
     var op = condition.op || '=';
     var type = condition.type || 'text';
 
@@ -157,7 +392,7 @@
     if (type === 'number') {
       var numberValue = parseNumber(rawValue);
       if (isNaN(numberValue)) return false;
-      if (op === 'between' || op === 'notBetween') {
+      if (usesRangeValue(op)) {
         var pair = Array.isArray(condition.value) ? condition.value : ['', ''];
         var from = parseNumber(pair[0]);
         var to = parseNumber(pair[1]);
@@ -165,7 +400,7 @@
         var inRange = numberValue >= Math.min(from, to) && numberValue <= Math.max(from, to);
         return op === 'between' ? inRange : !inRange;
       }
-      var compareNumber = parseNumber(condition.value);
+      var compareNumber = resolveNumberComparisonValue(condition, record);
       if (isNaN(compareNumber)) return false;
       if (op === '=') return numberValue === compareNumber;
       if (op === '!=') return numberValue !== compareNumber;
@@ -178,8 +413,10 @@
 
     if (type === 'choice') {
       var currentChoice = normalizeText(rawValue);
-      if (op === '=') return currentChoice === normalizeText(condition.value);
-      if (op === '!=') return currentChoice !== normalizeText(condition.value);
+      var compareChoice = resolveTextComparisonValue(condition, record);
+      if (compareChoice == null) return false;
+      if (op === '=') return currentChoice === compareChoice;
+      if (op === '!=') return currentChoice !== compareChoice;
       var list = Array.isArray(condition.value) ? condition.value : [condition.value];
       var normalizedList = list.map(normalizeText);
       if (op === 'in') return normalizedList.indexOf(currentChoice) >= 0;
@@ -198,7 +435,7 @@
       if (op === 'withinDays') return Math.abs(dayDiff(dateValue, currentDay)) <= (parseNumber(condition.value) || 0);
       if (op === 'olderThanDays') return dayDiff(currentDay, dateValue) > (parseNumber(condition.value) || 0);
 
-      var compareDate = parseDayValue(condition.value);
+      var compareDate = resolveDateComparisonValue(condition, record);
       if (!compareDate) return false;
       if (op === '=') return dayDiff(dateValue, compareDate) === 0;
       if (op === '!=') return dayDiff(dateValue, compareDate) !== 0;
@@ -208,7 +445,8 @@
     }
 
     var textValue = normalizeText(rawValue);
-    var compareText = normalizeText(condition.value);
+    var compareText = resolveTextComparisonValue(condition, record);
+    if (compareText == null) return false;
     if (op === '=') return textValue === compareText;
     if (op === '!=') return textValue !== compareText;
     if (op === 'contains') return textValue.indexOf(compareText) >= 0;
@@ -272,7 +510,9 @@
     config.ruleSets.forEach(function(ruleSet) {
       (ruleSet.rules || []).forEach(function(branch) {
         (branch.conditions || []).forEach(function(condition) {
-          if (condition && condition.field && !outputFields.has(condition.field)) dependencyCodes.add(condition.field);
+          getConditionReferencedFieldCodes(condition).forEach(function(code) {
+            if (!outputFields.has(code)) dependencyCodes.add(code);
+          });
         });
       });
     });
