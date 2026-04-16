@@ -9,6 +9,10 @@
   const PRIMARY_QUERY_PARAM = 'query';
   const SECONDARY_QUERY_PARAM = 'q';
   const INTERNAL_FIELD_ID_RE = /(^|[\s(])f\d+\b/i;
+  const CACHE_PREFIX = 'kvtdf:' + PLUGIN_ID + ':';
+  const VIEWS_CACHE_TTL_MS = 10 * 60 * 1000;
+  const RANGE_CACHE_TTL_MS = 5 * 60 * 1000;
+  const AGGREGATE_CACHE_TTL_MS = 60 * 1000;
   const LEGACY_STATE_PARAMS = [
     'kvtdf_field',
     'kvtdf_start',
@@ -123,6 +127,51 @@
   let viewsPromise = null;
   let fieldInfoPromise = null;
   const edgeDatePromiseMap = new Map();
+  let earlyBootTimer = 0;
+
+  function safeJsonParse(text, fallback) {
+    try {
+      return JSON.parse(text);
+    } catch {
+      return fallback;
+    }
+  }
+
+  function getSessionCache(key) {
+    try {
+      const raw = window.sessionStorage.getItem(CACHE_PREFIX + key);
+      if (!raw) {
+        return null;
+      }
+      const cached = safeJsonParse(raw, null);
+      if (!cached || typeof cached !== 'object') {
+        return null;
+      }
+      if (Number(cached.expiresAt || 0) <= Date.now()) {
+        window.sessionStorage.removeItem(CACHE_PREFIX + key);
+        return null;
+      }
+      return cached.value;
+    } catch {
+      return null;
+    }
+  }
+
+  function setSessionCache(key, value, ttlMs) {
+    try {
+      window.sessionStorage.setItem(CACHE_PREFIX + key, JSON.stringify({
+        value: value,
+        expiresAt: Date.now() + Math.max(1000, Number(ttlMs) || 0)
+      }));
+    } catch {
+      // noop
+    }
+    return value;
+  }
+
+  function getViewsCacheKey(appId) {
+    return 'views:' + String(appId);
+  }
 
   function normalizeLanguage(value) {
     const lang = String(value || '').toLowerCase();
@@ -309,6 +358,15 @@
 
   function getCurrentUrl() {
     return new window.URL(location.href);
+  }
+
+  function getCurrentViewIdFromUrl() {
+    return String(getCurrentUrl().searchParams.get('view') || '').trim();
+  }
+
+  function isLikelyListPage() {
+    const path = String(getCurrentUrl().pathname || '').toLowerCase();
+    return !/\/(?:show|edit|create|print)(?:\/)?$/.test(path);
   }
 
   function getQueryFromUrl(url) {
@@ -642,11 +700,32 @@
   }
 
   async function fetchViews() {
+    const appId = kintone.app.getId();
     if (!viewsPromise) {
-      viewsPromise = kintone.api(kintone.api.url('/k/v1/app/views', true), 'GET', {
-        app: kintone.app.getId()
-      }).then(function(response) {
-        return Object.values(response.views || {}).map(function(view) {
+      const cacheKey = getViewsCacheKey(appId);
+      const cached = getSessionCache(cacheKey);
+      if (Array.isArray(cached) && cached.length) {
+        viewsPromise = Promise.resolve(cached);
+      } else {
+        viewsPromise = kintone.api(kintone.api.url('/k/v1/app/views', true), 'GET', {
+          app: appId
+        }).then(function(response) {
+          return Object.values(response.views || {}).map(function(view) {
+            return {
+              id: String(view.id),
+              name: String(view.name || ''),
+              type: String(view.type || 'LIST'),
+              index: Number(view.index || 0),
+              filterCond: String(view.filterCond || '')
+            };
+          });
+        }).then(function(views) {
+          return setSessionCache(cacheKey, views, VIEWS_CACHE_TTL_MS);
+        });
+      }
+    }
+    return viewsPromise.then(function(views) {
+      return views.map(function(view) {
           return {
             id: String(view.id),
             name: String(view.name || ''),
@@ -655,9 +734,7 @@
             filterCond: String(view.filterCond || '')
           };
         });
-      });
-    }
-    return viewsPromise;
+    });
   }
 
   function sortAndFilterViews(views, config) {
@@ -756,9 +833,17 @@
       view ? String(view.id || '') : '',
       view ? String(view.filterCond || '') : ''
     ].join(':');
+    const sessionKey = 'range:' + cacheKey;
+    const cached = getSessionCache(sessionKey);
+
+    if (cached && typeof cached === 'object') {
+      return cached;
+    }
 
     if (!edgeDatePromiseMap.has(cacheKey)) {
-      edgeDatePromiseMap.set(cacheKey, fetchFieldRangeFromAllRecords(fieldInfo, view));
+      edgeDatePromiseMap.set(cacheKey, fetchFieldRangeFromAllRecords(fieldInfo, view).then(function(range) {
+        return setSessionCache(sessionKey, range, RANGE_CACHE_TTL_MS);
+      }));
     }
     return edgeDatePromiseMap.get(cacheKey);
   }
@@ -955,6 +1040,23 @@
     return '';
   }
 
+  function createAggregateCacheKey(appId, query, rules) {
+    return 'aggregate:' + [
+      String(appId),
+      normalizeQueryText(query),
+      JSON.stringify((rules || []).map(function(rule) {
+        return {
+          field: rule.field,
+          label: rule.label,
+          op: rule.op,
+          digits: rule.digits,
+          prefix: rule.prefix,
+          suffix: rule.suffix
+        };
+      }))
+    ].join(':');
+  }
+
   async function resolveAggregateItems(config, view, eventRecords) {
     const rules = (config.aggregateRules || []).filter(function(rule) {
       return rule.op !== 'none';
@@ -969,13 +1071,18 @@
       return [];
     }
     const query = getEffectiveListQuery(view);
+    const cacheKey = createAggregateCacheKey(kintone.app.getId(), query, rules);
+    const cached = getSessionCache(cacheKey);
+    if (Array.isArray(cached)) {
+      return cached;
+    }
     let records = [];
     try {
       records = await fetchAllRecordsSmart(kintone.app.getId(), query, fields);
     } catch {
       records = Array.isArray(eventRecords) ? eventRecords : [];
     }
-    return buildAggregateItems(records, rules);
+    return setSessionCache(cacheKey, buildAggregateItems(records, rules), AGGREGATE_CACHE_TTL_MS);
   }
 
   function createButtonLabel(view, showIcons) {
@@ -1145,6 +1252,18 @@
     return wrap;
   }
 
+  function attachRootCleanup(root, cleanups) {
+    root.__kvtdfCleanup = function() {
+      cleanups.forEach(function(cleanup) {
+        try {
+          cleanup();
+        } catch (error) {
+          console.error('[kintone-view-tab-date-filter] cleanup failed', error);
+        }
+      });
+    };
+  }
+
   function runCleanup(root) {
     if (root && typeof root.__kvtdfCleanup === 'function') {
       try {
@@ -1171,6 +1290,78 @@
       host.appendChild(root);
     }
     return root;
+  }
+
+  function stopEarlyBoot() {
+    if (earlyBootTimer) {
+      window.clearInterval(earlyBootTimer);
+      earlyBootTimer = 0;
+    }
+  }
+
+  function renderEarlyTabs(config, views) {
+    if (!config.enableViewTabs || !isLikelyListPage() || renderTicket > 0) {
+      return false;
+    }
+    const root = mountRoot();
+    if (!root || root.dataset.phase === 'final') {
+      return false;
+    }
+    const visibleViews = sortAndFilterViews(views || [], config);
+    if (!visibleViews.length) {
+      return false;
+    }
+
+    runCleanup(root);
+    root.replaceChildren();
+    root.dataset.phase = 'early';
+
+    const cleanups = [];
+    attachRootCleanup(root, cleanups);
+
+    const bar = document.createElement('div');
+    bar.className = 'kvtdf-bar';
+    const topRow = document.createElement('div');
+    topRow.className = 'kvtdf-row kvtdf-row-top';
+    topRow.appendChild(buildTabs(visibleViews, null, getCurrentViewIdFromUrl(), config, cleanups));
+    bar.appendChild(topRow);
+    root.appendChild(bar);
+    return true;
+  }
+
+  function bootstrapEarlyTabs() {
+    const config = loadConfig();
+    if (!config.enableViewTabs || !isLikelyListPage()) {
+      return;
+    }
+
+    const appId = kintone.app.getId();
+    const cachedViews = getSessionCache(getViewsCacheKey(appId));
+    if (Array.isArray(cachedViews) && cachedViews.length) {
+      renderEarlyTabs(config, cachedViews);
+    }
+
+    fetchViews().then(function(views) {
+      renderEarlyTabs(config, views);
+    }).catch(function() {
+      // noop
+    });
+
+    if (earlyBootTimer) {
+      return;
+    }
+    let attempts = 0;
+    earlyBootTimer = window.setInterval(function() {
+      attempts += 1;
+      if (renderTicket > 0 || attempts > 60 || !isLikelyListPage()) {
+        stopEarlyBoot();
+        return;
+      }
+      const latestCachedViews = getSessionCache(getViewsCacheKey(appId));
+      if (Array.isArray(latestCachedViews) && latestCachedViews.length && renderEarlyTabs(config, latestCachedViews)) {
+        stopEarlyBoot();
+      }
+    }, 120);
   }
 
   function unmountRoot() {
@@ -1206,9 +1397,9 @@
   }
 
   function createRangeController(fromInput, toInput, startRange, endRange, activeBar, minYmd, maxYmd) {
-    const safeMin = normalizeYmd(minYmd) || formatYmd(addDays(new Date(), -180));
-    const safeMax = normalizeYmd(maxYmd) || formatYmd(new Date());
-    const total = Math.max(1, daysBetween(safeMin, safeMax));
+    let safeMin = normalizeYmd(minYmd) || formatYmd(addDays(new Date(), -180));
+    let safeMax = normalizeYmd(maxYmd) || formatYmd(new Date());
+    let total = Math.max(1, daysBetween(safeMin, safeMax));
 
     function toIndex(value) {
       return clamp(daysBetween(safeMin, normalizeYmd(value) || safeMin), 0, total);
@@ -1241,17 +1432,19 @@
       paint();
     }
 
-    startRange.min = '0';
-    endRange.min = '0';
-    startRange.max = String(total);
-    endRange.max = String(total);
-    startRange.step = '1';
-    endRange.step = '1';
+    function applyBounds() {
+      startRange.min = '0';
+      endRange.min = '0';
+      startRange.max = String(total);
+      endRange.max = String(total);
+      startRange.step = '1';
+      endRange.step = '1';
 
-    fromInput.min = safeMin;
-    fromInput.max = safeMax;
-    toInput.min = safeMin;
-    toInput.max = safeMax;
+      fromInput.min = safeMin;
+      fromInput.max = safeMax;
+      toInput.min = safeMin;
+      toInput.max = safeMax;
+    }
 
     ['input', 'change'].forEach(function(eventName) {
       fromInput.addEventListener(eventName, syncFromInputs);
@@ -1260,11 +1453,34 @@
       endRange.addEventListener(eventName, syncFromRanges);
     });
 
+    applyBounds();
     syncFromInputs();
     return {
-      safeMin: safeMin,
-      safeMax: safeMax,
-      syncFromInputs: syncFromInputs
+      getSafeMin: function() {
+        return safeMin;
+      },
+      getSafeMax: function() {
+        return safeMax;
+      },
+      syncFromInputs: syncFromInputs,
+      setBounds: function(nextMinYmd, nextMaxYmd) {
+        safeMin = normalizeYmd(nextMinYmd) || safeMin;
+        safeMax = normalizeYmd(nextMaxYmd) || safeMax;
+        if (parseYmd(safeMin) > parseYmd(safeMax)) {
+          const swap = safeMin;
+          safeMin = safeMax;
+          safeMax = swap;
+        }
+        total = Math.max(1, daysBetween(safeMin, safeMax));
+        applyBounds();
+        if (!normalizeYmd(fromInput.value) || parseYmd(fromInput.value) < parseYmd(safeMin)) {
+          fromInput.value = safeMin;
+        }
+        if (!normalizeYmd(toInput.value) || parseYmd(toInput.value) > parseYmd(safeMax)) {
+          toInput.value = safeMax;
+        }
+        syncFromInputs();
+      }
     };
   }
 
@@ -1476,7 +1692,12 @@
     });
 
     const controller = createRangeController(fromInput, toInput, startRange, endRange, active, options.minYmd, options.maxYmd);
-    rangeLabel.textContent = t('rangeHint') + ': ' + controller.safeMin + ' - ' + controller.safeMax;
+
+    function syncRangeLabel() {
+      rangeLabel.textContent = t('rangeHint') + ': ' + controller.getSafeMin() + ' - ' + controller.getSafeMax();
+    }
+
+    syncRangeLabel();
 
     function highlightChip(activeKey) {
       Array.from(chipRow.children).forEach(function(child) {
@@ -1555,16 +1776,25 @@
       location.href = url.toString();
     });
 
+    modal.__kvtdfUpdateRange = function(nextMinYmd, nextMaxYmd) {
+      options.minYmd = normalizeYmd(nextMinYmd) || options.minYmd;
+      options.maxYmd = normalizeYmd(nextMaxYmd) || options.maxYmd;
+      controller.setBounds(options.minYmd, options.maxYmd);
+      syncRangeLabel();
+    };
+
     return modal;
   }
 
   async function render(event) {
     const currentTicket = ++renderTicket;
+    stopEarlyBoot();
     const config = loadConfig();
     const root = mountRoot();
     if (!root) {
       return event;
     }
+    root.dataset.phase = 'final';
 
     const asyncResults = await Promise.all([
       (config.enableViewTabs || config.enableDateFilter) ? fetchViews() : Promise.resolve([]),
@@ -1606,51 +1836,20 @@
       return event;
     }
 
-    let minYmd = '';
-    let maxYmd = '';
-    if (showDateFilter && fieldInfo.code) {
-      try {
-        const edgeDates = await resolveFullRange(fieldInfo, currentView);
-        minYmd = edgeDates.min;
-        maxYmd = edgeDates.max;
-      } catch (error) {
-        console.error('[kintone-view-tab-date-filter] range load failed', error);
-        showToast(t('rangeLoadFailed'));
-      }
-    }
-
-    if (!minYmd || !maxYmd) {
-      maxYmd = formatYmd(new Date());
-      minYmd = formatYmd(addDays(new Date(), -180));
-    }
-
-    let aggregateItems = [];
-    if (showAggregates) {
-      try {
-        aggregateItems = await resolveAggregateItems(config, currentView, event.records);
-      } catch (error) {
-        console.error('[kintone-view-tab-date-filter] aggregate load failed', error);
-        showToast(t('aggregateLoadFailed'));
-      }
-    }
-
-    if (currentTicket !== renderTicket) {
-      return event;
-    }
+    const fallbackMaxYmd = formatYmd(new Date());
+    const fallbackMinYmd = formatYmd(addDays(new Date(), -180));
+    const rangePromise = showDateFilter && fieldInfo.code
+      ? resolveFullRange(fieldInfo, currentView)
+      : Promise.resolve(null);
+    const aggregatePromise = showAggregates
+      ? resolveAggregateItems(config, currentView, event.records)
+      : Promise.resolve([]);
 
     runCleanup(root);
     root.replaceChildren();
 
     const cleanups = [];
-    root.__kvtdfCleanup = function() {
-      cleanups.forEach(function(cleanup) {
-        try {
-          cleanup();
-        } catch (error) {
-          console.error('[kintone-view-tab-date-filter] cleanup failed', error);
-        }
-      });
-    };
+    attachRootCleanup(root, cleanups);
 
     const bar = document.createElement('div');
     bar.className = 'kvtdf-bar';
@@ -1658,6 +1857,7 @@
     topRow.className = 'kvtdf-row kvtdf-row-top';
     const bottomRow = document.createElement('div');
     bottomRow.className = 'kvtdf-row kvtdf-row-bottom';
+    let aggregateMount = null;
     let modal = null;
 
     if (showTabs) {
@@ -1698,8 +1898,8 @@
       modal = buildModal({
         trigger: trigger,
         fieldCode: fieldInfo.code,
-        minYmd: minYmd,
-        maxYmd: maxYmd,
+        minYmd: fallbackMinYmd,
+        maxYmd: fallbackMaxYmd,
         weekStart: config.weekStart,
         presets: config.presets.length ? config.presets : PRESETS.map(function(item) { return item.value; }),
         defaultPreset: config.defaultPreset || 'last-30',
@@ -1711,8 +1911,11 @@
       topRow.appendChild(filterWrap);
     }
 
-    if (showAggregates && aggregateItems.length) {
-      bottomRow.appendChild(buildAggregateBar(aggregateItems));
+    if (showAggregates) {
+      aggregateMount = document.createElement('div');
+      aggregateMount.className = 'kvtdf-aggregate-host';
+      aggregateMount.hidden = true;
+      bottomRow.appendChild(aggregateMount);
     }
 
     if (topRow.children.length) {
@@ -1729,8 +1932,44 @@
       root.appendChild(modal);
     }
 
+    rangePromise.then(function(edgeDates) {
+      if (!edgeDates || currentTicket !== renderTicket || !modal || typeof modal.__kvtdfUpdateRange !== 'function') {
+        return;
+      }
+      const nextMinYmd = normalizeYmd(edgeDates.min) || fallbackMinYmd;
+      const nextMaxYmd = normalizeYmd(edgeDates.max) || fallbackMaxYmd;
+      modal.__kvtdfUpdateRange(nextMinYmd, nextMaxYmd);
+    }).catch(function(error) {
+      if (currentTicket !== renderTicket) {
+        return;
+      }
+      console.error('[kintone-view-tab-date-filter] range load failed', error);
+      showToast(t('rangeLoadFailed'));
+    });
+
+    aggregatePromise.then(function(items) {
+      if (currentTicket !== renderTicket || !aggregateMount) {
+        return;
+      }
+      aggregateMount.replaceChildren();
+      if (Array.isArray(items) && items.length) {
+        aggregateMount.appendChild(buildAggregateBar(items));
+        aggregateMount.hidden = false;
+        return;
+      }
+      aggregateMount.hidden = true;
+    }).catch(function(error) {
+      if (currentTicket !== renderTicket) {
+        return;
+      }
+      console.error('[kintone-view-tab-date-filter] aggregate load failed', error);
+      showToast(t('aggregateLoadFailed'));
+    });
+
     return event;
   }
+
+  bootstrapEarlyTabs();
 
   kintone.events.on(EVENT_NAME, function(event) {
     return render(event).catch(function(error) {
