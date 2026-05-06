@@ -8,6 +8,10 @@
     "en": "explain"
   },
   "icon": "images/icon.png",
+  "homepage_url": {
+    "ja": "https://plugbits.app/",
+    "en": "https://plugbits.app/"
+  },
   "config": {
     "html": "config/config.html",
     "js": ["config/config.js"],
