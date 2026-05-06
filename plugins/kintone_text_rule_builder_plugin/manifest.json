@@ -23,5 +23,9 @@
     "js": ["config/config.js"],
     "css": ["config/config.css"]
   },
-  "icon": "images/icon.png"
+  "icon": "images/icon.png",
+  "homepage_url": {
+    "ja": "https://plugbits.app/",
+    "en": "https://plugbits.app/"
+  }
 }

@@ -11,6 +11,10 @@
     "en": "Adds a button that opens an Outlook Web draft using record fields."
   },
   "icon": "images/icon.png",
+  "homepage_url": {
+    "ja": "https://plugbits.app/",
+    "en": "https://plugbits.app/"
+  },
   "desktop": {
     "js": ["app/plugin.js"],
     "css": ["app/plugin.css"]
