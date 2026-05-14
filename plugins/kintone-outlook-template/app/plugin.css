@@ -75,3 +75,415 @@
 #viewList label {display: flex; align-items: center; gap: 8px; width: 100%;}
 #viewList input[type="checkbox"] {width: 10%; flex: 0 0 auto;}
 #viewList span {flex: 1;}
+
+/* =========================================================
+   outlook compose unified theme
+   ========================================================= */
+
+/* header */
+.kb-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* launch button */
+.kb-launch-btn {
+  height: 36px;
+  padding: 0 14px;
+  border-radius: 9px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  background: linear-gradient(180deg, #2563eb 0%, #1d4ed8 100%);
+  border-color: #1d4ed8;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(16,24,40,0.06), 0 2px 6px rgba(16,24,40,0.08);
+  transition:
+    transform 0.15s ease,
+    box-shadow 0.15s ease,
+    filter 0.15s ease;
+}
+
+.kb-launch-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 10px rgba(16,24,40,0.12);
+}
+
+.kb-launch-btn:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 3px rgba(16,24,40,0.10);
+}
+
+.kb-launch-btn:focus-visible,
+.kb-template-main:focus-visible,
+.kb-template-compose:focus-visible,
+.kb-btn:focus-visible {
+  outline: 2px solid var(--kb-focus);
+  outline-offset: 2px;
+}
+
+.kb-launch-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.kb-launch-btn-icon .kb-ico {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+
+.kb-launch-btn-text {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
+/* modal */
+.kb-modal-card {
+  width: min(720px, 92vw);
+  max-height: 82vh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.kb-modal-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kb-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--kb-text);
+}
+
+.kb-modal-description {
+  font-size: 12px;
+  color: var(--kb-sub);
+}
+
+.kb-search-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.kb-search-wrap input {
+  height: 38px;
+  border-radius: 8px;
+}
+
+.kb-result-count {
+  font-size: 12px;
+  color: var(--kb-sub);
+  text-align: right;
+}
+
+/* list */
+.kb-template-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 420px;
+  overflow-y: auto;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.kb-template-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--kb-line);
+  border-radius: 10px;
+  background: var(--kb-surface);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease,
+    background 0.15s ease,
+    transform 0.15s ease;
+}
+
+.kb-template-item:hover {
+  border-color: #bfd3ff;
+  box-shadow: 0 2px 8px rgba(16,24,40,0.06);
+}
+
+.kb-template-item.is-selected {
+  border-color: var(--kb-primary);
+  background: color-mix(in srgb, var(--kb-primary) 8%, var(--kb-surface));
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--kb-primary) 18%, transparent);
+}
+
+.kb-template-main {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  text-align: left;
+  border-radius: 10px;
+}
+
+.kb-template-main:hover {
+  background: color-mix(in srgb, var(--kb-line) 16%, transparent);
+}
+
+.kb-template-check {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  pointer-events: none;
+  flex: 0 0 auto;
+}
+
+.kb-template-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.kb-template-name {
+  font-weight: 600;
+  color: var(--kb-text);
+  word-break: break-word;
+}
+
+.kb-template-item.is-selected .kb-template-name {
+  color: var(--kb-primary);
+}
+
+/* single compose button */
+.kb-template-compose {
+  display: inline-flex;
+  align-self: center;
+  align-items: center;
+  justify-content: center;
+  margin-right: 10px;
+  min-width: 72px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--kb-primary) 8%, var(--kb-surface));
+  border-color: color-mix(in srgb, var(--kb-primary) 28%, var(--kb-line));
+  color: var(--kb-primary);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.kb-template-compose:hover {
+  background: color-mix(in srgb, var(--kb-primary) 14%, var(--kb-surface));
+  border-color: color-mix(in srgb, var(--kb-primary) 42%, var(--kb-line));
+}
+
+/* footer */
+.kb-modal-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.kb-modal-footer .kb-btn {
+  height: 36px;
+  border-radius: 9px;
+  font-weight: 600;
+}
+
+.kb-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+/* toast */
+.kb-toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--kb-text);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+  z-index: 9999;
+  font-size: 13px;
+  line-height: 1.4;
+  opacity: 1;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.kb-toast.kb-toast-warn {
+  background: #b42318;
+  color: #fff;
+}
+
+.kb-toast.is-hide {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-4px);
+}
+
+.kb-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--kb-sub);
+  border: 1px dashed var(--kb-line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--kb-line) 18%, var(--kb-surface));
+}
+
+/* small screens */
+@media (max-width: 768px) {
+  .kb-launch-btn {
+    padding: 0 12px;
+    height: 34px;
+  }
+
+  .kb-launch-btn-text {
+    font-size: 13px;
+  }
+
+  .kb-template-item {
+    gap: 8px;
+  }
+
+  .kb-template-main {
+    padding: 10px 12px;
+  }
+
+  .kb-template-compose {
+    min-width: 64px;
+    margin-right: 8px;
+  }
+}
+
+/* ========================================
+   kintone-like flat launch button
+   ======================================== */
+
+.kb-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Outlook起動ボタン */
+.kb-launch-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+
+  height: 36px;
+  padding: 0 12px;
+  min-width: 0;
+
+  border: 1px solid #cfd7e6;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #2c3e50;
+
+  box-shadow: none;
+  transform: none;
+  filter: none;
+
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+
+  vertical-align: middle;
+}
+
+/* hoverはかなり控えめ */
+.kb-launch-btn:hover {
+  background: #f7f9fc;
+  border-color: #b9c5d8;
+  box-shadow: none;
+  transform: none;
+}
+
+/* activeもフラット */
+.kb-launch-btn:active {
+  background: #eef3f9;
+  border-color: #aebbd0;
+  box-shadow: none;
+  transform: none;
+}
+
+.kb-launch-btn:focus-visible {
+  outline: 2px solid #4c9aff;
+  outline-offset: 1px;
+}
+
+/* アイコン */
+.kb-launch-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  line-height: 1;
+}
+
+.kb-launch-btn-icon .kb-ico {
+  width: 14px;
+  height: 14px;
+  display: block;
+  fill: currentColor;
+}
+
+/* テキスト */
+.kb-launch-btn-text {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* 既存 primary 見た目を無効化したい場合の保険 */
+.kb-launch-btn.kb-primary {
+  background: #ffffff;
+  color: #2c3e50;
+  border-color: #cfd7e6;
+}
+
+/* 狭い画面 */
+@media (max-width: 768px) {
+  .kb-launch-btn {
+    height: 34px;
+    padding: 0 10px;
+    font-size: 13px;
+    gap: 5px;
+  }
+
+  .kb-launch-btn-icon {
+    width: 13px;
+    height: 13px;
+    flex-basis: 13px;
+  }
+
+  .kb-launch-btn-icon .kb-ico {
+    width: 13px;
+    height: 13px;
+  }
+}
