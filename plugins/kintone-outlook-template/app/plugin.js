@@ -15,7 +15,7 @@
       if (Array.isArray(parsed)) {
         return parsed.map((item) => String(item));
       }
-    } catch (_err) {
+    } catch {
       /* ignore */
     }
     return String(value)
@@ -47,12 +47,14 @@
 
   const TEXT = {
     ja: {
-      buttonLabelDefault: 'Outlook で作成',
+      buttonLabelDefault: 'Outlook作成',
       alertMissingTo: '宛先が空です。レコードの値を確認してください。',
       alertMissingSubject: '件名が空です。レコードの値を確認してください。',
       alertMissingBody: '本文が空です。レコードの値を確認してください。',
       popupBlocked: 'Outlook を開けませんでした。ブラウザのポップアップ設定をご確認ください。',
-      modalSearchPlaceholder: 'テンプレート名で検索',
+      modalTitle: 'メールテンプレートを選択',
+      modalDescription: '複数選択で連続起動できます。右端ボタンで単体作成も可能です。',
+      modalSearchPlaceholder: 'テンプレート名で絞り込み',
       modalEmpty: '現在の一覧にはテンプレートがありません。',
       modalCompose: '選択したテンプレで作成',
       modalComposeSingle: 'このテンプレで作成',
@@ -60,15 +62,17 @@
       modalNoSelection: 'テンプレートが選択されていません。'
     },
     en: {
-      buttonLabelDefault: 'Compose in Outlook',
+      buttonLabelDefault: 'Compose Outlook',
       alertMissingTo: 'The To field is empty. Please check the record values.',
       alertMissingSubject: 'The subject is empty. Please check the record values.',
       alertMissingBody: 'The body is empty. Please check the record values.',
       popupBlocked: 'Unable to open Outlook. Please allow pop-ups in your browser.',
-      modalSearchPlaceholder: 'Search template name',
+      modalTitle: 'Select mail templates',
+      modalDescription: 'You can open multiple templates in sequence. Use the button on the right for single compose.',
+      modalSearchPlaceholder: 'Filter by template name',
       modalEmpty: 'No templates are available in this view.',
       modalCompose: 'Compose with selected',
-      modalComposeSingle: 'Compose',
+      modalComposeSingle: 'Compose this template',
       modalClose: 'Close',
       modalNoSelection: 'No templates selected.'
     }
@@ -80,7 +84,7 @@
       if (lang && TEXT[lang]) {
         return lang;
       }
-    } catch (_err) {
+    } catch {
       /* ignore */
     }
     return 'ja';
@@ -89,6 +93,27 @@
   const lang = getLang();
   const STRINGS = TEXT[lang];
   const BUTTON_LABEL = CONFIG.buttonLabel || STRINGS.buttonLabelDefault;
+
+  const showToast = (message, type = 'info') => {
+    const old = document.querySelector('.kb-root.kb-toast[data-kb-plugin="outlook-compose"]');
+    if (old) {
+      old.remove();
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `kb-root kb-toast kb-toast-${type}`;
+    toast.setAttribute('data-kb-plugin', 'outlook-compose');
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    toast.textContent = message;
+
+    document.body.appendChild(toast);
+
+    window.setTimeout(() => {
+      toast.classList.add('is-hide');
+      window.setTimeout(() => toast.remove(), 180);
+    }, 2200);
+  };
 
   const normalizeLineBreaks = (text) => text.replace(/\r\n?/g, '\n');
 
@@ -163,19 +188,19 @@
   const openDraft = (record) => {
     const to = parseRecipients(extractText(record[CONFIG.toField]));
     if (!to.length) {
-      window.alert(STRINGS.alertMissingTo);
+      showToast(STRINGS.alertMissingTo, 'warn');
       return;
     }
 
     const subject = extractText(record[CONFIG.subjectField]).trim();
     if (!subject) {
-      window.alert(STRINGS.alertMissingSubject);
+      showToast(STRINGS.alertMissingSubject, 'warn');
       return;
     }
 
     const body = extractText(record[CONFIG.bodyField]);
     if (!body.trim()) {
-      window.alert(STRINGS.alertMissingBody);
+      showToast(STRINGS.alertMissingBody, 'warn');
       return;
     }
 
@@ -184,11 +209,11 @@
     if (win) {
       try {
         win.opener = null;
-      } catch (_err) {
+      } catch {
         /* ignore */
       }
     } else {
-      window.alert(STRINGS.popupBlocked);
+      showToast(STRINGS.popupBlocked, 'warn');
     }
   };
 
@@ -196,23 +221,49 @@
     if (!host) {
       return null;
     }
+
     let root = host.querySelector('.kb-root[data-kb-plugin="outlook-compose"]');
     if (!root) {
       root = document.createElement('div');
       root.className = 'kb-root kb-head';
       root.setAttribute('data-kb-plugin', 'outlook-compose');
+
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'kb-btn kb-primary';
-      button.textContent = BUTTON_LABEL;
+      button.className = 'kb-btn kb-launch-btn';
+      button.setAttribute('aria-label', BUTTON_LABEL);
+      button.setAttribute('title', BUTTON_LABEL);
+
+      const icon = document.createElement('span');
+      icon.className = 'kb-launch-btn-icon';
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = `
+      <svg viewBox="0 0 24 24" class="kb-ico" focusable="false" aria-hidden="true">
+        <path d="M3 6.75A1.75 1.75 0 0 1 4.75 5h14.5A1.75 1.75 0 0 1 21 6.75v10.5A1.75 1.75 0 0 1 19.25 19H4.75A1.75 1.75 0 0 1 3 17.25V6.75zm1.5.16v.18l7.1 5.12a.7.7 0 0 0 .82 0l7.08-5.1v-.2a.25.25 0 0 0-.25-.25H4.75a.25.25 0 0 0-.25.25zm15 1.99-6.2 4.47a2.2 2.2 0 0 1-2.6 0L4.5 8.9v8.35c0 .14.11.25.25.25h14.5a.25.25 0 0 0 .25-.25V8.9z"></path>
+      </svg>
+    `;
+
+      const text = document.createElement('span');
+      text.className = 'kb-launch-btn-text';
+      text.textContent = BUTTON_LABEL;
+
+      button.append(icon, text);
       root.appendChild(button);
       host.appendChild(root);
       return button;
     }
-    const button = root.querySelector('button');
-    if (button && button.textContent !== BUTTON_LABEL) {
-      button.textContent = BUTTON_LABEL;
+
+    const text = root.querySelector('.kb-launch-btn-text');
+    if (text && text.textContent !== BUTTON_LABEL) {
+      text.textContent = BUTTON_LABEL;
     }
+
+    const button = root.querySelector('button');
+    if (button) {
+      button.setAttribute('aria-label', BUTTON_LABEL);
+      button.setAttribute('title', BUTTON_LABEL);
+    }
+
     return button;
   };
 
@@ -242,98 +293,39 @@
     modal.setAttribute('aria-label', STRINGS.modalTitle);
 
     const card = document.createElement('div');
-    card.className = 'kb-card';
-    card.style.display = 'flex';
-    card.style.flexDirection = 'column';
-    card.style.gap = '16px';
+    card.className = 'kb-card kb-modal-card';
+
+    const header = document.createElement('div');
+    header.className = 'kb-modal-header';
+
+    const title = document.createElement('div');
+    title.className = 'kb-modal-title';
+    title.textContent = STRINGS.modalTitle;
+
+    const description = document.createElement('div');
+    description.className = 'kb-modal-description';
+    description.textContent = STRINGS.modalDescription;
+
+    header.append(title, description);
 
     const searchWrap = document.createElement('div');
-    searchWrap.className = 'kb-input';
-    searchWrap.style.display = 'flex';
-    searchWrap.style.flexDirection = 'column';
-    searchWrap.style.gap = '4px';
-
-    const searchLabel = document.createElement('label');
-    searchLabel.className = 'kb-label';
-    searchLabel.textContent = STRINGS.modalSearchPlaceholder;
+    searchWrap.className = 'kb-input kb-search-wrap';
 
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
     searchInput.placeholder = STRINGS.modalSearchPlaceholder;
+    searchInput.setAttribute('aria-label', STRINGS.modalSearchPlaceholder);
 
-    searchWrap.append(searchLabel, searchInput);
+    const resultCount = document.createElement('div');
+    resultCount.className = 'kb-result-count';
+
+    searchWrap.append(searchInput, resultCount);
 
     const list = document.createElement('ul');
-    list.className = 'kb-subtable-list';
-    list.style.maxHeight = '360px';
-    list.style.overflowY = 'auto';
-
-    const removeModal = () => {
-      modal.remove();
-      backdrop.remove();
-      window.removeEventListener('keydown', handleKeydown);
-    };
-
-    const handleKeydown = (event) => {
-      if (event.key === 'Escape') {
-        removeModal();
-      }
-    };
-
-    const items = records.map((record, index) => {
-      const templateLabel = extractText(record[CONFIG.templateField]).trim();
-      const name = templateLabel || `#${record.$id?.value || index + 1}`;
-
-      const li = document.createElement('li');
-      li.className = 'kb-subtable-item';
-      li.dataset.templateName = name.toLowerCase();
-      li.style.display = 'flex';
-      li.style.alignItems = 'center';
-      li.style.gap = '12px';
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.value = index.toString();
-      checkbox.className = 'kb-input';
-      checkbox.style.margin = '0';
-      checkbox.setAttribute('aria-label', name);
-
-      const label = document.createElement('div');
-      label.style.flex = '1';
-      label.style.display = 'flex';
-      label.style.flexDirection = 'column';
-      label.style.gap = '4px';
-
-      const nameSpan = document.createElement('span');
-      nameSpan.className = 'kb-label';
-      nameSpan.textContent = name;
-
-      const composeSingleBtn = document.createElement('button');
-      composeSingleBtn.type = 'button';
-      composeSingleBtn.className = 'kb-btn kb-inline-btn';
-      composeSingleBtn.textContent = STRINGS.modalComposeSingle;
-      composeSingleBtn.addEventListener('click', () => {
-        openDraft(record);
-        removeModal();
-      });
-
-      label.append(nameSpan);
-      li.append(checkbox, label, composeSingleBtn);
-      list.appendChild(li);
-      return li;
-    });
-
-    if (!items.length) {
-      const empty = document.createElement('div');
-      empty.className = 'kb-muted';
-      empty.textContent = STRINGS.modalEmpty;
-      list.appendChild(empty);
-    }
+    list.className = 'kb-template-list';
 
     const footer = document.createElement('div');
-    footer.className = 'kb-toolbar';
-    footer.style.display = 'flex';
-    footer.style.gap = '16px';
+    footer.className = 'kb-modal-footer';
 
     const closeBtn = document.createElement('button');
     closeBtn.type = 'button';
@@ -343,11 +335,106 @@
     const composeManyBtn = document.createElement('button');
     composeManyBtn.type = 'button';
     composeManyBtn.className = 'kb-btn kb-primary';
-    composeManyBtn.textContent = STRINGS.modalCompose;
+    composeManyBtn.disabled = true;
 
     footer.append(closeBtn, composeManyBtn);
-    card.append(searchWrap, list, footer);
+    card.append(header, searchWrap, list, footer);
     modal.appendChild(card);
+
+    const removeModal = () => {
+      modal.remove();
+      backdrop.remove();
+      window.removeEventListener('keydown', handleKeydown);
+    };
+
+    const updateComposeButton = () => {
+      const checked = list.querySelectorAll('input[type="checkbox"]:checked').length;
+      composeManyBtn.disabled = checked === 0;
+      composeManyBtn.textContent = checked > 0
+        ? (lang === 'ja' ? `${checked}件をOutlookで開く` : `Open ${checked} in Outlook`)
+        : STRINGS.modalCompose;
+    };
+
+    const updateResultCount = () => {
+      const visibleCount = Array.from(list.querySelectorAll('.kb-template-item'))
+        .filter((li) => li.style.display !== 'none').length;
+      resultCount.textContent = lang === 'ja'
+        ? `${visibleCount}件`
+        : `${visibleCount} items`;
+    };
+
+    const syncRowState = (li, checkbox) => {
+      if (checkbox.checked) {
+        li.classList.add('is-selected');
+      } else {
+        li.classList.remove('is-selected');
+      }
+    };
+
+    const items = records.map((record, index) => {
+      const templateLabel = extractText(record[CONFIG.templateField]).trim();
+      const name = templateLabel || `#${record.$id?.value || index + 1}`;
+
+      const li = document.createElement('li');
+      li.className = 'kb-template-item';
+      li.dataset.templateName = name.toLowerCase();
+
+      const rowMain = document.createElement('button');
+      rowMain.type = 'button';
+      rowMain.className = 'kb-template-main';
+      rowMain.setAttribute('aria-label', name);
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = index.toString();
+      checkbox.className = 'kb-template-check';
+      checkbox.tabIndex = -1;
+
+      const textWrap = document.createElement('div');
+      textWrap.className = 'kb-template-text';
+
+      const nameSpan = document.createElement('div');
+      nameSpan.className = 'kb-template-name';
+      nameSpan.textContent = name;
+
+      textWrap.appendChild(nameSpan);
+      rowMain.append(checkbox, textWrap);
+
+      const composeSingleBtn = document.createElement('button');
+      composeSingleBtn.type = 'button';
+      composeSingleBtn.className = 'kb-btn kb-inline-btn kb-template-compose';
+      composeSingleBtn.textContent = lang === 'ja' ? '作成' : 'Compose';
+      composeSingleBtn.title = STRINGS.modalComposeSingle;
+
+      rowMain.addEventListener('click', () => {
+        checkbox.checked = !checkbox.checked;
+        syncRowState(li, checkbox);
+        updateComposeButton();
+      });
+
+      checkbox.addEventListener('change', () => {
+        syncRowState(li, checkbox);
+        updateComposeButton();
+      });
+
+      composeSingleBtn.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openDraft(record);
+        removeModal();
+      });
+
+      li.append(rowMain, composeSingleBtn);
+      list.appendChild(li);
+      syncRowState(li, checkbox);
+      return li;
+    });
+
+    if (!items.length) {
+      const empty = document.createElement('div');
+      empty.className = 'kb-empty';
+      empty.textContent = STRINGS.modalEmpty;
+      list.appendChild(empty);
+    }
 
     const filterList = () => {
       const keyword = searchInput.value.trim().toLowerCase();
@@ -355,6 +442,7 @@
         const match = !keyword || li.dataset.templateName?.includes(keyword);
         li.style.display = match ? 'flex' : 'none';
       });
+      updateResultCount();
     };
 
     const composeSelected = () => {
@@ -363,7 +451,7 @@
         .filter((idx) => Number.isInteger(idx));
 
       if (!selectedIndexes.length) {
-        window.alert(STRINGS.modalNoSelection);
+        showToast(STRINGS.modalNoSelection, 'warn');
         return;
       }
 
@@ -379,6 +467,19 @@
       removeModal();
     };
 
+    const handleKeydown = (event) => {
+      if (event.key === 'Escape') {
+        removeModal();
+        return;
+      }
+      if (event.key === 'Enter' && document.activeElement === searchInput) {
+        event.preventDefault();
+        if (!composeManyBtn.disabled) {
+          composeSelected();
+        }
+      }
+    };
+
     searchInput.addEventListener('input', filterList);
     closeBtn.addEventListener('click', removeModal);
     composeManyBtn.addEventListener('click', composeSelected);
@@ -390,6 +491,8 @@
     window.addEventListener('keydown', handleKeydown);
 
     document.body.append(backdrop, modal);
+    updateComposeButton();
+    updateResultCount();
     searchInput.focus();
     filterList();
   };
