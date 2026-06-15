@@ -1,0 +1,27 @@
+{
+  "manifest_version": 1,
+  "version": "0.1.0",
+  "type": "APP",
+  "name": {
+    "ja": "Excel帳票一括生成",
+    "en": "Excel Template Batch Generator"
+  },
+  "description": {
+    "ja": "kintoneの一覧レコードをExcelテンプレートへ差し込み、1レコード1シートのxlsx帳票を一括生成します。",
+    "en": "Generates an xlsx workbook from kintone records and an Excel template, using one sheet per record."
+  },
+  "icon": "images/icon.png",
+  "homepage_url": {
+    "ja": "https://plugbits.app/",
+    "en": "https://plugbits.app/"
+  },
+  "desktop": {
+    "js": ["app/vendor/qrcode.min.js", "app/vendor/exceljs.min.js", "app/plugin.js"],
+    "css": ["app/plugin.css"]
+  },
+  "config": {
+    "html": "config/config.html",
+    "js": ["config/config.js"],
+    "css": ["config/config.css"]
+  }
+}

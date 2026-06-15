@@ -1,0 +1,451 @@
+<div class="kb-root kb-page">
+  <div class="kb-container">
+    <header class="kb-page-header">
+      <h1 class="kb-title" data-i18n="title"></h1>
+      <p class="kb-desc kb-muted" data-i18n="description"></p>
+    </header>
+
+    <div id="message" class="kb-alert" role="alert" style="display:none;"></div>
+
+    <section class="kb-card kb-guide">
+      <h2 class="kb-section-title" data-i18n="usageTitle"></h2>
+      <ol class="kb-usage-list">
+        <li data-i18n="usageStep1"></li>
+        <li data-i18n="usageStep2"></li>
+        <li data-i18n="usageStep3"></li>
+      </ol>
+    </section>
+
+    <section class="kb-card kb-config-card">
+      <div class="kb-section-head">
+        <div class="kb-step">1</div>
+        <div>
+          <h2 class="kb-section-title" data-i18n="templateSectionTitle"></h2>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" data-i18n="templateSourceLabel"></label>
+        <div class="kb-input">
+          <div class="etb-template-source">
+            <label class="etb-radio-line">
+              <input type="radio" name="templateSource" value="templateApp" />
+              <span data-i18n="templateSourceTemplateApp"></span>
+            </label>
+            <label class="etb-radio-line">
+              <input type="radio" name="templateSource" value="recordFile" />
+              <span data-i18n="templateSourceAttachment"></span>
+            </label>
+            <label class="etb-radio-line">
+              <input type="radio" name="templateSource" value="fixedUrl" />
+              <span data-i18n="templateSourceUrl"></span>
+            </label>
+          </div>
+          <p class="etb-help" data-i18n="templateSectionHelp"></p>
+        </div>
+      </div>
+
+      <div class="kb-field" data-source-row="recordFile">
+        <label class="kb-label" for="recordFileField">
+          <span data-i18n="templateFileFieldLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <select id="recordFileField"></select>
+          <span class="kb-muted" data-i18n="templateFileFieldHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-source-row="fixedUrl">
+        <label class="kb-label" for="templateUrl">
+          <span data-i18n="templateUrlLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <input type="url" id="templateUrl" placeholder="https://example.com/template.xlsx" />
+          <span class="kb-muted" data-i18n="templateUrlHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-source-row="templateApp">
+        <label class="kb-label" for="templateAppId">
+          <span data-i18n="templateAppIdLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <input type="number" id="templateAppId" min="1" inputmode="numeric" placeholder="255" />
+          <span class="kb-muted" data-i18n="templateAppIdHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-source-row="templateApp">
+        <label class="kb-label" for="templateCode">
+          <span data-i18n="templateCodeLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="templateCode" placeholder="WI_LABEL" />
+          <span class="kb-muted" data-i18n="templateCodeHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-source-row="templateApp">
+        <label class="kb-label" for="templateAppFileField">
+          <span data-i18n="templateAppFileFieldLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="templateAppFileField" placeholder="templateFile" />
+          <span class="kb-muted" data-i18n="templateAppFileFieldHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-source-row="templateApp">
+        <label class="kb-label" for="templateCodeField" data-i18n="templateCodeFieldLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="templateCodeField" placeholder="templateCode" />
+          <span class="kb-muted" data-i18n="templateCodeFieldHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-source-row="templateApp">
+        <label class="kb-label" for="templateStatusField" data-i18n="templateStatusFieldLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="templateStatusField" placeholder="status" />
+          <span class="kb-muted" data-i18n="templateStatusFieldHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-source-row="templateApp">
+        <label class="kb-label" for="templateActiveValue" data-i18n="templateActiveValueLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="templateActiveValue" placeholder="ACTIVE" />
+          <span class="kb-muted" data-i18n="templateActiveValueHint"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="kb-card kb-config-card">
+      <div class="kb-section-head">
+        <div class="kb-step">2</div>
+        <div>
+          <h2 class="kb-section-title" data-i18n="quantitySectionTitle"></h2>
+          <p class="kb-help-text" data-i18n="quantitySectionHelp"></p>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" data-i18n="outputModeLabel"></label>
+        <div class="kb-input">
+          <div class="etb-template-source">
+            <label class="etb-radio-line">
+              <input type="radio" name="outputMode" value="label" />
+              <span data-i18n="outputModeLabelMode"></span>
+            </label>
+            <label class="etb-radio-line">
+              <input type="radio" name="outputMode" value="report" />
+              <span data-i18n="outputModeReportMode"></span>
+            </label>
+          </div>
+          <p class="etb-help" data-i18n="outputModeHelp"></p>
+        </div>
+      </div>
+
+      <div class="kb-field" data-label-mode-row="true">
+        <label class="kb-label" data-i18n="quantitySplitLabel"></label>
+        <div class="kb-input kb-stack">
+          <label class="etb-check-line">
+            <input type="checkbox" id="enableQuantitySplit" />
+            <span data-i18n="enableQuantitySplitLabel"></span>
+          </label>
+          <p class="etb-help" data-i18n="enableQuantitySplitDesc"></p>
+          <div class="etb-help">
+            <div data-i18n="quantityExample1"></div>
+            <div data-i18n="quantityExample2"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="kb-field" data-quantity-row="true">
+        <label class="kb-label" for="quantityField">
+          <span data-i18n="quantityFieldLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <select id="quantityField"></select>
+          <span class="kb-muted" data-i18n="quantityFieldHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-quantity-row="true">
+        <label class="kb-label" for="packQtyField">
+          <span data-i18n="packQtyFieldLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <select id="packQtyField"></select>
+          <span class="kb-muted" data-i18n="packQtyFieldHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-quantity-row="true">
+        <label class="kb-label" for="outputQtyTag" data-i18n="outputQtyTagLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="outputQtyTag" placeholder="labelQty" />
+          <span class="kb-muted" data-i18n="outputQtyTagHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-report-row="true">
+        <label class="kb-label" for="reportDetailTableField">
+          <span data-i18n="reportDetailTableFieldLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <select id="reportDetailTableField"></select>
+          <span class="kb-muted" data-i18n="reportDetailTableFieldHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-report-row="true">
+        <label class="kb-label" for="reportDetailStartRow">
+          <span data-i18n="reportDetailStartRowLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <input type="number" id="reportDetailStartRow" min="1" max="1000" step="1" placeholder="15" />
+          <span class="kb-muted" data-i18n="reportDetailStartRowHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-report-row="true">
+        <label class="kb-label" for="reportRowsPerPage">
+          <span data-i18n="reportRowsPerPageLabel"></span>
+          <span class="kb-required" data-i18n="required"></span>
+        </label>
+        <div class="kb-input kb-stack">
+          <input type="number" id="reportRowsPerPage" min="1" max="200" step="1" placeholder="20" />
+          <span class="kb-muted" data-i18n="reportRowsPerPageHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-report-row="true">
+        <label class="kb-label" data-i18n="reportHideEmptyRowsSectionLabel"></label>
+        <div class="kb-input kb-stack">
+          <label class="etb-check-line">
+            <input type="checkbox" id="reportHideEmptyRows" />
+            <span data-i18n="reportHideEmptyRowsLabel"></span>
+          </label>
+          <p class="etb-help" data-i18n="reportHideEmptyRowsHint"></p>
+        </div>
+      </div>
+
+      <div class="kb-field kb-field-full" data-report-row="true">
+        <div class="kb-input kb-stack">
+          <div class="kb-mapping-table kb-detail-table">
+            <div class="kb-mapping-head kb-detail-head">
+              <div data-i18n="reportDetailColumnLabel"></div>
+              <div data-i18n="reportDetailFieldLabel"></div>
+              <div data-i18n="mappingAction"></div>
+            </div>
+            <div id="reportDetailRows" class="kb-mapping-list"></div>
+          </div>
+          <button id="addReportDetailRow" class="kb-btn" type="button" data-i18n="addReportDetailRow"></button>
+          <span class="kb-muted" data-i18n="reportDetailRowsHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" data-i18n="printStatusSectionLabel"></label>
+        <div class="kb-input kb-stack">
+          <label class="etb-check-line">
+            <input type="checkbox" id="enablePrintStatusUpdate" />
+            <span data-i18n="enablePrintStatusUpdateLabel"></span>
+          </label>
+          <p class="etb-help" data-i18n="printStatusUpdateHelp"></p>
+        </div>
+      </div>
+
+      <div class="kb-field" data-print-status-row="true">
+        <label class="kb-label" for="printStatusFieldCode" data-i18n="printStatusFieldCodeLabel"></label>
+        <div class="kb-input kb-stack">
+          <select id="printStatusFieldCode"></select>
+          <span class="kb-muted" data-i18n="printStatusFieldCodeHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-print-status-row="true">
+        <label class="kb-label" for="printedStatusValue" data-i18n="printedStatusValueLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="printedStatusValue" placeholder="PRINTED" />
+          <span class="kb-muted" data-i18n="printedStatusValueHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-print-status-row="true">
+        <label class="kb-label" for="reprintedStatusValue" data-i18n="reprintedStatusValueLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="reprintedStatusValue" placeholder="REPRINTED" />
+          <span class="kb-muted" data-i18n="reprintedStatusValueHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-print-status-row="true">
+        <label class="kb-label" for="printedAtFieldCode" data-i18n="printedAtFieldCodeLabel"></label>
+        <div class="kb-input kb-stack">
+          <select id="printedAtFieldCode"></select>
+          <span class="kb-muted" data-i18n="printedAtFieldCodeHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field" data-print-status-row="true">
+        <label class="kb-label" for="printedByFieldCode" data-i18n="printedByFieldCodeLabel"></label>
+        <div class="kb-input kb-stack">
+          <select id="printedByFieldCode"></select>
+          <span class="kb-muted" data-i18n="printedByFieldCodeHint"></span>
+        </div>
+      </div>
+    </section>
+
+    <section class="kb-card kb-config-card">
+      <div class="kb-section-head">
+        <div class="kb-step">3</div>
+        <div>
+          <h2 class="kb-section-title" data-i18n="mappingSectionTitle"></h2>
+          <p class="kb-help-text" data-i18n="mappingSectionHelp"></p>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" data-i18n="qrSectionLabel"></label>
+        <div class="kb-input kb-stack">
+          <label class="etb-check-line">
+            <input type="checkbox" id="enableQrImage" />
+            <span data-i18n="enableQrImageLabel"></span>
+          </label>
+          <p class="etb-help" data-i18n="qrImageHelp"></p>
+        </div>
+      </div>
+
+      <div class="kb-field" data-qr-row="true">
+        <label class="kb-label" for="qrPadding" data-i18n="qrPaddingLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="number" id="qrPadding" min="0" max="40" step="1" placeholder="4" />
+          <span class="kb-muted" data-i18n="qrPaddingHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-example-box">
+        <div data-i18n="mappingHelpExample"></div>
+        <ul>
+          <li><code>partNumber</code> -> <span data-i18n="examplePartNumber"></span></li>
+          <li><code>qty</code> -> <span data-i18n="exampleQty"></span></li>
+          <li><code>seqNo</code> -> <span data-i18n="exampleSeqNo"></span></li>
+          <li><code>seqTotal</code> -> <span data-i18n="exampleSeqTotal"></span></li>
+        </ul>
+      </div>
+
+      <div class="kb-field kb-field-full">
+        <div class="kb-input kb-stack">
+          <div class="kb-mapping-table">
+            <div class="kb-mapping-head">
+              <div data-i18n="mappingTagName"></div>
+              <div data-i18n="mappingSourceType"></div>
+              <div data-i18n="mappingSourceValue"></div>
+              <div data-i18n="mappingAction"></div>
+            </div>
+            <div id="mappingRows" class="kb-mapping-list"></div>
+          </div>
+          <button id="addMappingRow" class="kb-btn" type="button" data-i18n="addMappingRow"></button>
+        </div>
+      </div>
+    </section>
+
+    <section class="kb-card kb-config-card">
+      <div class="kb-section-head">
+        <div class="kb-step">4</div>
+        <div>
+          <h2 class="kb-section-title" data-i18n="outputSectionTitle"></h2>
+          <p class="kb-help-text" data-i18n="outputSectionHelp"></p>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" for="outputFileName" data-i18n="outputFileNameLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="outputFileName" maxlength="80" />
+          <span class="kb-muted" data-i18n="outputFileNameHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" for="maxSheetsPerWorkbook" data-i18n="maxSheetsPerWorkbookLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="number" id="maxSheetsPerWorkbook" min="1" max="500" step="1" placeholder="100" />
+          <span class="kb-muted" data-i18n="maxSheetsPerWorkbookHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" for="buttonLabel" data-i18n="buttonLabel"></label>
+        <div class="kb-input kb-stack">
+          <input type="text" id="buttonLabel" maxlength="32" />
+          <span class="kb-muted" data-i18n="buttonHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" for="columnWidthScale" data-i18n="columnWidthScaleLabel"></label>
+        <div class="kb-input kb-stack">
+          <div class="etb-percent-input">
+            <input type="number" id="columnWidthScale" min="50" max="200" step="1" placeholder="100" />
+            <span>%</span>
+          </div>
+          <span class="kb-muted" data-i18n="columnWidthScaleHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" for="rowHeightScale" data-i18n="rowHeightScaleLabel"></label>
+        <div class="kb-input kb-stack">
+          <div class="etb-percent-input">
+            <input type="number" id="rowHeightScale" min="50" max="200" step="1" placeholder="100" />
+            <span>%</span>
+          </div>
+          <span class="kb-muted" data-i18n="rowHeightScaleHint"></span>
+        </div>
+      </div>
+
+      <div class="kb-field">
+        <label class="kb-label" data-i18n="viewFieldLabel"></label>
+        <div class="kb-input kb-stack">
+          <div id="viewList" class="etb-view-list-compact"></div>
+          <span class="kb-muted" data-i18n="viewHint"></span>
+        </div>
+      </div>
+    </section>
+
+    <details class="kb-card kb-advanced">
+      <summary>
+        <span class="kb-step">5</span>
+        <span>
+          <span class="kb-section-title" data-i18n="advancedSummary"></span>
+          <span class="kb-help-text" data-i18n="advancedHelp"></span>
+        </span>
+      </summary>
+
+      <div class="kb-field">
+        <label class="kb-label" for="mappingJson" data-i18n="mappingLabel"></label>
+        <div class="kb-input kb-stack">
+          <textarea id="mappingJson" rows="8" spellcheck="false" placeholder="{&#10;  &quot;partNumber&quot;: &quot;partNumber&quot;,&#10;  &quot;qty&quot;: &quot;qty&quot;&#10;}"></textarea>
+          <span class="kb-muted" data-i18n="mappingHint"></span>
+        </div>
+      </div>
+    </details>
+
+    <div class="kb-toolbar">
+      <button id="save" class="kb-btn kb-primary" type="button" data-i18n="save"></button>
+      <button id="cancel" class="kb-btn" type="button" data-i18n="cancel"></button>
+    </div>
+  </div>
+</div>
