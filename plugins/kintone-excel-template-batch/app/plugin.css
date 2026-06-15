@@ -1,0 +1,249 @@
+:root {
+  --kb-bg: #f7f7f9;
+  --kb-surface: #ffffff;
+  --kb-text: #1f2328;
+  --kb-sub: #667085;
+  --kb-line: #e6e8ec;
+  --kb-primary: #2563eb;
+  --kb-primary-ink: #ffffff;
+  --kb-danger: #dc2626;
+  --kb-focus: #3b82f6;
+  --kb-radius: 8px;
+  --kb-shadow: 0 1px 2px rgba(16,24,40,0.04), 0 1px 3px rgba(16,24,40,0.08);
+}
+
+.kb-root {
+  box-sizing: border-box;
+  color: var(--kb-text);
+  font: 14px/1.6 system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+}
+
+.kb-root *,
+.kb-root *::before,
+.kb-root *::after {
+  box-sizing: inherit;
+}
+
+.kb-btn {
+  appearance: none;
+  border: 1px solid var(--kb-line);
+  background: var(--kb-surface);
+  color: var(--kb-text);
+  border-radius: 6px;
+  height: 32px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.kb-btn:hover {
+  background: #f7f9fc;
+}
+
+.kb-btn:focus-visible {
+  outline: 2px solid var(--kb-focus);
+  outline-offset: 1px;
+}
+
+.kb-btn.kb-primary {
+  background: var(--kb-primary);
+  border-color: var(--kb-primary);
+  color: var(--kb-primary-ink);
+}
+
+.kb-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.kb-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-launch-btn {
+  height: 36px;
+  padding: 0 12px;
+  border-radius: 4px;
+  background: #ffffff;
+  border-color: #cfd7e6;
+  color: #2c3e50;
+  font-weight: 600;
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.kb-launch-btn:hover {
+  border-color: #b9c5d8;
+}
+
+.kb-ico {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  display: block;
+}
+
+.kb-launch-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+}
+
+.kb-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15,17,21,0.4);
+  backdrop-filter: blur(2px);
+  z-index: 9998;
+}
+
+.kb-modal {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 9999;
+}
+
+.kb-modal-card {
+  width: min(760px, 92vw);
+  max-height: 82vh;
+  overflow: auto;
+  background: var(--kb-surface);
+  border: 1px solid var(--kb-line);
+  border-radius: var(--kb-radius);
+  box-shadow: var(--kb-shadow);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.kb-modal-header {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.kb-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.kb-modal-description,
+.kb-result-count {
+  color: var(--kb-sub);
+  font-size: 12px;
+}
+
+.kb-record-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 440px;
+  overflow: auto;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.kb-record-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--kb-line);
+  border-radius: 8px;
+  background: var(--kb-surface);
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.kb-record-item:hover {
+  border-color: #bfd3ff;
+}
+
+.kb-record-item.is-selected {
+  border-color: var(--kb-primary);
+  background: color-mix(in srgb, var(--kb-primary) 8%, var(--kb-surface));
+}
+
+.kb-record-check {
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.kb-record-text {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.kb-record-title {
+  font-weight: 600;
+  word-break: break-word;
+}
+
+.kb-record-sub {
+  color: var(--kb-sub);
+  font-size: 12px;
+}
+
+.kb-modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.kb-footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.kb-toast {
+  position: fixed;
+  top: 16px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--kb-text);
+  color: #fff;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 10px 30px rgba(0,0,0,0.18);
+  z-index: 10000;
+  font-size: 13px;
+  line-height: 1.4;
+  opacity: 1;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.kb-toast.kb-toast-warn {
+  background: #b42318;
+}
+
+.kb-toast.is-hide {
+  opacity: 0;
+  transform: translateX(-50%) translateY(-4px);
+}
+
+.kb-empty {
+  padding: 24px 12px;
+  text-align: center;
+  color: var(--kb-sub);
+  border: 1px dashed var(--kb-line);
+  border-radius: 8px;
+}

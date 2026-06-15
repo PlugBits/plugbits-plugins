@@ -1,0 +1,20 @@
+{
+  "name": "excel-template-batch",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "clean": "rimraf dist ship",
+    "build": "node -e \"console.log('build skipped')\"",
+    "lint": "eslint . || exit 0",
+    "pack:init": "node ../../scripts/pack-plugin.mjs --out dist/excel-template-batch.zip --ppk .keys/excel-template-batch.ppk .",
+    "pack": "node ../../scripts/pack-plugin.mjs --out dist/excel-template-batch.zip --ppk .keys/excel-template-batch.ppk ."
+  },
+  "devDependencies": {
+    "exceljs": "^4.4.0",
+    "qrcode": "^1.5.4"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
