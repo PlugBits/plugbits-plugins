@@ -52,3 +52,8 @@ plugins/*/.keys/
 # ===============================
 *.iml
 *.code-workspace
+
+# ===============================
+# 評価データ（ローカル固有）
+# ===============================
+services/drawing-similarity-api/eval/pairs.json
