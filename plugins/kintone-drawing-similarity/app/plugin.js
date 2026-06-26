@@ -345,9 +345,9 @@
     const currentTags = parseTags(getFieldValue(event.record, config.tagField));
     const allTags = apiBaseUrl ? await fetchTags(apiBaseUrl, tenantId, appId) : [];
     renderTagUi(spaceEl, currentTags, allTags, true, (tags) => {
-      const rec = {};
-      rec[config.tagField] = { value: stringifyTags(tags) };
-      kintone.app.record.set({ record: rec });
+      const obj = kintone.app.record.get();
+      obj.record[config.tagField].value = stringifyTags(tags);
+      kintone.app.record.set(obj);
     });
     return event;
   });
