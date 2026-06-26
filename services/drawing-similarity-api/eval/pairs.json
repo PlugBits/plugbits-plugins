@@ -1,12 +1,116 @@
 [
   {
-    "queryRecordId": "1",
-    "label": "例：L字ブラケット",
-    "similarRecordIds": ["2", "3"]
+    "queryRecordId": "126",
+    "label": "LEVER ASSY",
+    "similarRecordIds": ["92", "25","23"]
+  },
+  {
+    "queryRecordId": "92",
+    "label": "LEVER ASSY",
+    "similarRecordIds": ["126", "25","23"]
+  },
+  {
+    "queryRecordId": "25",
+    "label": "LEVER ASSY",
+    "similarRecordIds": ["126", "92","23"]
+  },
+  {
+    "queryRecordId": "125",
+    "label": "CROSSMEMBER",
+    "similarRecordIds": ["124"]
+  },{
+    "queryRecordId": "124",
+    "label": "CROSSMEMBER",
+    "similarRecordIds": ["125"]
+  },
+  {
+    "queryRecordId": "120",
+    "label": "FRAME",
+    "similarRecordIds": ["119"]
+  },
+  {
+    "queryRecordId": "119",
+    "label": "FRAME",
+    "similarRecordIds": ["120"]
+  },
+  {
+    "queryRecordId": "115",
+    "label": "BLOCK",
+    "similarRecordIds": ["114"]
+  },
+  {
+    "queryRecordId": "114",
+    "label": "BLOCK",
+    "similarRecordIds": ["115"]
+  },
+  {
+    "queryRecordId": "113",
+    "label": "SHAFT FRONT",
+    "similarRecordIds": ["94", "10", "8"]
+  },
+  {
+    "queryRecordId": "94",
+    "label": "SHAFT FRONT",
+    "similarRecordIds": ["113", "10", "8"]
+  },
+  {
+    "queryRecordId": "10",
+    "label": "SHAFT FRONT",
+    "similarRecordIds": ["94", "113", "8"]
+  },
+  {
+    "queryRecordId": "8",
+    "label": "SHAFT FRONT",
+    "similarRecordIds": ["94", "10", "113"]
+  },
+  {
+    "queryRecordId": "11",
+    "label": "SHAFT REAR",
+    "similarRecordIds": ["9"]
+  },
+  {
+    "queryRecordId": "9",
+    "label": "SHAFT REAR",
+    "similarRecordIds": ["11"]
+  },
+  {
+    "queryRecordId": "87",
+    "label": "MASK",
+    "similarRecordIds": ["4"]
   },
   {
     "queryRecordId": "4",
-    "label": "例：角パイプ加工品",
-    "similarRecordIds": ["5"]
+    "label": "MASK",
+    "similarRecordIds": ["87"]
+  },
+  {
+    "queryRecordId": "75",
+    "label": "PALLET FOLK",
+    "similarRecordIds": ["30"]
+  },
+  {
+    "queryRecordId": "30",
+    "label": "PALLET FOLK",
+    "similarRecordIds": ["75"]
+  },
+  {
+    "queryRecordId": "73",
+    "label": "DUCK",
+    "similarRecordIds": ["72"]
+  },
+  {
+    "queryRecordId": "72",
+    "label": "DUCK",
+    "similarRecordIds": ["73"]
+  },
+  {
+    "queryRecordId": "71",
+    "label": "BEARING",
+    "similarRecordIds": ["70"]
+  },
+  {
+    "queryRecordId": "70",
+    "label": "BEARING",
+    "similarRecordIds": ["71"]
   }
 ]
