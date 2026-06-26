@@ -1606,12 +1606,8 @@ const server = createServer(async (request, response) => {
     }
     try {
       const tenantId = url.searchParams.get('tenantId') || 'default';
-      const appId = url.searchParams.get('appId') || '';
       const filter = {
-        must: [
-          { key: 'tenant_id', match: { value: tenantId } },
-          ...(appId ? [{ key: 'app_id', match: { value: String(appId) } }] : [])
-        ]
+        must: [{ key: 'tenant_id', match: { value: tenantId } }]
       };
       const tagSet = new Set();
       let nextOffset = null;
