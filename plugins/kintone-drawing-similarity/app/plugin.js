@@ -261,4 +261,273 @@
 
     return event;
   });
+
+  const createBulkModal = () => {
+    const overlay = document.createElement('div');
+    overlay.id = 'pb-bulk-overlay';
+    overlay.className = 'pb-bulk-overlay';
+    overlay.innerHTML = [
+      '<div class="pb-bulk-modal">',
+      '<h2 class="pb-bulk-title">一括図面登録</h2>',
+      '<div class="pb-bulk-phase">準備中...</div>',
+      '<div class="pb-bulk-bar-wrap"><div class="pb-bulk-bar-fill"></div></div>',
+      '<div class="pb-bulk-counts">',
+      '<span class="pb-bulk-total">合計 <b>-</b></span>',
+      '<span class="pb-bulk-success">成功 <b>0</b></span>',
+      '<span class="pb-bulk-skip">スキップ <b>0</b></span>',
+      '<span class="pb-bulk-fail">失敗 <b>0</b></span>',
+      '</div>',
+      '<ul class="pb-bulk-errors"></ul>',
+      '<div class="pb-bulk-actions">',
+      '<button class="pb-bulk-cancel pb-similarity-button secondary" type="button">キャンセル</button>',
+      '</div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(overlay);
+    return overlay;
+  };
+
+  const updateBulkModal = (overlay, state) => {
+    const phaseEl = overlay.querySelector('.pb-bulk-phase');
+    const fill = overlay.querySelector('.pb-bulk-bar-fill');
+    const cancelBtn = overlay.querySelector('.pb-bulk-cancel');
+
+    if (state.phase === 'fetch') {
+      phaseEl.textContent = 'レコード取得中...' + (state.fetched > 0 ? ' ' + state.fetched + '件取得済み' : '');
+      fill.style.width = '5%';
+    } else if (state.phase === 'process') {
+      phaseEl.textContent = '登録処理中... ' + state.processed + ' / ' + state.total + ' 件';
+      fill.style.width = state.total > 0
+        ? (10 + Math.round(state.processed / state.total * 88)) + '%'
+        : '10%';
+    } else if (state.phase === 'done') {
+      phaseEl.textContent = '完了しました。';
+      fill.style.width = '100%';
+    } else if (state.phase === 'cancelled') {
+      phaseEl.textContent = 'キャンセルしました。';
+    } else if (state.phase === 'error') {
+      phaseEl.textContent = 'エラー: ' + (state.errorMessage || '不明なエラー');
+    }
+
+    const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
+    cancelBtn.textContent = isDone ? '閉じる' : 'キャンセル';
+
+    overlay.querySelector('.pb-bulk-total b').textContent = state.total > 0 ? state.total + '件' : '-';
+    overlay.querySelector('.pb-bulk-success b').textContent = state.success;
+    overlay.querySelector('.pb-bulk-skip b').textContent = state.skip;
+    overlay.querySelector('.pb-bulk-fail b').textContent = state.fail;
+
+    const errorsList = overlay.querySelector('.pb-bulk-errors');
+    errorsList.textContent = '';
+    (state.errors || []).slice(-10).forEach((entry) => {
+      const li = document.createElement('li');
+      li.className = 'pb-bulk-error-item';
+      li.textContent = 'record ' + entry.recordId + ': ' + entry.message;
+      errorsList.appendChild(li);
+    });
+  };
+
+  const fetchAllRecords = async (appId, fields, onFetch, cancel) => {
+    const cursorRes = await kintone.api(
+      kintone.api.url('/k/v1/records/cursor', true),
+      'POST',
+      { app: appId, fields, size: 100 }
+    );
+    const cursorId = cursorRes.id;
+    const total = Number(cursorRes.totalCount || 0);
+    const records = [];
+
+    try {
+      while (true) {
+        if (cancel.requested) {
+          break;
+        }
+        const page = await kintone.api(
+          kintone.api.url('/k/v1/records/cursor', true),
+          'GET',
+          { id: cursorId }
+        );
+        records.push(...page.records);
+        if (onFetch) {
+          onFetch(records.length, total);
+        }
+        if (!page.next) {
+          break;
+        }
+      }
+    } finally {
+      if (cancel.requested) {
+        try {
+          await kintone.api(
+            kintone.api.url('/k/v1/records/cursor', true),
+            'DELETE',
+            { id: cursorId }
+          );
+        } catch {}
+      }
+    }
+
+    return { records, total };
+  };
+
+  const runBulkIndex = async (overlay, config, apiBaseUrl) => {
+    const cancel = { requested: false };
+    const state = {
+      phase: 'fetch',
+      total: 0,
+      fetched: 0,
+      processed: 0,
+      success: 0,
+      skip: 0,
+      fail: 0,
+      errors: []
+    };
+
+    overlay.querySelector('.pb-bulk-cancel').addEventListener('click', () => {
+      const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
+      if (isDone) {
+        overlay.remove();
+        return;
+      }
+      cancel.requested = true;
+    });
+
+    updateBulkModal(overlay, state);
+
+    const appId = kintone.app.getId();
+    const fields = ['$id'];
+    if (config.pdfFileField) {
+      fields.push(config.pdfFileField);
+    }
+    if (config.drawingNoField) {
+      fields.push(config.drawingNoField);
+    }
+    if (config.productNameField) {
+      fields.push(config.productNameField);
+    }
+
+    let records;
+    try {
+      const result = await fetchAllRecords(
+        appId,
+        fields,
+        (fetched, total) => {
+          state.fetched = fetched;
+          state.total = total;
+          updateBulkModal(overlay, state);
+        },
+        cancel
+      );
+      records = result.records;
+      state.total = result.total;
+    } catch (error) {
+      state.phase = 'error';
+      state.errorMessage = error.message || 'レコード取得に失敗しました';
+      updateBulkModal(overlay, state);
+      return;
+    }
+
+    if (cancel.requested) {
+      state.phase = 'cancelled';
+      updateBulkModal(overlay, state);
+      return;
+    }
+
+    state.phase = 'process';
+    state.processed = 0;
+    updateBulkModal(overlay, state);
+
+    for (const record of records) {
+      if (cancel.requested) {
+        break;
+      }
+
+      const recordId = record['$id'].value;
+      const fileField = config.pdfFileField ? record[config.pdfFileField] : null;
+      const files = fileField && Array.isArray(fileField.value) ? fileField.value : [];
+
+      if (!files.length) {
+        state.skip += 1;
+        state.processed += 1;
+        updateBulkModal(overlay, state);
+        continue;
+      }
+
+      const file = files[0];
+      const payload = {
+        appId,
+        recordId,
+        tenantId: config.tenantId || 'default',
+        drawingNo: config.drawingNoField && record[config.drawingNoField]
+          ? String(record[config.drawingNoField].value || '')
+          : '',
+        productName: config.productNameField && record[config.productNameField]
+          ? String(record[config.productNameField].value || '')
+          : '',
+        fileKey: file.fileKey,
+        fileName: file.name,
+        limit: 10
+      };
+
+      try {
+        const response = await fetch(apiBaseUrl + '/index', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'HTTP ' + response.status + (data.step ? ' [' + data.step + ']' : ''));
+        }
+        state.success += 1;
+      } catch (error) {
+        state.fail += 1;
+        state.errors.push({ recordId, message: error.message });
+      }
+
+      state.processed += 1;
+      updateBulkModal(overlay, state);
+    }
+
+    state.phase = cancel.requested ? 'cancelled' : 'done';
+    updateBulkModal(overlay, state);
+  };
+
+  kintone.events.on('app.record.index.show', (event) => {
+    if (document.getElementById('pb-bulk-index-btn')) {
+      return event;
+    }
+
+    const config = kintone.plugin.app.getConfig(PLUGIN_ID);
+    const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
+    if (!apiBaseUrl) {
+      return event;
+    }
+
+    const header = kintone.app.getHeaderMenuSpaceElement();
+    if (!header) {
+      return event;
+    }
+
+    const button = document.createElement('button');
+    button.id = 'pb-bulk-index-btn';
+    button.className = 'pb-similarity-button secondary';
+    button.type = 'button';
+    button.textContent = '一括図面登録';
+    header.appendChild(button);
+
+    button.addEventListener('click', () => {
+      if (document.getElementById('pb-bulk-overlay')) {
+        return;
+      }
+      if (!config.pdfFileField) {
+        window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
+        return;
+      }
+      const overlay = createBulkModal();
+      runBulkIndex(overlay, config, apiBaseUrl);
+    });
+
+    return event;
+  });
 })();
