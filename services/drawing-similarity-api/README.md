@@ -97,8 +97,8 @@ The shape profile is computed from the rendered PNG and stored in Qdrant payload
 Similarity scores are calibrated before display. Raw OpenCLIP cosine scores for line drawings often cluster high, so `/similar` stretches the vector score between a floor and ceiling, then blends vector, OCR metadata, and shape scores:
 
 ```sh
-SCORE_VECTOR_FLOOR=0.75
-SCORE_VECTOR_CEILING=0.98
+SCORE_VECTOR_FLOOR=0.87
+SCORE_VECTOR_CEILING=0.99
 SCORE_VECTOR_WEIGHT=0.78
 SCORE_METADATA_WEIGHT=0.12
 SCORE_SHAPE_WEIGHT=0.10

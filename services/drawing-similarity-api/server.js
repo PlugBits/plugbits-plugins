@@ -53,8 +53,8 @@ const configuredOpenClipTimeoutMs = Number(process.env.OPENCLIP_TIMEOUT_MS || 18
 const openClipTimeoutMs = Number.isFinite(configuredOpenClipTimeoutMs) && configuredOpenClipTimeoutMs > 0
   ? configuredOpenClipTimeoutMs
   : 180000;
-const scoreVectorFloor = Number(process.env.SCORE_VECTOR_FLOOR || 0.75);
-const scoreVectorCeiling = Number(process.env.SCORE_VECTOR_CEILING || 0.98);
+const scoreVectorFloor = Number(process.env.SCORE_VECTOR_FLOOR || 0.87);
+const scoreVectorCeiling = Number(process.env.SCORE_VECTOR_CEILING || 0.99);
 const scoreVectorWeight = Number(process.env.SCORE_VECTOR_WEIGHT || 0.78);
 const scoreMetadataWeight = Number(process.env.SCORE_METADATA_WEIGHT || 0.12);
 const scoreShapeWeight = Number(process.env.SCORE_SHAPE_WEIGHT || 0.10);
