@@ -41,10 +41,188 @@
       tenantId: config.tenantId || 'default',
       drawingNo: getFieldValue(event.record, config.drawingNoField),
       productName: getFieldValue(event.record, config.productNameField),
+      tags: getFieldValue(event.record, config.tagField),
       fileKey: file ? file.fileKey : '',
       fileName: file ? file.name : '',
       limit: 10
     };
+  };
+
+  // --- タグ機能 ---
+
+  const parseTags = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
+  const stringifyTags = (tags) => tags.join(',');
+
+  let _tagsCache = null;
+  const fetchTags = async (apiBaseUrl, tenantId, appId) => {
+    if (_tagsCache) {
+      return _tagsCache;
+    }
+    try {
+      const params = new URLSearchParams({ tenantId });
+      if (appId) {
+        params.set('appId', String(appId));
+      }
+      const res = await fetch(apiBaseUrl + '/tags?' + params);
+      const data = await res.json();
+      _tagsCache = Array.isArray(data.tags) ? data.tags : [];
+    } catch (_) {
+      _tagsCache = [];
+    }
+    return _tagsCache;
+  };
+
+  const renderTagUi = (spaceEl, initialTags, allTags, editable, onTagsChange) => {
+    if (!spaceEl) {
+      return;
+    }
+    spaceEl.innerHTML = '';
+
+    let currentTags = [...initialTags];
+
+    const container = document.createElement('div');
+    container.className = 'pb-tag-container';
+
+    const chipsWrap = document.createElement('div');
+    chipsWrap.className = 'pb-tag-chips';
+
+    const renderChips = () => {
+      chipsWrap.innerHTML = '';
+      if (!currentTags.length && !editable) {
+        return;
+      }
+      currentTags.forEach((tag) => {
+        const chip = document.createElement('span');
+        chip.className = 'pb-tag-chip';
+        chip.textContent = tag;
+        if (editable) {
+          const removeBtn = document.createElement('button');
+          removeBtn.className = 'pb-tag-remove';
+          removeBtn.type = 'button';
+          removeBtn.setAttribute('aria-label', tag + ' を削除');
+          removeBtn.textContent = '×';
+          removeBtn.addEventListener('click', () => {
+            currentTags = currentTags.filter((t) => t !== tag);
+            renderChips();
+            onTagsChange(currentTags);
+          });
+          chip.appendChild(removeBtn);
+        }
+        chipsWrap.appendChild(chip);
+      });
+    };
+
+    renderChips();
+    container.appendChild(chipsWrap);
+
+    if (editable) {
+      const inputWrap = document.createElement('div');
+      inputWrap.className = 'pb-tag-input-wrap';
+
+      const input = document.createElement('input');
+      input.className = 'pb-tag-input';
+      input.type = 'text';
+      input.placeholder = 'タグを追加...';
+      input.setAttribute('autocomplete', 'off');
+
+      const dropdown = document.createElement('ul');
+      dropdown.className = 'pb-tag-dropdown';
+      dropdown.hidden = true;
+
+      const showDropdown = (value) => {
+        const q = value.trim().toLowerCase();
+        const suggestions = allTags
+          .filter((t) => !currentTags.includes(t) && (q === '' || t.toLowerCase().includes(q)))
+          .slice(0, 8);
+
+        dropdown.innerHTML = '';
+        const items = [...suggestions];
+        if (value.trim() && !allTags.some((t) => t.toLowerCase() === value.trim().toLowerCase())) {
+          items.push('__new__:' + value.trim());
+        }
+        if (!items.length) {
+          dropdown.hidden = true;
+          return;
+        }
+        items.forEach((s) => {
+          const isNew = s.startsWith('__new__:');
+          const tagValue = isNew ? s.slice(8) : s;
+          const li = document.createElement('li');
+          li.className = 'pb-tag-dropdown-item' + (isNew ? ' pb-tag-new' : '');
+          li.textContent = isNew ? '"' + tagValue + '" を追加' : tagValue;
+          li.dataset.value = tagValue;
+          dropdown.appendChild(li);
+        });
+        dropdown.hidden = false;
+      };
+
+      const addTag = (value) => {
+        const tag = value.trim();
+        if (!tag || currentTags.includes(tag)) {
+          return;
+        }
+        currentTags = [...currentTags, tag];
+        if (!allTags.includes(tag)) {
+          allTags.push(tag);
+        }
+        renderChips();
+        onTagsChange(currentTags);
+        input.value = '';
+        dropdown.hidden = true;
+      };
+
+      input.addEventListener('focus', () => showDropdown(input.value));
+      input.addEventListener('input', () => showDropdown(input.value));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const active = dropdown.querySelector('.pb-tag-dropdown-item.active');
+          if (active) {
+            addTag(active.dataset.value);
+          } else if (input.value.trim()) {
+            addTag(input.value);
+          }
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          const items = [...dropdown.querySelectorAll('.pb-tag-dropdown-item')];
+          const idx = items.indexOf(dropdown.querySelector('.active'));
+          items.forEach((el) => el.classList.remove('active'));
+          if (items[idx + 1]) {
+            items[idx + 1].classList.add('active');
+          } else if (items[0]) {
+            items[0].classList.add('active');
+          }
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          const items = [...dropdown.querySelectorAll('.pb-tag-dropdown-item')];
+          const idx = items.indexOf(dropdown.querySelector('.active'));
+          items.forEach((el) => el.classList.remove('active'));
+          if (items[idx - 1]) {
+            items[idx - 1].classList.add('active');
+          } else if (items[items.length - 1]) {
+            items[items.length - 1].classList.add('active');
+          }
+        } else if (e.key === 'Escape') {
+          dropdown.hidden = true;
+        }
+      });
+      input.addEventListener('blur', () => {
+        setTimeout(() => { dropdown.hidden = true; }, 150);
+      });
+
+      dropdown.addEventListener('mousedown', (e) => {
+        const item = e.target.closest('.pb-tag-dropdown-item');
+        if (item) {
+          e.preventDefault();
+          addTag(item.dataset.value);
+        }
+      });
+
+      inputWrap.append(input, dropdown);
+      container.appendChild(inputWrap);
+    }
+
+    spaceEl.appendChild(container);
   };
 
   const setStatus = (panel, message) => {
@@ -152,6 +330,53 @@
     });
   };
 
+  kintone.events.on(['app.record.edit.show', 'app.record.create.show'], async (event) => {
+    const config = kintone.plugin.app.getConfig(PLUGIN_ID);
+    if (!config.tagField || !config.tagSpaceId) {
+      return event;
+    }
+    const spaceEl = kintone.app.record.getSpaceElement(config.tagSpaceId);
+    if (!spaceEl) {
+      return event;
+    }
+    const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
+    const tenantId = config.tenantId || 'default';
+    const appId = String(kintone.app.getId() || '');
+    const currentTags = parseTags(getFieldValue(event.record, config.tagField));
+    const allTags = apiBaseUrl ? await fetchTags(apiBaseUrl, tenantId, appId) : [];
+    renderTagUi(spaceEl, currentTags, allTags, true, (tags) => {
+      const rec = {};
+      rec[config.tagField] = { value: stringifyTags(tags) };
+      kintone.app.record.set(rec);
+    });
+    return event;
+  });
+
+  kintone.events.on(['app.record.edit.submit.success', 'app.record.create.submit.success'], (event) => {
+    const config = kintone.plugin.app.getConfig(PLUGIN_ID);
+    const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
+    if (!apiBaseUrl || !config.tagField) {
+      return event;
+    }
+    const record = event.record;
+    const recordId = record.$id ? String(record.$id.value) : null;
+    if (!recordId) {
+      return event;
+    }
+    const tags = stringifyTags(parseTags(getFieldValue(record, config.tagField)));
+    fetch(apiBaseUrl + '/tag', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        tenantId: config.tenantId || 'default',
+        appId: String(kintone.app.getId() || ''),
+        recordId,
+        tags
+      })
+    }).catch(() => {});
+    return event;
+  });
+
   kintone.events.on('app.record.detail.show', (event) => {
     clearPluginUi();
 
@@ -172,6 +397,12 @@
     header.append(indexButton, button);
 
     const panel = createPanel(button);
+
+    if (config.tagField && config.tagSpaceId) {
+      const spaceEl = kintone.app.record.getSpaceElement(config.tagSpaceId);
+      const tags = parseTags(getFieldValue(event.record, config.tagField));
+      renderTagUi(spaceEl, tags, [], false, null);
+    }
 
     indexButton.addEventListener('click', async () => {
       if (!apiBaseUrl) {
@@ -405,6 +636,9 @@
     if (config.productNameField) {
       fields.push(config.productNameField);
     }
+    if (config.tagField) {
+      fields.push(config.tagField);
+    }
 
     let records;
     try {
@@ -463,6 +697,9 @@
           : '',
         productName: config.productNameField && record[config.productNameField]
           ? String(record[config.productNameField].value || '')
+          : '',
+        tags: config.tagField && record[config.tagField]
+          ? String(record[config.tagField].value || '')
           : '',
         fileKey: file.fileKey,
         fileName: file.name,
