@@ -142,6 +142,108 @@
   font-weight: 800;
 }
 
+/* --- Tag UI --- */
+
+.pb-tag-container {
+  padding: 6px 0 2px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.pb-tag-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-height: 26px;
+}
+
+.pb-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #dbeafe;
+  color: #1e40af;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.pb-tag-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: #1e40af;
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+}
+
+.pb-tag-remove:hover {
+  background: #bfdbfe;
+}
+
+.pb-tag-input-wrap {
+  position: relative;
+  margin-top: 6px;
+}
+
+.pb-tag-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #1f2933;
+  font-size: 13px;
+  outline: none;
+}
+
+.pb-tag-input:focus {
+  border-color: #1769aa;
+  box-shadow: 0 0 0 2px rgba(23, 105, 170, 0.15);
+}
+
+.pb-tag-dropdown {
+  position: absolute;
+  top: calc(100% + 2px);
+  left: 0;
+  right: 0;
+  z-index: 1000;
+  margin: 0;
+  padding: 4px 0;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #ffffff;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  list-style: none;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.pb-tag-dropdown-item {
+  padding: 6px 12px;
+  color: #1f2933;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.pb-tag-dropdown-item:hover,
+.pb-tag-dropdown-item.active {
+  background: #f0f7ff;
+}
+
+.pb-tag-dropdown-item.pb-tag-new {
+  color: #1769aa;
+  font-style: italic;
+}
+
 /* --- Bulk Index Modal --- */
 
 .pb-bulk-overlay {

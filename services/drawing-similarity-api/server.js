@@ -58,6 +58,8 @@ const scoreVectorCeiling = Number(process.env.SCORE_VECTOR_CEILING || 0.99);
 const scoreVectorWeight = Number(process.env.SCORE_VECTOR_WEIGHT || 0.78);
 const scoreMetadataWeight = Number(process.env.SCORE_METADATA_WEIGHT || 0.12);
 const scoreShapeWeight = Number(process.env.SCORE_SHAPE_WEIGHT || 0.10);
+const scoreTypeBonus = Number(process.env.SCORE_TYPE_BONUS || 0.05);
+const parseTags = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 let payloadIndexesReady = false;
 
 const formatLogFields = (fields = {}) => Object.entries(fields)
@@ -885,7 +887,8 @@ const buildQueryProfile = (body = {}, indexedPayload = null) => ({
   customer: String(indexedPayload?.ocr_customer || body.customer || '').trim(),
   revision: String(indexedPayload?.ocr_revision || body.revision || '').trim(),
   shapeCategory: String(indexedPayload?.ocr_shape_category || body.shapeCategory || '').trim(),
-  ocrText: String(indexedPayload?.ocr_text || body.ocrText || '').trim()
+  ocrText: String(indexedPayload?.ocr_text || body.ocrText || '').trim(),
+  tags: parseTags(indexedPayload?.tags || body.tags || '')
 });
 
 const scoreCandidate = (candidatePayload = {}, query = {}) => {
@@ -981,9 +984,21 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
     normalizedShapeScore * scoreShapeWeight
   ) / totalWeight;
 
+  const queryTags = Array.isArray(query.tags) ? query.tags : [];
+  const candidateTags = parseTags(candidatePayload.tags || '');
+  let tagBonus = 0;
+  if (queryTags.length > 0 && candidateTags.length > 0) {
+    const sharedTags = queryTags.filter((t) => candidateTags.includes(t));
+    if (sharedTags.length > 0) {
+      tagBonus = scoreTypeBonus * sharedTags.length / Math.min(queryTags.length, candidateTags.length);
+      reasons.push('tag:' + sharedTags.join(','));
+    }
+  }
+
   breakdown.metadata = Number(metadataScore.toFixed(4));
   breakdown.bonus = Number((metadataBonus + breakdown.shape).toFixed(3));
-  breakdown.total = Number(clamp01(weightedTotal).toFixed(4));
+  breakdown.tag = Number(tagBonus.toFixed(4));
+  breakdown.total = Number(clamp01(weightedTotal + tagBonus).toFixed(4));
 
   if (!reasons.length && candidatePayload.ocr_text) {
     reasons.push('ocr text available');
@@ -1224,6 +1239,7 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     app_id: body.appId ? String(body.appId) : '',
     drawing_no: context.extracted?.drawingNo || body.drawingNo || '',
     product_name: context.extracted?.productName || body.productName || '',
+    tags: Array.isArray(body.tags) ? body.tags.filter(Boolean).join(',') : String(body.tags || ''),
     part_name: context.extracted?.productName || body.productName || '',
     file_name: body.fileName || '',
     file_key: body.fileKey || '',
@@ -1580,6 +1596,70 @@ const server = createServer(async (request, response) => {
       service: 'drawing-similarity-api',
       runtime: getRuntimeInfo()
     });
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/tags') {
+    if (!isQdrantConfigured()) {
+      sendJson(response, 200, { tags: [] });
+      return;
+    }
+    try {
+      const tenantId = url.searchParams.get('tenantId') || 'default';
+      const appId = url.searchParams.get('appId') || '';
+      const filter = {
+        must: [
+          { key: 'tenant_id', match: { value: tenantId } },
+          ...(appId ? [{ key: 'app_id', match: { value: String(appId) } }] : [])
+        ]
+      };
+      const tagSet = new Set();
+      let nextOffset = null;
+      let hasMore = true;
+      while (hasMore) {
+        const scrollBody = { limit: 250, with_payload: ['tags'], filter };
+        if (nextOffset != null) {
+          scrollBody.offset = nextOffset;
+        }
+        const data = await qdrantRequest(
+          '/collections/' + encodeURIComponent(qdrantCollection) + '/points/scroll',
+          { method: 'POST', body: JSON.stringify(scrollBody) }
+        );
+        for (const point of (data.result?.points || [])) {
+          parseTags(point.payload?.tags).forEach((t) => tagSet.add(t));
+        }
+        nextOffset = data.result?.next_page_offset ?? null;
+        hasMore = nextOffset != null;
+      }
+      sendJson(response, 200, { tags: [...tagSet].sort() });
+    } catch (error) {
+      sendJson(response, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/tag') {
+    try {
+      const body = await readJson(request);
+      if (!body.recordId) {
+        sendJson(response, 400, { error: 'recordId is required' });
+        return;
+      }
+      if (!isQdrantConfigured()) {
+        sendJson(response, 200, { ok: true, configured: false });
+        return;
+      }
+      const tags = parseTags(body.tags);
+      const tagsStr = tags.join(',');
+      const pointIds = embeddingRotations.map((rot) => toPointIdWithRotation(body.recordId, rot));
+      await qdrantRequest(
+        '/collections/' + encodeURIComponent(qdrantCollection) + '/points/payload?wait=true',
+        { method: 'POST', body: JSON.stringify({ payload: { tags: tagsStr }, points: pointIds }) }
+      );
+      sendJson(response, 200, { ok: true, recordId: body.recordId, tags });
+    } catch (error) {
+      sendJson(response, 500, { error: error.message });
+    }
     return;
   }
 

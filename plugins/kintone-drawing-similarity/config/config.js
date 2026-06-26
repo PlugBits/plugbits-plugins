@@ -2,7 +2,7 @@
   'use strict';
 
   const PLUGIN_ID = kintone.$PLUGIN_ID;
-  const fields = ['apiBaseUrl', 'tenantId', 'drawingNoField', 'productNameField', 'pdfFileField'];
+  const fields = ['apiBaseUrl', 'tenantId', 'drawingNoField', 'productNameField', 'pdfFileField', 'tagField', 'tagSpaceId'];
 
   const getElement = (id) => document.getElementById(id);
 
