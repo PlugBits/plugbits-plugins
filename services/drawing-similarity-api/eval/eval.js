@@ -64,9 +64,12 @@ if (!Array.isArray(pairs) || !pairs.length) {
 
 try {
   const res = await fetch(apiBaseUrl + '/health');
-  if (!res.ok) throw new Error('HTTP ' + res.status);
+  if (!res.ok) {
+    console.warn('⚠ /health が HTTP ' + res.status + ' を返しました。処理を続行します。');
+  }
 } catch (e) {
-  console.error('APIに接続できませんでした:', apiBaseUrl, '/', e.message);
+  console.error('APIに接続できませんでした:', apiBaseUrl);
+  console.error('  ' + e.message);
   process.exit(1);
 }
 
