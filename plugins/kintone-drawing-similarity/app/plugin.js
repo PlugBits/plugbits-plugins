@@ -347,7 +347,7 @@
     renderTagUi(spaceEl, currentTags, allTags, true, (tags) => {
       const rec = {};
       rec[config.tagField] = { value: stringifyTags(tags) };
-      kintone.app.record.set(rec);
+      kintone.app.record.set({ record: rec });
     });
     return event;
   });
