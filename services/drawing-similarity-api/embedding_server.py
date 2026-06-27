@@ -18,6 +18,8 @@ PROVIDER = os.environ.get("EMBEDDING_PROVIDER", "openclip").strip().lower()
 OPENCLIP_MODEL = os.environ.get("OPENCLIP_MODEL", "ViT-B-32")
 OPENCLIP_PRETRAINED = os.environ.get("OPENCLIP_PRETRAINED", "laion2b_s34b_b79k")
 DINO_MODEL = os.environ.get("DINO_MODEL", "facebook/dinov2-small")
+EMBED_EDGE_MODE = os.environ.get("EMBED_EDGE_MODE", "none").strip().lower()
+EMBED_EDGE_THRESHOLD = int(os.environ.get("EMBED_EDGE_THRESHOLD", "200"))
 
 _STATE = None
 _STATE_LOCK = threading.Lock()
@@ -92,11 +94,25 @@ class EmbeddingState:
             features = functional.normalize(features, p=2, dim=-1)
         return features.squeeze(0).detach().cpu().tolist()
 
+    def apply_edge_mode(self, image):
+        if EMBED_EDGE_MODE == "binary":
+            gray = image.convert("L")
+            binary = gray.point(lambda p: 0 if p < EMBED_EDGE_THRESHOLD else 255)
+            return binary.convert("RGB")
+        elif EMBED_EDGE_MODE == "edges":
+            from PIL import ImageFilter, ImageOps
+            gray = image.convert("L")
+            edges = gray.filter(ImageFilter.FIND_EDGES)
+            edges = ImageOps.invert(edges)
+            return edges.convert("RGB")
+        return image
+
     def embed(self, image_bytes, image_mode, rotation=0):
         image, image_info = self.prepare_input_image(image_bytes, image_mode)
         rotation = int(rotation or 0) % 360
         if rotation:
             image = image.rotate(-rotation, expand=True)
+        image = self.apply_edge_mode(image)
         image_info["rotation"] = rotation
         image_info["rotated_width"] = image.size[0]
         image_info["rotated_height"] = image.size[1]

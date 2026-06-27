@@ -53,11 +53,13 @@ const configuredOpenClipTimeoutMs = Number(process.env.OPENCLIP_TIMEOUT_MS || 18
 const openClipTimeoutMs = Number.isFinite(configuredOpenClipTimeoutMs) && configuredOpenClipTimeoutMs > 0
   ? configuredOpenClipTimeoutMs
   : 180000;
-const scoreVectorFloor = Number(process.env.SCORE_VECTOR_FLOOR || 0.75);
-const scoreVectorCeiling = Number(process.env.SCORE_VECTOR_CEILING || 0.98);
+const scoreVectorFloor = Number(process.env.SCORE_VECTOR_FLOOR || 0.87);
+const scoreVectorCeiling = Number(process.env.SCORE_VECTOR_CEILING || 0.99);
 const scoreVectorWeight = Number(process.env.SCORE_VECTOR_WEIGHT || 0.78);
 const scoreMetadataWeight = Number(process.env.SCORE_METADATA_WEIGHT || 0.12);
 const scoreShapeWeight = Number(process.env.SCORE_SHAPE_WEIGHT || 0.10);
+const scoreTypeBonus = Number(process.env.SCORE_TYPE_BONUS || 0.05);
+const parseTags = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 let payloadIndexesReady = false;
 
 const formatLogFields = (fields = {}) => Object.entries(fields)
@@ -529,7 +531,8 @@ const buildShapeProfile = async (pngBuffer, context = {}) => {
       centroidY: 0.5,
       edgeDensity: 0,
       verticalProfile: [],
-      horizontalProfile: []
+      horizontalProfile: [],
+      huMoments: []
     };
   }
   if (shapeEngine !== 'simple') {
@@ -574,7 +577,8 @@ const buildShapeProfile = async (pngBuffer, context = {}) => {
       centroidY: Number(data.centroidY || 0.5),
       edgeDensity: Number(data.edgeDensity || 0),
       verticalProfile: Array.isArray(data.verticalProfile) ? data.verticalProfile : [],
-      horizontalProfile: Array.isArray(data.horizontalProfile) ? data.horizontalProfile : []
+      horizontalProfile: Array.isArray(data.horizontalProfile) ? data.horizontalProfile : [],
+      huMoments: Array.isArray(data.huMoments) ? data.huMoments : []
     };
   } finally {
     await rm(workDir, { recursive: true, force: true });
@@ -726,7 +730,8 @@ const normalizeShapeProfile = (value) => {
     centroidY: Number(profile.centroidY || 0.5),
     edgeDensity: Number(profile.edgeDensity || 0),
     verticalProfile: normalizeArrayNumber(profile.verticalProfile),
-    horizontalProfile: normalizeArrayNumber(profile.horizontalProfile)
+    horizontalProfile: normalizeArrayNumber(profile.horizontalProfile),
+    huMoments: normalizeArrayNumber(profile.huMoments)
   };
 };
 
@@ -767,6 +772,28 @@ const profileSimilarity = (leftValues, rightValues) => {
     diff += Math.abs(Number(leftValues[index] || 0) - Number(rightValues[index] || 0));
   }
   return Math.max(0, 1 - Math.min(diff / 2, 1));
+};
+
+const huMomentSimilarity = (huA, huB) => {
+  if (!Array.isArray(huA) || !Array.isArray(huB) || !huA.length || !huB.length) {
+    return null;
+  }
+  const length = Math.min(huA.length, huB.length);
+  let dist = 0;
+  let count = 0;
+  for (let i = 0; i < length; i += 1) {
+    const a = Number(huA[i]);
+    const b = Number(huB[i]);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a === 0 || b === 0) {
+      continue;
+    }
+    dist += Math.abs(1 / Math.log10(Math.abs(a)) - 1 / Math.log10(Math.abs(b)));
+    count += 1;
+  }
+  if (count === 0) {
+    return null;
+  }
+  return Math.max(0, 1 - Math.min(dist / 2, 1));
 };
 
 const clamp01 = (value) => Math.max(0, Math.min(1, Number(value) || 0));
@@ -812,6 +839,7 @@ const scoreShapeCandidate = (candidatePayload = {}, queryShape = null) => {
         centroid: 0,
         edge: 0,
         projection: 0,
+        hu: 0,
         total: 0
       },
       reasons: []
@@ -826,6 +854,7 @@ const scoreShapeCandidate = (candidatePayload = {}, queryShape = null) => {
   const edgeSim = boundedDifferenceSimilarity(queryShape.edgeDensity, candidateShape.edgeDensity);
   const verticalSim = profileSimilarity(queryShape.verticalProfile, candidateShape.verticalProfile);
   const horizontalSim = profileSimilarity(queryShape.horizontalProfile, candidateShape.horizontalProfile);
+  const huSim = huMomentSimilarity(queryShape.huMoments, candidateShape.huMoments);
 
   const projectionSimValues = [verticalSim, horizontalSim].filter((value) => Number.isFinite(value));
   const projectionSim = projectionSimValues.length
@@ -839,10 +868,11 @@ const scoreShapeCandidate = (candidatePayload = {}, queryShape = null) => {
     centroid: Number((((centroidXSim || 0) + (centroidYSim || 0)) / 2 * 0.03).toFixed(4)),
     edge: Number(((edgeSim || 0) * 0.02).toFixed(4)),
     projection: Number(((projectionSim || 0) * 0.09).toFixed(4)),
+    hu: Number(((huSim || 0) * 0.06).toFixed(4)),
     total: 0
   };
 
-  breakdown.total = Number((breakdown.aspect + breakdown.area + breakdown.ink + breakdown.centroid + breakdown.edge + breakdown.projection).toFixed(4));
+  breakdown.total = Number((breakdown.aspect + breakdown.area + breakdown.ink + breakdown.centroid + breakdown.edge + breakdown.projection + breakdown.hu).toFixed(4));
 
   const reasons = [];
   if ((projectionSim || 0) >= 0.7) {
@@ -885,7 +915,8 @@ const buildQueryProfile = (body = {}, indexedPayload = null) => ({
   customer: String(indexedPayload?.ocr_customer || body.customer || '').trim(),
   revision: String(indexedPayload?.ocr_revision || body.revision || '').trim(),
   shapeCategory: String(indexedPayload?.ocr_shape_category || body.shapeCategory || '').trim(),
-  ocrText: String(indexedPayload?.ocr_text || body.ocrText || '').trim()
+  ocrText: String(indexedPayload?.ocr_text || body.ocrText || '').trim(),
+  tags: parseTags(indexedPayload?.tags || body.tags || '')
 });
 
 const scoreCandidate = (candidatePayload = {}, query = {}) => {
@@ -973,7 +1004,7 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
 
   const metadataBonus = breakdown.drawingNo + breakdown.productName + breakdown.material + breakdown.thickness + breakdown.customer + breakdown.revision + breakdown.shapeCategory;
   const metadataScore = clamp01(metadataBonus / 0.58);
-  const normalizedShapeScore = clamp01(breakdown.shape / 0.23);
+  const normalizedShapeScore = clamp01(breakdown.shape / 0.29);
   const totalWeight = Math.max(0.01, scoreVectorWeight + scoreMetadataWeight + scoreShapeWeight);
   const weightedTotal = (
     calibratedVectorScore * scoreVectorWeight +
@@ -981,9 +1012,21 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
     normalizedShapeScore * scoreShapeWeight
   ) / totalWeight;
 
+  const queryTags = Array.isArray(query.tags) ? query.tags : [];
+  const candidateTags = parseTags(candidatePayload.tags || '');
+  let tagBonus = 0;
+  if (queryTags.length > 0 && candidateTags.length > 0) {
+    const sharedTags = queryTags.filter((t) => candidateTags.includes(t));
+    if (sharedTags.length > 0) {
+      tagBonus = scoreTypeBonus * sharedTags.length / Math.min(queryTags.length, candidateTags.length);
+      reasons.push('tag:' + sharedTags.join(','));
+    }
+  }
+
   breakdown.metadata = Number(metadataScore.toFixed(4));
   breakdown.bonus = Number((metadataBonus + breakdown.shape).toFixed(3));
-  breakdown.total = Number(clamp01(weightedTotal).toFixed(4));
+  breakdown.tag = Number(tagBonus.toFixed(4));
+  breakdown.total = Number(clamp01(weightedTotal + tagBonus).toFixed(4));
 
   if (!reasons.length && candidatePayload.ocr_text) {
     reasons.push('ocr text available');
@@ -1224,6 +1267,7 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     app_id: body.appId ? String(body.appId) : '',
     drawing_no: context.extracted?.drawingNo || body.drawingNo || '',
     product_name: context.extracted?.productName || body.productName || '',
+    tags: Array.isArray(body.tags) ? body.tags.filter(Boolean).join(',') : String(body.tags || ''),
     part_name: context.extracted?.productName || body.productName || '',
     file_name: body.fileName || '',
     file_key: body.fileKey || '',
@@ -1583,6 +1627,66 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/tags') {
+    if (!isQdrantConfigured()) {
+      sendJson(response, 200, { tags: [] });
+      return;
+    }
+    try {
+      const tenantId = url.searchParams.get('tenantId') || 'default';
+      const filter = {
+        must: [{ key: 'tenant_id', match: { value: tenantId } }]
+      };
+      const tagSet = new Set();
+      let nextOffset = null;
+      let hasMore = true;
+      while (hasMore) {
+        const scrollBody = { limit: 250, with_payload: ['tags'], filter };
+        if (nextOffset != null) {
+          scrollBody.offset = nextOffset;
+        }
+        const data = await qdrantRequest(
+          '/collections/' + encodeURIComponent(qdrantCollection) + '/points/scroll',
+          { method: 'POST', body: JSON.stringify(scrollBody) }
+        );
+        for (const point of (data.result?.points || [])) {
+          parseTags(point.payload?.tags).forEach((t) => tagSet.add(t));
+        }
+        nextOffset = data.result?.next_page_offset ?? null;
+        hasMore = nextOffset != null;
+      }
+      sendJson(response, 200, { tags: [...tagSet].sort() });
+    } catch (error) {
+      sendJson(response, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (request.method === 'POST' && url.pathname === '/tag') {
+    try {
+      const body = await readJson(request);
+      if (!body.recordId) {
+        sendJson(response, 400, { error: 'recordId is required' });
+        return;
+      }
+      if (!isQdrantConfigured()) {
+        sendJson(response, 200, { ok: true, configured: false });
+        return;
+      }
+      const tags = parseTags(body.tags);
+      const tagsStr = tags.join(',');
+      const pointIds = embeddingRotations.map((rot) => toPointIdWithRotation(body.recordId, rot));
+      await qdrantRequest(
+        '/collections/' + encodeURIComponent(qdrantCollection) + '/points/payload?wait=true',
+        { method: 'POST', body: JSON.stringify({ payload: { tags: tagsStr }, points: pointIds }) }
+      );
+      sendJson(response, 200, { ok: true, recordId: body.recordId, tags });
+    } catch (error) {
+      sendJson(response, 500, { error: error.message });
+    }
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/similar') {
     try {
       const body = await readJson(request);
@@ -1750,7 +1854,8 @@ const server = createServer(async (request, response) => {
             centroidY: 0.5,
             edgeDensity: 0,
             verticalProfile: [],
-            horizontalProfile: []
+            horizontalProfile: [],
+            huMoments: []
           };
         }
         throw attachStep(error, step);

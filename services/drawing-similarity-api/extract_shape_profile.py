@@ -3,6 +3,7 @@ import os
 import sys
 from typing import List
 
+import numpy as np
 from PIL import Image, ImageFilter, ImageOps
 
 
@@ -162,6 +163,50 @@ def prepare_image(image_path: str):
     }
 
 
+def compute_hu_moments(image: Image.Image) -> list:
+    arr = np.array(image, dtype=np.float64)
+    binary = (arr < THRESHOLD).astype(np.float64)
+    m00 = binary.sum()
+    if m00 < 1:
+        return [0.0] * 7
+    rows, cols = binary.shape
+    X = np.arange(cols, dtype=np.float64)
+    Y = np.arange(rows, dtype=np.float64)
+    cx = (binary * X[np.newaxis, :]).sum() / m00
+    cy = (binary * Y[:, np.newaxis]).sum() / m00
+    Xc = X[np.newaxis, :] - cx
+    Yc = Y[:, np.newaxis] - cy
+    mu20 = (binary * Xc ** 2).sum()
+    mu02 = (binary * Yc ** 2).sum()
+    mu11 = (binary * Xc * Yc).sum()
+    mu30 = (binary * Xc ** 3).sum()
+    mu12 = (binary * Xc * Yc ** 2).sum()
+    mu21 = (binary * Xc ** 2 * Yc).sum()
+    mu03 = (binary * Yc ** 3).sum()
+
+    def nu(mu, p, q):
+        return mu / (m00 ** ((p + q) / 2 + 1))
+
+    n20 = nu(mu20, 2, 0)
+    n02 = nu(mu02, 0, 2)
+    n11 = nu(mu11, 1, 1)
+    n30 = nu(mu30, 3, 0)
+    n12 = nu(mu12, 1, 2)
+    n21 = nu(mu21, 2, 1)
+    n03 = nu(mu03, 0, 3)
+    h1 = n20 + n02
+    h2 = (n20 - n02) ** 2 + 4 * n11 ** 2
+    h3 = (n30 - 3 * n12) ** 2 + (3 * n21 - n03) ** 2
+    h4 = (n30 + n12) ** 2 + (n21 + n03) ** 2
+    h5 = ((n30 - 3 * n12) * (n30 + n12) * ((n30 + n12) ** 2 - 3 * (n21 + n03) ** 2)
+          + (3 * n21 - n03) * (n21 + n03) * (3 * (n30 + n12) ** 2 - (n21 + n03) ** 2))
+    h6 = ((n20 - n02) * ((n30 + n12) ** 2 - (n21 + n03) ** 2)
+          + 4 * n11 * (n30 + n12) * (n21 + n03))
+    h7 = ((3 * n21 - n03) * (n30 + n12) * ((n30 + n12) ** 2 - 3 * (n21 + n03) ** 2)
+          - (n30 - 3 * n12) * (n21 + n03) * (3 * (n30 + n12) ** 2 - (n21 + n03) ** 2))
+    return [round(float(h), 10) for h in [h1, h2, h3, h4, h5, h6, h7]]
+
+
 def compute_profile(image_path: str) -> dict:
     image, image_info = prepare_image(image_path)
     width, height = image.size
@@ -231,6 +276,7 @@ def compute_profile(image_path: str) -> dict:
     edge_image = image.filter(ImageFilter.FIND_EDGES)
     edge_pixels = sum(1 for value in edge_image.getdata() if value < 80)
     edge_density = round(edge_pixels / total, 8)
+    hu_moments = compute_hu_moments(image)
 
     return {
         "engine": "simple",
@@ -249,6 +295,7 @@ def compute_profile(image_path: str) -> dict:
         "edgeDensity": edge_density,
         "verticalProfile": normalize_profile(vertical),
         "horizontalProfile": normalize_profile(horizontal),
+        "huMoments": hu_moments,
     }
 
 
@@ -275,6 +322,7 @@ def main() -> int:
                 "edgeDensity": 0.0,
                 "verticalProfile": [],
                 "horizontalProfile": [],
+                "huMoments": [],
             }))
             return 0
 
