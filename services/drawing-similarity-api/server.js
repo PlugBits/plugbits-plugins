@@ -1627,6 +1627,61 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/analyze') {
+    try {
+      const body = await readJson(request);
+      const pdfBase64 = String(body.pdf_base64 || '');
+      if (!pdfBase64) {
+        sendJson(response, 400, { error: 'pdf_base64 is required' });
+        return;
+      }
+      const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+      if (!pdfBuffer.length) {
+        sendJson(response, 400, { error: 'Empty PDF content' });
+        return;
+      }
+
+      const { pngBuffer } = await convertPdfFirstPageToPng(pdfBuffer);
+
+      const [ocr, shape] = await Promise.all([
+        buildOcrText(pngBuffer, {}),
+        buildShapeProfile(pngBuffer, {})
+      ]);
+
+      const extracted = extractOcrFields(ocr.text, {});
+      const ocrLines = String(ocr.text || '')
+        .split('\n')
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter((line) => line.length >= 2 && line.length <= 80);
+
+      sendJson(response, 200, {
+        ok: true,
+        drawingNo: extracted.drawingNo,
+        productName: extracted.productName,
+        material: extracted.material,
+        ocrLines,
+        ocr: {
+          engine: ocr.engine,
+          langs: ocr.langs || '',
+          textLength: String(ocr.text || '').length
+        },
+        extracted,
+        shape: {
+          bboxAspectRatio: shape.bboxAspectRatio,
+          inkRatio: shape.inkRatio,
+          edgeDensity: shape.edgeDensity
+        }
+      });
+    } catch (error) {
+      sendJson(response, error.status || 500, {
+        ok: false,
+        error: error.message,
+        step: error.step || 'analyze'
+      });
+    }
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/tags') {
     if (!isQdrantConfigured()) {
       sendJson(response, 200, { tags: [] });
