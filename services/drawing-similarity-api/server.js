@@ -487,7 +487,7 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 };
 
 const GEMINI_OCR_PROMPT = [
-  '{"drawingNo":"","productName":""}',
+  '{"drawingNo":"","productName":"","material":"","thickness":""}',
   '',
   'Read the title block (表題欄) of this engineering drawing and fill in the JSON above.',
   'YOUR ENTIRE RESPONSE MUST BE ONLY THE JSON — no explanation, no markdown, no other text.',
@@ -505,6 +505,18 @@ const GEMINI_OCR_PROMPT = [
   '- Return the value exactly as written — Japanese or English, whichever is present.',
   '- Example: "STAY (SEAT BELT, 2)" or "ステー（シートベルト，２）"',
   '- Note: commas INSIDE a product name are valid (e.g. "SEAT BELT, 2").',
+  '',
+  'MATERIAL (材質 / MATERIAL):',
+  '- Find the field labeled 材質 or MATERIAL.',
+  '- Return the material code/name only, WITHOUT any thickness value.',
+  '- Examples: "S45C", "SUS304", "SPCC", "A5052P", "SS400", "冷延鋼板"',
+  '- If the field contains both material and thickness (e.g. "SPCC t1.6"), put only "SPCC" here.',
+  '',
+  'THICKNESS (板厚 / THICKNESS):',
+  '- Extract the plate thickness from the 材質 field or a dedicated 板厚/t field.',
+  '- Return the numeric value with unit, e.g. "t1.6", "t2.3", "3.2mm".',
+  '- Thickness is often written as "t1.6" or "t=2.0" directly after the material code.',
+  '- If no thickness is found anywhere in the title block, return "".',
   '',
   'Use "" for any field you cannot find.',
   'Output ONLY the JSON. Start with { and end with }.'
@@ -530,11 +542,11 @@ const GEMINI_LOCATE_PROMPT = [
 const extractGeminiJson = (raw) => {
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '' };
+  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '', material: '', thickness: '' };
   try {
     return JSON.parse(raw.slice(start, end + 1));
   } catch {
-    return { drawingNo: '', productName: '' };
+    return { drawingNo: '', productName: '', material: '', thickness: '' };
   }
 };
 
@@ -1993,6 +2005,7 @@ const server = createServer(async (request, response) => {
         drawingNo: highConfidence ? (extracted.drawingNo || '') : '',
         productName: highConfidence ? (extracted.productName || '') : '',
         material: highConfidence ? (extracted.material || '') : '',
+        thickness: highConfidence ? (extracted.thickness || '') : '',
         ocrLines,
         ocr: {
           engine: ocr.engine,
