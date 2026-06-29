@@ -531,7 +531,8 @@ const buildShapeProfile = async (pngBuffer, context = {}) => {
       centroidY: 0.5,
       edgeDensity: 0,
       verticalProfile: [],
-      horizontalProfile: []
+      horizontalProfile: [],
+      huMoments: []
     };
   }
   if (shapeEngine !== 'simple') {
@@ -576,7 +577,8 @@ const buildShapeProfile = async (pngBuffer, context = {}) => {
       centroidY: Number(data.centroidY || 0.5),
       edgeDensity: Number(data.edgeDensity || 0),
       verticalProfile: Array.isArray(data.verticalProfile) ? data.verticalProfile : [],
-      horizontalProfile: Array.isArray(data.horizontalProfile) ? data.horizontalProfile : []
+      horizontalProfile: Array.isArray(data.horizontalProfile) ? data.horizontalProfile : [],
+      huMoments: Array.isArray(data.huMoments) ? data.huMoments : []
     };
   } finally {
     await rm(workDir, { recursive: true, force: true });
@@ -728,7 +730,8 @@ const normalizeShapeProfile = (value) => {
     centroidY: Number(profile.centroidY || 0.5),
     edgeDensity: Number(profile.edgeDensity || 0),
     verticalProfile: normalizeArrayNumber(profile.verticalProfile),
-    horizontalProfile: normalizeArrayNumber(profile.horizontalProfile)
+    horizontalProfile: normalizeArrayNumber(profile.horizontalProfile),
+    huMoments: normalizeArrayNumber(profile.huMoments)
   };
 };
 
@@ -769,6 +772,28 @@ const profileSimilarity = (leftValues, rightValues) => {
     diff += Math.abs(Number(leftValues[index] || 0) - Number(rightValues[index] || 0));
   }
   return Math.max(0, 1 - Math.min(diff / 2, 1));
+};
+
+const huMomentSimilarity = (huA, huB) => {
+  if (!Array.isArray(huA) || !Array.isArray(huB) || !huA.length || !huB.length) {
+    return null;
+  }
+  const length = Math.min(huA.length, huB.length);
+  let dist = 0;
+  let count = 0;
+  for (let i = 0; i < length; i += 1) {
+    const a = Number(huA[i]);
+    const b = Number(huB[i]);
+    if (!Number.isFinite(a) || !Number.isFinite(b) || a === 0 || b === 0) {
+      continue;
+    }
+    dist += Math.abs(1 / Math.log10(Math.abs(a)) - 1 / Math.log10(Math.abs(b)));
+    count += 1;
+  }
+  if (count === 0) {
+    return null;
+  }
+  return Math.max(0, 1 - Math.min(dist / 2, 1));
 };
 
 const clamp01 = (value) => Math.max(0, Math.min(1, Number(value) || 0));
@@ -814,6 +839,7 @@ const scoreShapeCandidate = (candidatePayload = {}, queryShape = null) => {
         centroid: 0,
         edge: 0,
         projection: 0,
+        hu: 0,
         total: 0
       },
       reasons: []
@@ -828,6 +854,7 @@ const scoreShapeCandidate = (candidatePayload = {}, queryShape = null) => {
   const edgeSim = boundedDifferenceSimilarity(queryShape.edgeDensity, candidateShape.edgeDensity);
   const verticalSim = profileSimilarity(queryShape.verticalProfile, candidateShape.verticalProfile);
   const horizontalSim = profileSimilarity(queryShape.horizontalProfile, candidateShape.horizontalProfile);
+  const huSim = huMomentSimilarity(queryShape.huMoments, candidateShape.huMoments);
 
   const projectionSimValues = [verticalSim, horizontalSim].filter((value) => Number.isFinite(value));
   const projectionSim = projectionSimValues.length
@@ -841,10 +868,11 @@ const scoreShapeCandidate = (candidatePayload = {}, queryShape = null) => {
     centroid: Number((((centroidXSim || 0) + (centroidYSim || 0)) / 2 * 0.03).toFixed(4)),
     edge: Number(((edgeSim || 0) * 0.02).toFixed(4)),
     projection: Number(((projectionSim || 0) * 0.09).toFixed(4)),
+    hu: Number(((huSim || 0) * 0.06).toFixed(4)),
     total: 0
   };
 
-  breakdown.total = Number((breakdown.aspect + breakdown.area + breakdown.ink + breakdown.centroid + breakdown.edge + breakdown.projection).toFixed(4));
+  breakdown.total = Number((breakdown.aspect + breakdown.area + breakdown.ink + breakdown.centroid + breakdown.edge + breakdown.projection + breakdown.hu).toFixed(4));
 
   const reasons = [];
   if ((projectionSim || 0) >= 0.7) {
@@ -976,7 +1004,7 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
 
   const metadataBonus = breakdown.drawingNo + breakdown.productName + breakdown.material + breakdown.thickness + breakdown.customer + breakdown.revision + breakdown.shapeCategory;
   const metadataScore = clamp01(metadataBonus / 0.58);
-  const normalizedShapeScore = clamp01(breakdown.shape / 0.23);
+  const normalizedShapeScore = clamp01(breakdown.shape / 0.29);
   const totalWeight = Math.max(0.01, scoreVectorWeight + scoreMetadataWeight + scoreShapeWeight);
   const weightedTotal = (
     calibratedVectorScore * scoreVectorWeight +
@@ -1599,6 +1627,62 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'POST' && url.pathname === '/analyze') {
+    try {
+      const body = await readJson(request);
+      const pdfBase64 = String(body.pdf_base64 || '');
+      if (!pdfBase64) {
+        sendJson(response, 400, { error: 'pdf_base64 is required' });
+        return;
+      }
+      const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+      if (!pdfBuffer.length) {
+        sendJson(response, 400, { error: 'Empty PDF content' });
+        return;
+      }
+
+      const { pngBuffer } = await convertPdfFirstPageToPng(pdfBuffer);
+
+      const [ocr, shape] = await Promise.all([
+        buildOcrText(pngBuffer, {}),
+        buildShapeProfile(pngBuffer, {})
+      ]);
+
+      const extracted = extractOcrFields(ocr.text, {});
+      const ocrLines = String(ocr.text || '')
+        .split('\n')
+        .map((line) => line.replace(/\s+/g, ' ').trim())
+        .filter((line) => line.length >= 2 && line.length <= 80);
+
+      sendJson(response, 200, {
+        ok: true,
+        drawingNo: extracted.drawingNo,
+        productName: extracted.productName,
+        material: extracted.material,
+        ocrLines,
+        ocr: {
+          engine: ocr.engine,
+          langs: ocr.langs || '',
+          textLength: String(ocr.text || '').length
+        },
+        extracted,
+        shape: {
+          bboxAspectRatio: shape.bboxAspectRatio,
+          inkRatio: shape.inkRatio,
+          edgeDensity: shape.edgeDensity
+        }
+      });
+    } catch (error) {
+      sendJson(response, error.status || 500, {
+        ok: false,
+        error: error.message,
+        step: error.step || 'analyze'
+      });
+    }
+    return;
+  }
+
+
   if (request.method === 'GET' && url.pathname === '/tags') {
     if (!isQdrantConfigured()) {
       sendJson(response, 200, { tags: [] });
@@ -1826,7 +1910,8 @@ const server = createServer(async (request, response) => {
             centroidY: 0.5,
             edgeDensity: 0,
             verticalProfile: [],
-            horizontalProfile: []
+            horizontalProfile: [],
+            huMoments: []
           };
         }
         throw attachStep(error, step);
