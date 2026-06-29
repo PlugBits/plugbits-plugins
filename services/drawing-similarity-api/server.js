@@ -1682,6 +1682,7 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+
   if (request.method === 'GET' && url.pathname === '/tags') {
     if (!isQdrantConfigured()) {
       sendJson(response, 200, { tags: [] });

@@ -135,9 +135,16 @@ for (let i = 0; i < pairs.length; i++) {
   // 結果の表示 (上位5件、✓で正解をマーク)
   const topDisplay = items.slice(0, 5).map((r) => {
     const mark = expectedSet.has(String(r.recordId)) ? '✓' : ' ';
-    return mark + String(r.recordId) + '(' + fmt4(r.vectorRaw || 0) + ')';
+    const bd = r.scoreBreakdown || {};
+    const tagPart = bd.tag > 0 ? ' +tag' + fmt4(bd.tag) : '';
+    const reasonPart = r.reasons && r.reasons.length ? ' [' + r.reasons.slice(0, 3).join(',') + ']' : '';
+    return mark + String(r.recordId) + '(v' + fmt4(r.vectorRaw || 0) + tagPart + ' tot' + fmt4(r.score || 0) + ')' + reasonPart;
   });
-  console.log('  結果  :', topDisplay.join('  ') + (items.length > 5 ? '  ...' : ''));
+  console.log('  結果  :');
+  topDisplay.forEach((line) => console.log('    ' + line));
+  if (items.length > 5) {
+    console.log('    ...');
+  }
 
   // Hit@k の計算と表示
   const hitAtK = {};
