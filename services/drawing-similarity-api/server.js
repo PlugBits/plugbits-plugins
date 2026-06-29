@@ -481,6 +481,11 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 };
 
 const buildOcrTextGemini = async (pngBuffer) => {
+  if (!GEMINI_API_KEY) {
+    const err = new Error('GEMINI_API_KEY environment variable is not set');
+    err.status = 500;
+    throw err;
+  }
   const base64 = pngBuffer.toString('base64');
   const prompt = [
     '工業図面の表題欄（title block）から図番と品名を抽出してください。',
