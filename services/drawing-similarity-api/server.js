@@ -33,7 +33,8 @@ const embeddingRotations = String(process.env.EMBED_ROTATIONS || '0')
 if (!embeddingRotations.length) {
   embeddingRotations.push(0);
 }
-const defaultOcrEngine = process.env.NODE_ENV === 'production' ? 'tesseract' : 'none';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const defaultOcrEngine = GEMINI_API_KEY ? 'gemini' : (process.env.NODE_ENV === 'production' ? 'tesseract' : 'none');
 const ocrEngine = String(process.env.OCR_ENGINE || defaultOcrEngine).toLowerCase();
 const ocrLangs = String(process.env.OCR_LANGS || 'eng+jpn').trim();
 const tesseractBin = process.env.TESSERACT_BIN || 'tesseract';
@@ -479,6 +480,53 @@ const buildOpenClipVector = async (buffer, context = {}) => {
   }
 };
 
+const buildOcrTextGemini = async (pngBuffer) => {
+  const base64 = pngBuffer.toString('base64');
+  const prompt = [
+    '工業図面の表題欄（title block）から図番と品名を抽出してください。',
+    '以下のJSON形式のみで返してください（説明文・コードブロック不要）:',
+    '{"drawingNo":"","productName":""}',
+    '図番はアルファベット+数字のコード（例: K2054-05681）、品名は部品名称です。',
+    '見つからない場合は空文字にしてください。'
+  ].join('\n');
+
+  const res = await fetch(
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [
+          { text: prompt },
+          { inline_data: { mime_type: 'image/png', data: base64 } }
+        ]}],
+        generationConfig: { temperature: 0, maxOutputTokens: 256 }
+      })
+    }
+  );
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    const err = new Error('Gemini API HTTP ' + res.status + ': ' + errText.slice(0, 200));
+    err.status = res.status;
+    throw err;
+  }
+
+  const data = await res.json();
+  const raw = (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+  const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+
+  let geminiExtracted = { drawingNo: '', productName: '' };
+  try { geminiExtracted = JSON.parse(clean); } catch { /* fallback to empty */ }
+
+  return {
+    engine: 'gemini',
+    langs: 'ja+en',
+    text: raw,
+    geminiExtracted
+  };
+};
+
 const cropPngForOcr = async (pngBuffer) => {
   const workDir = await mkdtemp(join(tmpdir(), 'drawing-crop-'));
   const inputPath = join(workDir, 'page.png');
@@ -493,6 +541,9 @@ const cropPngForOcr = async (pngBuffer) => {
 };
 
 const buildOcrText = async (pngBuffer, context = {}) => {
+  if (ocrEngine === 'gemini') {
+    return buildOcrTextGemini(pngBuffer);
+  }
   if (ocrEngine === 'none') {
     return {
       engine: 'none',
@@ -1664,18 +1715,21 @@ const server = createServer(async (request, response) => {
         buildShapeProfile(pngBuffer, {})
       ]);
 
-      const extracted = extractOcrFields(ocr.text, {});
+      const isGemini = ocr.engine === 'gemini';
+      const extracted = isGemini
+        ? ocr.geminiExtracted
+        : extractOcrFields(ocr.text, {});
       const ocrLines = String(ocr.text || '')
         .split('\n')
         .map((line) => line.replace(/\s+/g, ' ').trim())
         .filter((line) => line.length >= 2 && line.length <= 80);
 
-      const highConfidence = extracted.extractionConfidence >= 0.4;
+      const highConfidence = isGemini || (extracted.extractionConfidence >= 0.4);
       sendJson(response, 200, {
         ok: true,
-        drawingNo: highConfidence ? extracted.drawingNo : '',
-        productName: highConfidence ? extracted.productName : '',
-        material: highConfidence ? extracted.material : '',
+        drawingNo: highConfidence ? (extracted.drawingNo || '') : '',
+        productName: highConfidence ? (extracted.productName || '') : '',
+        material: highConfidence ? (extracted.material || '') : '',
         ocrLines,
         ocr: {
           engine: ocr.engine,
