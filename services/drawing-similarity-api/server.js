@@ -555,11 +555,6 @@ const getGcpAccessToken = async () => {
 };
 
 const buildOcrTextVertexAI = async (pngBuffer) => {
-  if (!VERTEX_PROJECT_ID) {
-    const err = new Error('GOOGLE_CLOUD_PROJECT environment variable is not set');
-    err.status = 500;
-    throw err;
-  }
   const base64 = pngBuffer.toString('base64');
   const prompt = [
     '工業図面の表題欄（title block）から図番と品名を抽出してください。',
@@ -570,7 +565,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   ].join('\n');
 
   const accessToken = await getGcpAccessToken();
-  const endpoint = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_LOCATION}/publishers/google/models/gemini-2.0-flash:generateContent`;
+  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
   const res = await fetch(endpoint, {
     method: 'POST',
