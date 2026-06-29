@@ -31,10 +31,18 @@ def main():
         top = max(0, y - padding)
         right = min(iw, x + bw + padding)
         bottom = min(ih, y + bh + padding)
+    elif len(sys.argv) == 5:
+        # Fraction mode with explicit args: bottom_frac right_frac
+        bottom_frac = float(sys.argv[3])
+        right_frac = float(sys.argv[4])
+        left = int(iw * (1.0 - right_frac))
+        top = int(ih * (1.0 - bottom_frac))
+        right = iw
+        bottom = ih
     else:
-        # Fraction mode
-        bottom_frac = float(os.environ.get('OCR_CROP_BOTTOM_FRAC', '0.22'))
-        right_frac = float(os.environ.get('OCR_CROP_RIGHT_FRAC', '0.32'))
+        # Fraction mode from env vars
+        bottom_frac = float(os.environ.get('OCR_CROP_BOTTOM_FRAC', '0.25'))
+        right_frac = float(os.environ.get('OCR_CROP_RIGHT_FRAC', '0.40'))
         left = int(iw * (1.0 - right_frac))
         top = int(ih * (1.0 - bottom_frac))
         right = iw

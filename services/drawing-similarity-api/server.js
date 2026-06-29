@@ -792,7 +792,15 @@ const cropPngForOcr = async (pngBuffer) => {
   const outputPath = join(workDir, 'cropped.png');
   try {
     await writeFile(inputPath, pngBuffer);
-    await runCommand(pythonBin, [cropScript, inputPath, outputPath]);
+    // Read PNG dimensions from header (bytes 16-23) to detect landscape orientation
+    const imgWidth = pngBuffer.readUInt32BE(16);
+    const imgHeight = pngBuffer.readUInt32BE(20);
+    const isLandscape = imgWidth > imgHeight;
+    // Landscape A3: title block spans ~44% of page width — use wider crop
+    const bottomFrac = isLandscape ? '0.28' : '0.25';
+    const rightFrac = isLandscape ? '0.50' : '0.40';
+    console.log('[ocr] crop orient=' + (isLandscape ? 'landscape' : 'portrait') + ' ' + imgWidth + 'x' + imgHeight + ' rightFrac=' + rightFrac);
+    await runCommand(pythonBin, [cropScript, inputPath, outputPath, bottomFrac, rightFrac]);
     return await readFile(outputPath);
   } finally {
     await rm(workDir, { recursive: true, force: true });
