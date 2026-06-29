@@ -488,12 +488,23 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 const GEMINI_OCR_PROMPT = [
   '{"drawingNo":"","productName":""}',
   '',
-  'Fill in the above JSON from the engineering drawing image. Rules:',
-  '- Your response must start with { and end with }. Nothing else.',
-  '- drawingNo: value in the 図番 or DWG NO field. Grid lines may separate each character — concatenate them all (e.g. K2054-05681).',
-  '- productName: value in the 品名 or PART NAME field. Use Japanese if shown, otherwise English.',
-  '- Use empty string "" if a field is not found.',
-  '- Do NOT write any explanation, preamble, or code block. Output the JSON object only.'
+  'Fill in the above JSON by reading the title block (表題欄) of this engineering drawing.',
+  'Your entire response must be ONLY the JSON object above — no other text.',
+  '',
+  'drawingNo rules:',
+  '- Find the field labeled 図番, DWG NO, DRAWING NO, or DRAWING NUMBER.',
+  '- The number is often split across individual character cells divided by grid lines.',
+  '- Read ALL cells in that field left-to-right and concatenate without spaces.',
+  '- Drawing numbers typically begin with 1-2 capital letters (e.g. K, KM, KA) followed by digits and hyphens.',
+  '- Example: cells [K][2][0][5][4][-][0][5][6][8][1] → "K2054-05681"',
+  '',
+  'productName rules:',
+  '- Find the field labeled 品名 OR PART NAME (they are the same field, often shown in both languages).',
+  '- If both Japanese and English values exist for the same field, prefer Japanese.',
+  '- Example: "ステー（シートベルト，２）" or "STAY(SEAT BELT,2)"',
+  '',
+  'If a value cannot be found, use empty string "".',
+  'Output ONLY the JSON. Start with { and end with }.'
 ].join('\n');
 
 const GEMINI_OCR_GENERATION_CONFIG = {
