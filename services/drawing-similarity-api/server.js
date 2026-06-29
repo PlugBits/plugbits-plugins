@@ -512,7 +512,7 @@ const GEMINI_OCR_PROMPT = [
 
 const GEMINI_OCR_GENERATION_CONFIG = {
   temperature: 0,
-  maxOutputTokens: 256
+  maxOutputTokens: 1024
 };
 
 const GEMINI_LOCATE_PROMPT = [
@@ -567,7 +567,10 @@ const buildOcrTextGemini = async (pngBuffer) => {
   }
 
   const data = await res.json();
-  const raw = (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+  const candidate = data?.candidates?.[0];
+  const parts = candidate?.content?.parts || [];
+  const raw = parts.map((p) => p.text || '').join('').trim();
+  console.log('[ocr] gemini finishReason=' + candidate?.finishReason + ' textLength=' + raw.length);
   const geminiExtracted = extractGeminiJson(raw);
 
   return {
@@ -682,7 +685,10 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   }
 
   const data = await res.json();
-  const raw = (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+  const candidate = data?.candidates?.[0];
+  const parts = candidate?.content?.parts || [];
+  const raw = parts.map((p) => p.text || '').join('').trim();
+  console.log('[ocr] gemini finishReason=' + candidate?.finishReason + ' textLength=' + raw.length);
   const geminiExtracted = extractGeminiJson(raw);
 
   return { engine: 'gemini', langs: 'ja+en', text: raw, geminiExtracted };
