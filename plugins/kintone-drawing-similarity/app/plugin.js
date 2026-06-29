@@ -740,6 +740,22 @@
     '.modal { background: #fff; border-radius: 8px; padding: 24px;',
     '  width: 580px; max-width: calc(100vw - 32px); max-height: 90vh;',
     '  overflow-y: auto; position: relative; }',
+    '.modal.wide { width: min(1160px, calc(100vw - 32px)); padding: 0;',
+    '  overflow: hidden; display: flex; flex-direction: column; max-height: 90vh; }',
+    '.modal.wide .btn-close { top: 10px; right: 14px; }',
+    '.modal-header { padding: 14px 20px 14px 24px; border-bottom: 1px solid #e5e7eb;',
+    '  display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }',
+    '.modal-header h2 { margin: 0; }',
+    '.form-layout { display: flex; flex: 1; overflow: hidden; }',
+    '.preview-panel { flex: 0 0 58%; display: flex; flex-direction: column;',
+    '  border-right: 1px solid #e5e7eb; background: #f5f6f7; min-height: 0; }',
+    '.preview-label { padding: 6px 12px; font-size: 11px; color: #6b7280;',
+    '  background: #fff; border-bottom: 1px solid #e5e7eb; flex-shrink: 0; }',
+    '.preview-embed { flex: 1; width: 100%; border: none; display: block; min-height: 0; }',
+    '.preview-placeholder { flex: 1; display: flex; align-items: center; justify-content: center;',
+    '  color: #9ca3af; font-size: 13px; }',
+    '.form-panel { flex: 0 0 42%; overflow-y: auto; padding: 20px 24px 24px; }',
+    '.modal.wide .modal-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }',
     '.modal-content { }',
     'h2 { font-size: 17px; font-weight: 600; color: #1a1a1a; margin-bottom: 20px; }',
     '.btn-close { position: absolute; top: 10px; right: 14px;',
@@ -906,6 +922,7 @@
     // --- State: Drop ---
     const showDropState = () => {
       clear();
+      modal.classList.remove('wide');
 
       const title = document.createElement('h2');
       title.textContent = '図面を登録';
@@ -953,14 +970,48 @@
     };
 
     // --- State: Analyzing ---
-    const showAnalyzingState = (fileName) => {
+    const showAnalyzingState = (file) => {
       clear();
+      modal.classList.add('wide');
+
+      const header = document.createElement('div');
+      header.className = 'modal-header';
       const title = document.createElement('h2');
       title.textContent = '図面を解析中';
+      header.appendChild(title);
+
+      const layout = document.createElement('div');
+      layout.className = 'form-layout';
+
+      const previewPanel = document.createElement('div');
+      previewPanel.className = 'preview-panel';
+      const previewLabel = document.createElement('div');
+      previewLabel.className = 'preview-label';
+      previewLabel.textContent = file ? file.name : '';
+      previewPanel.appendChild(previewLabel);
+      if (file) {
+        const blobUrl = URL.createObjectURL(file);
+        const embed = document.createElement('embed');
+        embed.src = blobUrl;
+        embed.type = 'application/pdf';
+        embed.className = 'preview-embed';
+        previewPanel.appendChild(embed);
+      } else {
+        const ph = document.createElement('div');
+        ph.className = 'preview-placeholder';
+        ph.textContent = 'プレビューなし';
+        previewPanel.appendChild(ph);
+      }
+
+      const formPanel = document.createElement('div');
+      formPanel.className = 'form-panel';
       const spinner = document.createElement('div');
       spinner.className = 'spinner-wrap';
-      spinner.textContent = (fileName || 'ファイル') + ' を解析しています...';
-      content.append(title, spinner);
+      spinner.textContent = '図面を解析しています...';
+      formPanel.appendChild(spinner);
+
+      layout.append(previewPanel, formPanel);
+      content.append(header, layout);
     };
 
     // オートコンプリート付き複数選択フィールド
@@ -1079,12 +1130,42 @@
     // --- State: Form ---
     const showFormState = (file, analyzeResult, availableTags) => {
       clear();
-      // Declare early so OCR handler closures see them after assignment
-      let drawingNoInput, productNameInput;
+      modal.classList.add('wide');
+      let drawingNoInput, productNameInput, materialInput, dimensionInput;
 
+      const header = document.createElement('div');
+      header.className = 'modal-header';
       const title = document.createElement('h2');
       title.textContent = '登録内容の確認';
-      content.appendChild(title);
+      header.appendChild(title);
+
+      const layout = document.createElement('div');
+      layout.className = 'form-layout';
+
+      // Left: PDF preview
+      const previewPanel = document.createElement('div');
+      previewPanel.className = 'preview-panel';
+      const previewLabel = document.createElement('div');
+      previewLabel.className = 'preview-label';
+      previewLabel.textContent = file ? file.name : '';
+      previewPanel.appendChild(previewLabel);
+      if (file) {
+        const blobUrl = URL.createObjectURL(file);
+        const embed = document.createElement('embed');
+        embed.src = blobUrl;
+        embed.type = 'application/pdf';
+        embed.className = 'preview-embed';
+        previewPanel.appendChild(embed);
+      } else {
+        const ph = document.createElement('div');
+        ph.className = 'preview-placeholder';
+        ph.textContent = 'プレビューなし';
+        previewPanel.appendChild(ph);
+      }
+
+      // Right: Form panel
+      const formPanel = document.createElement('div');
+      formPanel.className = 'form-panel';
 
       // OCR candidates
       const ocrLines = Array.isArray(analyzeResult.ocrLines) ? analyzeResult.ocrLines : [];
@@ -1114,7 +1195,7 @@
           pill.append(text, btnNo, btnName);
           candidates.appendChild(pill);
         });
-        content.append(ocrLabel, candidates);
+        formPanel.append(ocrLabel, candidates);
       }
 
       // 図番
@@ -1129,7 +1210,7 @@
       drawingNoInput.placeholder = '図番を入力';
       drawingNoInput.value = analyzeResult.drawingNo || '';
       drawingNoGroup.append(drawingNoLabel, drawingNoInput);
-      content.appendChild(drawingNoGroup);
+      formPanel.appendChild(drawingNoGroup);
 
       // 品名
       const productNameGroup = document.createElement('div');
@@ -1143,13 +1224,41 @@
       productNameInput.placeholder = '品名を入力';
       productNameInput.value = analyzeResult.productName || '';
       productNameGroup.append(productNameLabel, productNameInput);
-      content.appendChild(productNameGroup);
+      formPanel.appendChild(productNameGroup);
+
+      // 材質
+      const materialGroup = document.createElement('div');
+      materialGroup.className = 'field-group';
+      const materialLabel = document.createElement('label');
+      materialLabel.className = 'field-label';
+      materialLabel.textContent = '材質';
+      materialInput = document.createElement('input');
+      materialInput.className = 'field-input';
+      materialInput.type = 'text';
+      materialInput.placeholder = '例: SPCC, SUS304, S45C';
+      materialInput.value = analyzeResult.material || '';
+      materialGroup.append(materialLabel, materialInput);
+      formPanel.appendChild(materialGroup);
+
+      // 寸法 (板厚 / 外径)
+      const dimensionGroup = document.createElement('div');
+      dimensionGroup.className = 'field-group';
+      const dimensionLabel = document.createElement('label');
+      dimensionLabel.className = 'field-label';
+      dimensionLabel.textContent = '寸法 (板厚 / 外径)';
+      dimensionInput = document.createElement('input');
+      dimensionInput.className = 'field-input';
+      dimensionInput.type = 'text';
+      dimensionInput.placeholder = '例: t1.6, φ28.6';
+      dimensionInput.value = analyzeResult.dimension || '';
+      dimensionGroup.append(dimensionLabel, dimensionInput);
+      formPanel.appendChild(dimensionGroup);
 
       // 加工方法 autocomplete
       let getProcessValues = () => [];
       {
         const { element, getValues } = makeAutoChipsField('加工方法', [...processOptions], false);
-        content.appendChild(element);
+        formPanel.appendChild(element);
         getProcessValues = getValues;
       }
 
@@ -1157,7 +1266,7 @@
       let getTagValues = () => [];
       {
         const { element, getValues } = makeAutoChipsField('タグ', [...availableTags], true);
-        content.appendChild(element);
+        formPanel.appendChild(element);
         getTagValues = getValues;
       }
 
@@ -1173,7 +1282,7 @@
       resetBtn.type = 'button';
       resetBtn.textContent = 'やり直し';
       actions.append(submitBtn, resetBtn);
-      content.appendChild(actions);
+      formPanel.appendChild(actions);
 
       resetBtn.addEventListener('click', showDropState);
 
@@ -1191,6 +1300,8 @@
             file,
             drawingNo,
             productNameInput.value.trim(),
+            materialInput.value.trim(),
+            dimensionInput.value.trim(),
             getProcessValues(),
             getTagValues()
           );
@@ -1198,11 +1309,15 @@
           showDoneState(false, '登録に失敗しました。', error.message);
         }
       });
+
+      layout.append(previewPanel, formPanel);
+      content.append(header, layout);
     };
 
     // --- State: Registering ---
     const showRegisteringState = (step) => {
       clear();
+      modal.classList.remove('wide');
       const title = document.createElement('h2');
       title.textContent = '登録中...';
       const spinner = document.createElement('div');
@@ -1214,6 +1329,7 @@
     // --- State: Done ---
     const showDoneState = (success, message, detail) => {
       clear();
+      modal.classList.remove('wide');
       const title = document.createElement('h2');
       title.textContent = success ? '登録完了' : '登録失敗';
       const resultWrap = document.createElement('div');
@@ -1253,7 +1369,7 @@
 
     // --- File handler ---
     const handleFile = async (file) => {
-      showAnalyzingState(file.name);
+      showAnalyzingState(file);
       let analyzeResult;
       try {
         const base64 = await toBase64(file);
@@ -1274,7 +1390,7 @@
     };
 
     // --- Registration ---
-    const doRegister = async (file, drawingNo, productName, processes, tags) => {
+    const doRegister = async (file, drawingNo, productName, material, dimension, processes, tags) => {
       showRegisteringState('ファイルをアップロード中...');
       let fileKey;
       try {
@@ -1320,6 +1436,8 @@
             tenantId,
             drawingNo,
             productName,
+            material,
+            dimension,
             tags: tags.join(','),
             fileKey,
             fileName: file.name,
