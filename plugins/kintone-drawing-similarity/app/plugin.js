@@ -1196,7 +1196,7 @@
       showRegisteringState('kintoneレコードを保存中...');
       const recordFields = {};
       if (productNameField) recordFields[productNameField] = { value: productName };
-      if (processField) recordFields[processField] = { value: processes.map((v) => ({ value: v })) };
+      if (processField) recordFields[processField] = { value: processes.join(',') };
       if (tagsField) recordFields[tagsField] = { value: tags.join(',') };
       if (pdfFileField) recordFields[pdfFileField] = { value: [{ fileKey }] };
 
