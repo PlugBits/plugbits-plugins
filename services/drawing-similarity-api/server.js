@@ -643,11 +643,11 @@ const extractOcrFields = (ocrText, body = {}) => {
   const lines = text.split('\n').filter(Boolean);
 
   const drawingNo = String(body.drawingNo || pickMatch(text, [
-    /(?:DRAWING\s*NO\.?|DWG\.?\s*NO\.?|PART\s*NO\.?|NO\.?)\s*[:#-]?\s*([A-Z0-9][A-Z0-9\-\/_\.]{2,})/i,
-    /\b([A-Z][0-9A-Z]{2,}[-_][0-9A-Z][0-9A-Z\-\/_\.]{2,})\b/i
+    /(?:図番|DRAWING\s*NO\.?|DWG\.?\s*NO\.?|PART\s*NO\.?)\s*[:#\s]\s*([A-Z0-9][A-Z0-9\-\/_\.]{2,})/i,
+    /\b([A-Z][0-9]{3,}[-_][0-9A-Z][0-9A-Z\-\/_\.]{3,})\b/
   ]) || '').trim();
   const productName = String(body.productName || pickMatch(text, [
-    /(?:TITLE|NAME|DESCRIPTION)\s*[:#-]?\s*([^\n]{2,80})/i
+    /(?:品名|TITLE|NAME|DESCRIPTION)\s*[:#\s]\s*([^\n]{2,60})/i
   ]) || '').trim();
   const material = String(body.material || pickMatch(text, [
     /(?:MATERIAL|MATL\.?|MAT\.?)\s*[:#-]?\s*([^\n]{2,80})/i,
@@ -1670,11 +1670,12 @@ const server = createServer(async (request, response) => {
         .map((line) => line.replace(/\s+/g, ' ').trim())
         .filter((line) => line.length >= 2 && line.length <= 80);
 
+      const highConfidence = extracted.extractionConfidence >= 0.4;
       sendJson(response, 200, {
         ok: true,
-        drawingNo: extracted.drawingNo,
-        productName: extracted.productName,
-        material: extracted.material,
+        drawingNo: highConfidence ? extracted.drawingNo : '',
+        productName: highConfidence ? extracted.productName : '',
+        material: highConfidence ? extracted.material : '',
         ocrLines,
         ocr: {
           engine: ocr.engine,
