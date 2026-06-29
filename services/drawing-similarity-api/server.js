@@ -9,6 +9,7 @@ const port = Number(process.env.PORT || 8080);
 const kintoneBaseUrl = String(process.env.KINTONE_BASE_URL || '').replace(/\/+$/, '');
 const kintoneApiToken = process.env.KINTONE_API_TOKEN || '';
 const renderDpi = Number(process.env.PDF_RENDER_DPI || 160);
+const ocrDpi = Number(process.env.OCR_DPI || 250);
 const qdrantUrl = String(process.env.QDRANT_URL || '').replace(/\/+$/, '');
 const qdrantApiKey = process.env.QDRANT_API_KEY || '';
 const defaultEmbeddingProvider = process.env.NODE_ENV === 'production' ? 'openclip' : 'dummy';
@@ -512,6 +513,16 @@ const GEMINI_OCR_GENERATION_CONFIG = {
   maxOutputTokens: 256
 };
 
+const GEMINI_LOCATE_PROMPT = [
+  '{"x":0,"y":0,"width":0,"height":0}',
+  '',
+  'Fill in the above JSON with the pixel coordinates of the title block (表題欄) in this engineering drawing image.',
+  'The title block is the bordered table (usually bottom-right corner) containing fields like 図番, 品名, material, scale, etc.',
+  'x and y are the top-left corner pixel coordinates. width and height are in pixels.',
+  'Your entire response must be ONLY the JSON object — no other text.',
+  'Output ONLY the JSON. Start with { and end with }.'
+].join('\n');
+
 const extractGeminiJson = (raw) => {
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
@@ -672,6 +683,74 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   const geminiExtracted = extractGeminiJson(raw);
 
   return { engine: 'gemini', langs: 'ja+en', text: raw, geminiExtracted };
+};
+
+const callGeminiVision = async (pngBuffer, prompt, maxOutputTokens = 256) => {
+  const base64 = pngBuffer.toString('base64');
+  const reqBody = JSON.stringify({
+    contents: [{ parts: [
+      { text: prompt },
+      { inline_data: { mime_type: 'image/png', data: base64 } }
+    ]}],
+    generationConfig: { temperature: 0, maxOutputTokens }
+  });
+
+  let res;
+  if (GEMINI_API_KEY) {
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=` + GEMINI_API_KEY,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody }
+    );
+  } else {
+    const accessToken = await getGeminiAccessToken();
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken }, body: reqBody }
+    );
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    const err = new Error('Gemini API HTTP ' + res.status + ': ' + errText.slice(0, 200));
+    err.status = res.status;
+    throw err;
+  }
+
+  const data = await res.json();
+  return (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+};
+
+const locateTitleBlock = async (pngBuffer) => {
+  const raw = await callGeminiVision(pngBuffer, GEMINI_LOCATE_PROMPT, 128);
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return null;
+  try {
+    const bbox = JSON.parse(raw.slice(start, end + 1));
+    const x = Number(bbox.x);
+    const y = Number(bbox.y);
+    const w = Number(bbox.width);
+    const h = Number(bbox.height);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || w <= 0 || h <= 0) return null;
+    return { x, y, width: w, height: h };
+  } catch {
+    return null;
+  }
+};
+
+const cropToRegion = async (pngBuffer, bbox) => {
+  const workDir = await mkdtemp(join(tmpdir(), 'drawing-crop-'));
+  const inputPath = join(workDir, 'page.png');
+  const outputPath = join(workDir, 'cropped.png');
+  try {
+    await writeFile(inputPath, pngBuffer);
+    await runCommand(pythonBin, [cropScript, inputPath, outputPath,
+      String(Math.round(bbox.x)), String(Math.round(bbox.y)),
+      String(Math.round(bbox.width)), String(Math.round(bbox.height))]);
+    return await readFile(outputPath);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
 };
 
 const cropPngForOcr = async (pngBuffer) => {
@@ -1790,7 +1869,7 @@ const runCommand = (command, args) => new Promise((resolve, reject) => {
   });
 });
 
-const convertPdfFirstPageToPng = async (pdfBuffer) => {
+const convertPdfFirstPageToPng = async (pdfBuffer, dpi = renderDpi) => {
   const workDir = await mkdtemp(join(tmpdir(), 'drawing-similarity-'));
   const pdfPath = join(workDir, 'source.pdf');
   const outputBase = join(workDir, 'page');
@@ -1798,7 +1877,7 @@ const convertPdfFirstPageToPng = async (pdfBuffer) => {
 
   try {
     await writeFile(pdfPath, pdfBuffer);
-    await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-r', String(renderDpi), pdfPath, outputBase]);
+    await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-r', String(dpi), pdfPath, outputBase]);
     return {
       pngBuffer: await readFile(imagePath),
       imagePath
@@ -1859,9 +1938,14 @@ const server = createServer(async (request, response) => {
       const { pngBuffer } = await convertPdfFirstPageToPng(pdfBuffer);
 
       const useGemini = ocrEngine === 'gemini' || ocrEngine === 'vertex';
-      const ocrBuffer = useGemini
-        ? pngBuffer
-        : await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
+      let ocrBuffer;
+      if (useGemini) {
+        const { pngBuffer: ocrPng } = await convertPdfFirstPageToPng(pdfBuffer, ocrDpi);
+        const bbox = await locateTitleBlock(ocrPng).catch(() => null);
+        ocrBuffer = bbox ? await cropToRegion(ocrPng, bbox).catch(() => ocrPng) : ocrPng;
+      } else {
+        ocrBuffer = await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
+      }
 
       const [ocr, shape] = await Promise.all([
         buildOcrText(ocrBuffer, {}),
