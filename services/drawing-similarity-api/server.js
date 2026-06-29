@@ -34,7 +34,9 @@ if (!embeddingRotations.length) {
   embeddingRotations.push(0);
 }
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-const defaultOcrEngine = GEMINI_API_KEY ? 'gemini' : (process.env.NODE_ENV === 'production' ? 'tesseract' : 'none');
+const VERTEX_PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT_ID || '';
+const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'us-central1';
+const defaultOcrEngine = GEMINI_API_KEY ? 'gemini' : VERTEX_PROJECT_ID ? 'vertex' : (process.env.NODE_ENV === 'production' ? 'tesseract' : 'none');
 const ocrEngine = String(process.env.OCR_ENGINE || defaultOcrEngine).toLowerCase();
 const ocrLangs = String(process.env.OCR_LANGS || 'eng+jpn').trim();
 const tesseractBin = process.env.TESSERACT_BIN || 'tesseract';
@@ -532,6 +534,72 @@ const buildOcrTextGemini = async (pngBuffer) => {
   };
 };
 
+let _gcpTokenCache = null;
+const getGcpAccessToken = async () => {
+  const now = Date.now();
+  if (_gcpTokenCache && _gcpTokenCache.expiresAt > now + 30000) {
+    return _gcpTokenCache.token;
+  }
+  const res = await fetch(
+    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+    { headers: { 'Metadata-Flavor': 'Google' } }
+  );
+  if (!res.ok) {
+    const err = new Error('Failed to get GCP access token: HTTP ' + res.status);
+    err.status = 500;
+    throw err;
+  }
+  const data = await res.json();
+  _gcpTokenCache = { token: data.access_token, expiresAt: now + (data.expires_in || 3599) * 1000 };
+  return _gcpTokenCache.token;
+};
+
+const buildOcrTextVertexAI = async (pngBuffer) => {
+  if (!VERTEX_PROJECT_ID) {
+    const err = new Error('GOOGLE_CLOUD_PROJECT environment variable is not set');
+    err.status = 500;
+    throw err;
+  }
+  const base64 = pngBuffer.toString('base64');
+  const prompt = [
+    '工業図面の表題欄（title block）から図番と品名を抽出してください。',
+    '以下のJSON形式のみで返してください（説明文・コードブロック不要）:',
+    '{"drawingNo":"","productName":""}',
+    '図番はアルファベット+数字のコード（例: K2054-05681）、品名は部品名称です。',
+    '見つからない場合は空文字にしてください。'
+  ].join('\n');
+
+  const accessToken = await getGcpAccessToken();
+  const endpoint = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_LOCATION}/publishers/google/models/gemini-2.0-flash:generateContent`;
+
+  const res = await fetch(endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
+    body: JSON.stringify({
+      contents: [{ parts: [
+        { text: prompt },
+        { inline_data: { mime_type: 'image/png', data: base64 } }
+      ]}],
+      generationConfig: { temperature: 0, maxOutputTokens: 256 }
+    })
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    const err = new Error('Vertex AI HTTP ' + res.status + ': ' + errText.slice(0, 200));
+    err.status = res.status;
+    throw err;
+  }
+
+  const data = await res.json();
+  const raw = (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+  const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  let geminiExtracted = { drawingNo: '', productName: '' };
+  try { geminiExtracted = JSON.parse(clean); } catch { /* fallback */ }
+
+  return { engine: 'gemini', langs: 'ja+en', text: raw, geminiExtracted };
+};
+
 const cropPngForOcr = async (pngBuffer) => {
   const workDir = await mkdtemp(join(tmpdir(), 'drawing-crop-'));
   const inputPath = join(workDir, 'page.png');
@@ -548,6 +616,9 @@ const cropPngForOcr = async (pngBuffer) => {
 const buildOcrText = async (pngBuffer, context = {}) => {
   if (ocrEngine === 'gemini') {
     return buildOcrTextGemini(pngBuffer);
+  }
+  if (ocrEngine === 'vertex') {
+    return buildOcrTextVertexAI(pngBuffer);
   }
   if (ocrEngine === 'none') {
     return {
