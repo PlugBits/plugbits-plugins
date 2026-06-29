@@ -10,6 +10,7 @@ const kintoneBaseUrl = String(process.env.KINTONE_BASE_URL || '').replace(/\/+$/
 const kintoneApiToken = process.env.KINTONE_API_TOKEN || '';
 const renderDpi = Number(process.env.PDF_RENDER_DPI || 160);
 const ocrDpi = Number(process.env.OCR_DPI || 250);
+const geminiDpi = Number(process.env.GEMINI_DPI || 150);
 const qdrantUrl = String(process.env.QDRANT_URL || '').replace(/\/+$/, '');
 const qdrantApiKey = process.env.QDRANT_API_KEY || '';
 const defaultEmbeddingProvider = process.env.NODE_ENV === 'production' ? 'openclip' : 'dummy';
@@ -489,7 +490,7 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 const GEMINI_OCR_PROMPT = [
   '{"drawingNo":"","productName":"","material":"","thickness":""}',
   '',
-  'Read the title block (表題欄) of this engineering drawing and fill in the JSON above.',
+  'This is a full-page engineering drawing image. Locate the title block (表題欄) — the bordered table usually at the bottom-right corner — then fill in the JSON above.',
   'YOUR ENTIRE RESPONSE MUST BE ONLY THE JSON — no explanation, no markdown, no other text.',
   '',
   'DRAWING NUMBER (図番 / DWG NO / DRAWING NUMBER):',
@@ -1983,11 +1984,10 @@ const server = createServer(async (request, response) => {
       let debugBbox = null;
       let debugOcrPath = 'full';
       if (useGemini) {
-        const { pngBuffer: ocrPng } = await convertPdfFirstPageToPng(pdfBuffer, ocrDpi);
-        console.log('[ocr] high-dpi render bytes=' + ocrPng.length + ' dpi=' + ocrDpi);
-        ocrBuffer = await cropPngForOcr(ocrPng).catch(() => ocrPng);
-        debugOcrPath = 'fraction';
-        console.log('[ocr] pass2 fraction crop bytes=' + ocrBuffer.length);
+        const { pngBuffer: geminiPng } = await convertPdfFirstPageToPng(pdfBuffer, geminiDpi);
+        ocrBuffer = geminiPng;
+        debugOcrPath = 'full-gemini';
+        console.log('[ocr] gemini full image bytes=' + ocrBuffer.length + ' dpi=' + geminiDpi);
       } else {
         ocrBuffer = await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
       }
