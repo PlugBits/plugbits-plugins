@@ -45,6 +45,7 @@ const defaultShapeEngine = process.env.NODE_ENV === 'production' ? 'simple' : 'n
 const shapeEngine = String(process.env.SHAPE_ENGINE || defaultShapeEngine).toLowerCase();
 const shapeImageMode = String(process.env.SHAPE_IMAGE_MODE || embeddingImageMode).toLowerCase();
 const shapeScript = process.env.SHAPE_SCRIPT || join(process.cwd(), 'extract_shape_profile.py');
+const cropScript = process.env.CROP_SCRIPT || join(process.cwd(), 'crop_title_block.py');
 const configuredShapeTimeoutMs = Number(process.env.SHAPE_TIMEOUT_MS || 120000);
 const shapeTimeoutMs = Number.isFinite(configuredShapeTimeoutMs) && configuredShapeTimeoutMs > 0
   ? configuredShapeTimeoutMs
@@ -473,6 +474,19 @@ const buildOpenClipVector = async (buffer, context = {}) => {
       timeoutMessage: 'OpenCLIP embedding timed out'
     });
     return normalizeEmbeddingResult(data);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+};
+
+const cropPngForOcr = async (pngBuffer) => {
+  const workDir = await mkdtemp(join(tmpdir(), 'drawing-crop-'));
+  const inputPath = join(workDir, 'page.png');
+  const outputPath = join(workDir, 'cropped.png');
+  try {
+    await writeFile(inputPath, pngBuffer);
+    await runCommand(pythonBin, [cropScript, inputPath, outputPath]);
+    return await readFile(outputPath);
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
@@ -1643,8 +1657,10 @@ const server = createServer(async (request, response) => {
 
       const { pngBuffer } = await convertPdfFirstPageToPng(pdfBuffer);
 
+      const croppedBuffer = await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
+
       const [ocr, shape] = await Promise.all([
-        buildOcrText(pngBuffer, {}),
+        buildOcrText(croppedBuffer, {}),
         buildShapeProfile(pngBuffer, {})
       ]);
 
