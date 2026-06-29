@@ -9,6 +9,7 @@ const port = Number(process.env.PORT || 8080);
 const kintoneBaseUrl = String(process.env.KINTONE_BASE_URL || '').replace(/\/+$/, '');
 const kintoneApiToken = process.env.KINTONE_API_TOKEN || '';
 const renderDpi = Number(process.env.PDF_RENDER_DPI || 160);
+const ocrDpi = Number(process.env.OCR_DPI || 250);
 const qdrantUrl = String(process.env.QDRANT_URL || '').replace(/\/+$/, '');
 const qdrantApiKey = process.env.QDRANT_API_KEY || '';
 const defaultEmbeddingProvider = process.env.NODE_ENV === 'production' ? 'openclip' : 'dummy';
@@ -488,22 +489,24 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 const GEMINI_OCR_PROMPT = [
   '{"drawingNo":"","productName":""}',
   '',
-  'Fill in the above JSON by reading the title block (表題欄) of this engineering drawing.',
-  'Your entire response must be ONLY the JSON object above — no other text.',
+  'Read the title block (表題欄) of this engineering drawing and fill in the JSON above.',
+  'YOUR ENTIRE RESPONSE MUST BE ONLY THE JSON — no explanation, no markdown, no other text.',
   '',
-  'drawingNo rules:',
-  '- Find the field labeled 図番, DWG NO, DRAWING NO, or DRAWING NUMBER.',
-  '- The number is often split across individual character cells divided by grid lines.',
-  '- Read ALL cells in that field left-to-right and concatenate without spaces.',
-  '- Drawing numbers typically begin with 1-2 capital letters (e.g. K, KM, KA) followed by digits and hyphens.',
-  '- Example: cells [K][2][0][5][4][-][0][5][6][8][1] → "K2054-05681"',
+  'DRAWING NUMBER (図番 / DWG NO / DRAWING NUMBER):',
+  '- The value is written one character per bordered cell, separated by thin grid lines.',
+  '- CRITICAL: the grid lines between cells are NOT commas and NOT separators.',
+  '- Read ALL characters left-to-right and JOIN them directly — no spaces, no commas.',
+  '- CORRECT output: "K2054-0568K"',
+  '- WRONG output:   "K,2,0,5,4,-,0,5,6,8,K"  ← never produce commas inside drawingNo',
+  '- Pattern: starts with 1–2 capital letters (K, KM, KA…), then digits and hyphens.',
   '',
-  'productName rules:',
-  '- Find the field labeled 品名 OR PART NAME (they are the same field, often shown in both languages).',
-  '- If both Japanese and English values exist for the same field, prefer Japanese.',
-  '- Example: "ステー（シートベルト，２）" or "STAY(SEAT BELT,2)"',
+  'PRODUCT NAME (品名 / PART NAME):',
+  '- Find the field labeled 品名 or PART NAME.',
+  '- Return the value exactly as written — Japanese or English, whichever is present.',
+  '- Example: "STAY (SEAT BELT, 2)" or "ステー（シートベルト，２）"',
+  '- Note: commas INSIDE a product name are valid (e.g. "SEAT BELT, 2").',
   '',
-  'If a value cannot be found, use empty string "".',
+  'Use "" for any field you cannot find.',
   'Output ONLY the JSON. Start with { and end with }.'
 ].join('\n');
 
@@ -511,6 +514,16 @@ const GEMINI_OCR_GENERATION_CONFIG = {
   temperature: 0,
   maxOutputTokens: 256
 };
+
+const GEMINI_LOCATE_PROMPT = [
+  '{"x":0,"y":0,"width":0,"height":0}',
+  '',
+  'Fill in the above JSON with the pixel coordinates of the title block (表題欄) in this engineering drawing image.',
+  'The title block is the bordered table (usually bottom-right corner) containing fields like 図番, 品名, material, scale, etc.',
+  'x and y are the top-left corner pixel coordinates. width and height are in pixels.',
+  'Your entire response must be ONLY the JSON object — no other text.',
+  'Output ONLY the JSON. Start with { and end with }.'
+].join('\n');
 
 const extractGeminiJson = (raw) => {
   const start = raw.indexOf('{');
@@ -672,6 +685,83 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   const geminiExtracted = extractGeminiJson(raw);
 
   return { engine: 'gemini', langs: 'ja+en', text: raw, geminiExtracted };
+};
+
+const callGeminiVision = async (pngBuffer, prompt, maxOutputTokens = 256) => {
+  const base64 = pngBuffer.toString('base64');
+  const reqBody = JSON.stringify({
+    contents: [{ parts: [
+      { text: prompt },
+      { inline_data: { mime_type: 'image/png', data: base64 } }
+    ]}],
+    generationConfig: { temperature: 0, maxOutputTokens }
+  });
+
+  let res;
+  if (GEMINI_API_KEY) {
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=` + GEMINI_API_KEY,
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody }
+    );
+  } else {
+    const accessToken = await getGeminiAccessToken();
+    res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
+      { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken }, body: reqBody }
+    );
+  }
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    const err = new Error('Gemini API HTTP ' + res.status + ': ' + errText.slice(0, 200));
+    err.status = res.status;
+    throw err;
+  }
+
+  const data = await res.json();
+  return (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
+};
+
+const locateTitleBlock = async (pngBuffer) => {
+  const raw = await callGeminiVision(pngBuffer, GEMINI_LOCATE_PROMPT, 128);
+  console.log('[ocr] locate pass1 raw=' + JSON.stringify(raw));
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) {
+    console.log('[ocr] locate pass1 no JSON found, fallback to full image');
+    return null;
+  }
+  try {
+    const bbox = JSON.parse(raw.slice(start, end + 1));
+    const x = Number(bbox.x);
+    const y = Number(bbox.y);
+    const w = Number(bbox.width);
+    const h = Number(bbox.height);
+    if (!Number.isFinite(x) || !Number.isFinite(y) || w <= 0 || h <= 0) {
+      console.log('[ocr] locate pass1 invalid bbox x=' + x + ' y=' + y + ' w=' + w + ' h=' + h);
+      return null;
+    }
+    console.log('[ocr] locate pass1 bbox x=' + x + ' y=' + y + ' w=' + w + ' h=' + h);
+    return { x, y, width: w, height: h };
+  } catch (e) {
+    console.log('[ocr] locate pass1 parse error=' + e.message + ' raw=' + JSON.stringify(raw));
+    return null;
+  }
+};
+
+const cropToRegion = async (pngBuffer, bbox) => {
+  const workDir = await mkdtemp(join(tmpdir(), 'drawing-crop-'));
+  const inputPath = join(workDir, 'page.png');
+  const outputPath = join(workDir, 'cropped.png');
+  try {
+    await writeFile(inputPath, pngBuffer);
+    await runCommand(pythonBin, [cropScript, inputPath, outputPath,
+      String(Math.round(bbox.x)), String(Math.round(bbox.y)),
+      String(Math.round(bbox.width)), String(Math.round(bbox.height))]);
+    return await readFile(outputPath);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
 };
 
 const cropPngForOcr = async (pngBuffer) => {
@@ -1790,7 +1880,7 @@ const runCommand = (command, args) => new Promise((resolve, reject) => {
   });
 });
 
-const convertPdfFirstPageToPng = async (pdfBuffer) => {
+const convertPdfFirstPageToPng = async (pdfBuffer, dpi = renderDpi) => {
   const workDir = await mkdtemp(join(tmpdir(), 'drawing-similarity-'));
   const pdfPath = join(workDir, 'source.pdf');
   const outputBase = join(workDir, 'page');
@@ -1798,7 +1888,7 @@ const convertPdfFirstPageToPng = async (pdfBuffer) => {
 
   try {
     await writeFile(pdfPath, pdfBuffer);
-    await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-r', String(renderDpi), pdfPath, outputBase]);
+    await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-r', String(dpi), pdfPath, outputBase]);
     return {
       pngBuffer: await readFile(imagePath),
       imagePath
@@ -1859,14 +1949,38 @@ const server = createServer(async (request, response) => {
       const { pngBuffer } = await convertPdfFirstPageToPng(pdfBuffer);
 
       const useGemini = ocrEngine === 'gemini' || ocrEngine === 'vertex';
-      const ocrBuffer = useGemini
-        ? pngBuffer
-        : await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
+      let ocrBuffer;
+      let debugBbox = null;
+      let debugOcrPath = 'full';
+      if (useGemini) {
+        const { pngBuffer: ocrPng } = await convertPdfFirstPageToPng(pdfBuffer, ocrDpi);
+        console.log('[ocr] high-dpi render bytes=' + ocrPng.length + ' dpi=' + ocrDpi);
+        const bbox = await locateTitleBlock(ocrPng).catch((e) => {
+          console.log('[ocr] locate failed error=' + e.message);
+          return null;
+        });
+        debugBbox = bbox;
+        if (bbox) {
+          ocrBuffer = await cropToRegion(ocrPng, bbox).catch((e) => {
+            console.log('[ocr] crop failed error=' + e.message + ', using full image');
+            return ocrPng;
+          });
+          debugOcrPath = 'cropped';
+          console.log('[ocr] pass2 crop bytes=' + ocrBuffer.length);
+        } else {
+          ocrBuffer = ocrPng;
+          debugOcrPath = 'full-fallback';
+          console.log('[ocr] pass2 no bbox, using full high-dpi image');
+        }
+      } else {
+        ocrBuffer = await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
+      }
 
       const [ocr, shape] = await Promise.all([
         buildOcrText(ocrBuffer, {}),
         buildShapeProfile(pngBuffer, {})
       ]);
+      console.log('[ocr] pass2 raw=' + JSON.stringify(ocr.text) + ' extracted=' + JSON.stringify(ocr.geminiExtracted));
 
       const isGemini = ocr.engine === 'gemini';
       const extracted = isGemini
@@ -1894,6 +2008,11 @@ const server = createServer(async (request, response) => {
           bboxAspectRatio: shape.bboxAspectRatio,
           inkRatio: shape.inkRatio,
           edgeDensity: shape.edgeDensity
+        },
+        debug: {
+          ocrPath: debugOcrPath,
+          titleBlockBbox: debugBbox,
+          geminiRawText: ocr.text || ''
         }
       });
     } catch (error) {
