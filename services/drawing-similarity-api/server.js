@@ -485,6 +485,37 @@ const buildOpenClipVector = async (buffer, context = {}) => {
   }
 };
 
+const GEMINI_OCR_PROMPT = [
+  'You are an OCR assistant for engineering drawings (工業図面).',
+  'Find the title block in this drawing. It is typically in the bottom-right corner.',
+  'The title block contains labeled fields. Look for labels like:',
+  '  図番, DWG NO, DRAWING NO, DRAWING NUMBER → drawing number',
+  '  品名, PART NAME, PART, NAME → part name',
+  'IMPORTANT: Title blocks often have individual character cells separated by grid lines.',
+  'When reading a field like a drawing number, concatenate all characters ignoring the cell borders.',
+  'Example: if you see "K", "2", "0", "5", "4", "-", "0", "5", "6", "8", "1" in separate cells, output "K2054-05681".',
+  'The part name may be in Japanese, English, or both — return whichever is present.',
+  'If both Japanese and English versions exist, prefer the Japanese one.',
+  'Return ONLY this JSON with no explanation, no markdown, no code block:',
+  '{"drawingNo":"","productName":""}',
+  'drawingNo: the full drawing number code. Empty string if not found.',
+  'productName: the part name (Japanese or English). Empty string if not found.'
+].join('\n');
+
+const GEMINI_OCR_GENERATION_CONFIG = {
+  temperature: 0,
+  maxOutputTokens: 256,
+  responseMimeType: 'application/json',
+  responseSchema: {
+    type: 'object',
+    properties: {
+      drawingNo: { type: 'string' },
+      productName: { type: 'string' }
+    },
+    required: ['drawingNo', 'productName']
+  }
+};
+
 const buildOcrTextGemini = async (pngBuffer) => {
   if (!GEMINI_API_KEY) {
     const err = new Error('GEMINI_API_KEY environment variable is not set');
@@ -492,17 +523,6 @@ const buildOcrTextGemini = async (pngBuffer) => {
     throw err;
   }
   const base64 = pngBuffer.toString('base64');
-  const prompt = [
-    'You are an OCR assistant for Japanese engineering drawings.',
-    'Find the title block (表題欄) in this drawing — typically in the bottom-right corner.',
-    'Extract the drawing number (図番) and part name (品名) from the title block.',
-    'Return ONLY a JSON object with no explanation, no markdown, no code block:',
-    '{"drawingNo":"","productName":""}',
-    'drawingNo: alphanumeric code like K2054-05681 or ABC-12345. Empty string if not found.',
-    'productName: Japanese part name. Empty string if not found.',
-    'Return raw JSON only. No other text.'
-  ].join('\n');
-
   const res = await fetch(
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=` + GEMINI_API_KEY,
     {
@@ -510,10 +530,10 @@ const buildOcrTextGemini = async (pngBuffer) => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [
-          { text: prompt },
+          { text: GEMINI_OCR_PROMPT },
           { inline_data: { mime_type: 'image/png', data: base64 } }
         ]}],
-        generationConfig: { temperature: 0, maxOutputTokens: 256 }
+        generationConfig: GEMINI_OCR_GENERATION_CONFIG
       })
     }
   );
@@ -621,17 +641,6 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
     throw err;
   }
   const base64 = pngBuffer.toString('base64');
-  const prompt = [
-    'You are an OCR assistant for Japanese engineering drawings.',
-    'Find the title block (表題欄) in this drawing — typically in the bottom-right corner.',
-    'Extract the drawing number (図番) and part name (品名) from the title block.',
-    'Return ONLY a JSON object with no explanation, no markdown, no code block:',
-    '{"drawingNo":"","productName":""}',
-    'drawingNo: alphanumeric code like K2054-05681 or ABC-12345. Empty string if not found.',
-    'productName: Japanese part name. Empty string if not found.',
-    'Return raw JSON only. No other text.'
-  ].join('\n');
-
   const accessToken = await getGeminiAccessToken();
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
@@ -640,10 +649,10 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
     body: JSON.stringify({
       contents: [{ parts: [
-        { text: prompt },
+        { text: GEMINI_OCR_PROMPT },
         { inline_data: { mime_type: 'image/png', data: base64 } }
       ]}],
-      generationConfig: { temperature: 0, maxOutputTokens: 256 }
+      generationConfig: GEMINI_OCR_GENERATION_CONFIG
     })
   });
 
