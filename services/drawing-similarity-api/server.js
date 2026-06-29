@@ -505,14 +505,17 @@ const GEMINI_OCR_PROMPT = [
 const GEMINI_OCR_GENERATION_CONFIG = {
   temperature: 0,
   maxOutputTokens: 256,
-  responseMimeType: 'application/json',
-  responseSchema: {
-    type: 'object',
-    properties: {
-      drawingNo: { type: 'string' },
-      productName: { type: 'string' }
-    },
-    required: ['drawingNo', 'productName']
+  responseMimeType: 'application/json'
+};
+
+const extractGeminiJson = (raw) => {
+  const start = raw.indexOf('{');
+  const end = raw.lastIndexOf('}');
+  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '' };
+  try {
+    return JSON.parse(raw.slice(start, end + 1));
+  } catch {
+    return { drawingNo: '', productName: '' };
   }
 };
 
@@ -547,10 +550,7 @@ const buildOcrTextGemini = async (pngBuffer) => {
 
   const data = await res.json();
   const raw = (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
-  const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-
-  let geminiExtracted = { drawingNo: '', productName: '' };
-  try { geminiExtracted = JSON.parse(clean); } catch { /* fallback to empty */ }
+  const geminiExtracted = extractGeminiJson(raw);
 
   return {
     engine: 'gemini',
@@ -665,9 +665,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
 
   const data = await res.json();
   const raw = (data?.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
-  const clean = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
-  let geminiExtracted = { drawingNo: '', productName: '' };
-  try { geminiExtracted = JSON.parse(clean); } catch { /* fallback */ }
+  const geminiExtracted = extractGeminiJson(raw);
 
   return { engine: 'gemini', langs: 'ja+en', text: raw, geminiExtracted };
 };
