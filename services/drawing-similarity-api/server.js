@@ -488,7 +488,7 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 };
 
 const GEMINI_OCR_PROMPT = [
-  '{"drawingNo":"","productName":"","material":"","thickness":""}',
+  '{"drawingNo":"","productName":"","material":"","dimension":""}',
   '',
   'This is a full-page engineering drawing image. Locate the title block (表題欄) — the bordered table usually at the bottom-right corner — then fill in the JSON above.',
   'YOUR ENTIRE RESPONSE MUST BE ONLY THE JSON — no explanation, no markdown, no other text.',
@@ -509,15 +509,16 @@ const GEMINI_OCR_PROMPT = [
   '',
   'MATERIAL (材質 / MATERIAL):',
   '- Find the field labeled 材質 or MATERIAL.',
-  '- Return the material code/name only, WITHOUT any thickness value.',
-  '- Examples: "S45C", "SUS304", "SPCC", "A5052P", "SS400", "冷延鋼板"',
-  '- If the field contains both material and thickness (e.g. "SPCC t1.6"), put only "SPCC" here.',
+  '- Return the material code/name only, WITHOUT any size value.',
+  '- Examples: "S45C", "SUS304", "SPCC", "A5052P", "SS400", "SGD400-D", "冷延鋼板"',
+  '- If the field contains both material and size (e.g. "SPCC t1.6" or "S45C φ28.6"), put only the material code here.',
   '',
-  'THICKNESS (板厚 / THICKNESS):',
-  '- Extract the plate thickness from the 材質 field or a dedicated 板厚/t field.',
-  '- Return the numeric value with unit, e.g. "t1.6", "t2.3", "3.2mm".',
-  '- Thickness is often written as "t1.6" or "t=2.0" directly after the material code.',
-  '- If no thickness is found anywhere in the title block, return "".',
+  'DIMENSION (寸法 / 板厚 / 外径):',
+  '- Extract the key dimension — whichever is present in the title block:',
+  '  - Plate thickness (板厚): written as "t1.6", "t=2.0", "3.2mm" → return e.g. "t1.6"',
+  '  - Outer diameter (外径/パイ/φ): written as "φ28.6", "ψ28.6", "Φ28" → return e.g. "φ28.6"',
+  '- This value often appears right after the material code in the 材質 field.',
+  '- If no dimension is found anywhere in the title block, return "".',
   '',
   'Use "" for any field you cannot find.',
   'Output ONLY the JSON. Start with { and end with }.'
@@ -543,11 +544,11 @@ const GEMINI_LOCATE_PROMPT = [
 const extractGeminiJson = (raw) => {
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '', material: '', thickness: '' };
+  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '', material: '', dimension: '' };
   try {
     return JSON.parse(raw.slice(start, end + 1));
   } catch {
-    return { drawingNo: '', productName: '', material: '', thickness: '' };
+    return { drawingNo: '', productName: '', material: '', dimension: '' };
   }
 };
 
@@ -975,7 +976,8 @@ const extractOcrFields = (ocrText, body = {}) => {
     /(?:MATERIAL|MATL\.?|MAT\.?)\s*[:#-]?\s*([^\n]{2,80})/i,
     /\b(SUS\d{3,4}|SS4?0?0|SPCC|SPHC|AL(?:UMINUM)?|A\d{4}|S45C|SCM\d{2}|SKD\d{2}|CRS|SGCC|SUJ\d{2})\b/i
   ]) || '').trim();
-  const thickness = String(body.thickness || pickMatch(text, [
+  const dimension = String(body.dimension || pickMatch(text, [
+    /[φΦψ]\s*([0-9]+(?:\.[0-9]+)?)/,
     /(?:THK|T)\s*[:#-]?\s*([0-9]+(?:\.[0-9]+)?\s*(?:mm)?)/i,
     /\bt\s*([0-9]+(?:\.[0-9]+)?\s*(?:mm)?)\b/i
   ]) || '').trim();
@@ -990,7 +992,7 @@ const extractOcrFields = (ocrText, body = {}) => {
     drawingNo,
     productName,
     material,
-    thickness,
+    dimension,
     customer,
     revision,
     shapeCategory: inferShapeCategory(text, productName || body.productName || ''),
@@ -999,7 +1001,7 @@ const extractOcrFields = (ocrText, body = {}) => {
     extractionConfidence: 0.25
   };
 
-  const score = [drawingNo, productName, material, thickness, customer, revision].filter(Boolean).length;
+  const score = [drawingNo, productName, material, dimension, customer, revision].filter(Boolean).length;
   extracted.extractionConfidence = Number((0.25 + score * 0.12).toFixed(2));
   return extracted;
 };
@@ -1247,7 +1249,7 @@ const buildQueryProfile = (body = {}, indexedPayload = null) => ({
   drawingNo: String(indexedPayload?.drawing_no || indexedPayload?.ocr_drawing_no || body.drawingNo || '').trim(),
   productName: String(indexedPayload?.product_name || indexedPayload?.ocr_product_name || body.productName || '').trim(),
   material: String(indexedPayload?.ocr_material || body.material || '').trim(),
-  thickness: String(indexedPayload?.ocr_thickness || body.thickness || '').trim(),
+  dimension: String(indexedPayload?.ocr_dimension || indexedPayload?.ocr_thickness || body.dimension || '').trim(),
   customer: String(indexedPayload?.ocr_customer || body.customer || '').trim(),
   revision: String(indexedPayload?.ocr_revision || body.revision || '').trim(),
   shapeCategory: String(indexedPayload?.ocr_shape_category || body.shapeCategory || '').trim(),
@@ -1262,7 +1264,7 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
     drawingNo: 0,
     productName: 0,
     material: 0,
-    thickness: 0,
+    dimension: 0,
     customer: 0,
     revision: 0,
     shapeCategory: 0,
@@ -1279,7 +1281,7 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
   const candidateDrawingNo = normalizeSearchText(candidatePayload.drawing_no || candidatePayload.ocr_drawing_no);
   const candidateProductName = normalizeSearchText(candidatePayload.product_name || candidatePayload.ocr_product_name);
   const candidateMaterial = normalizeSearchText(candidatePayload.ocr_material);
-  const candidateThickness = normalizeSearchText(candidatePayload.ocr_thickness);
+  const candidateDimension = normalizeSearchText(candidatePayload.ocr_dimension || candidatePayload.ocr_thickness);
   const candidateCustomer = normalizeSearchText(candidatePayload.ocr_customer);
   const candidateRevision = normalizeSearchText(candidatePayload.ocr_revision);
   const candidateShapeCategory = normalizeSearchText(candidatePayload.ocr_shape_category);
@@ -1287,7 +1289,7 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
   const queryDrawingNo = normalizeSearchText(query.drawingNo);
   const queryProductName = normalizeSearchText(query.productName);
   const queryMaterial = normalizeSearchText(query.material);
-  const queryThickness = normalizeSearchText(query.thickness);
+  const queryDimension = normalizeSearchText(query.dimension);
   const queryCustomer = normalizeSearchText(query.customer);
   const queryRevision = normalizeSearchText(query.revision);
   const queryShapeCategory = normalizeSearchText(query.shapeCategory);
@@ -1322,23 +1324,23 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
     reasons.push(...shapeScore.reasons);
   }
 
-  const queryThicknessValue = parseThicknessValue(queryThickness);
-  const candidateThicknessValue = parseThicknessValue(candidateThickness);
-  if (queryThicknessValue !== null && candidateThicknessValue !== null) {
-    const diff = Math.abs(queryThicknessValue - candidateThicknessValue);
+  const queryDimensionValue = parseThicknessValue(queryDimension);
+  const candidateDimensionValue = parseThicknessValue(candidateDimension);
+  if (queryDimensionValue !== null && candidateDimensionValue !== null) {
+    const diff = Math.abs(queryDimensionValue - candidateDimensionValue);
     if (diff === 0) {
-      breakdown.thickness = 0.08;
-      reasons.push('thickness match');
+      breakdown.dimension = 0.08;
+      reasons.push('dimension match');
     } else if (diff <= 0.2) {
-      breakdown.thickness = 0.05;
-      reasons.push('thickness close');
+      breakdown.dimension = 0.05;
+      reasons.push('dimension close');
     } else if (diff <= 0.5) {
-      breakdown.thickness = 0.02;
-      reasons.push('thickness roughly close');
+      breakdown.dimension = 0.02;
+      reasons.push('dimension roughly close');
     }
   }
 
-  const metadataBonus = breakdown.drawingNo + breakdown.productName + breakdown.material + breakdown.thickness + breakdown.customer + breakdown.revision + breakdown.shapeCategory;
+  const metadataBonus = breakdown.drawingNo + breakdown.productName + breakdown.material + breakdown.dimension + breakdown.customer + breakdown.revision + breakdown.shapeCategory;
   const metadataScore = clamp01(metadataBonus / 0.58);
   const normalizedShapeScore = clamp01(breakdown.shape / 0.29);
   const totalWeight = Math.max(0.01, scoreVectorWeight + scoreMetadataWeight + scoreShapeWeight);
@@ -1614,7 +1616,7 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     ocr_drawing_no: context.extracted?.drawingNo || '',
     ocr_product_name: context.extracted?.productName || '',
     ocr_material: context.extracted?.material || '',
-    ocr_thickness: context.extracted?.thickness || '',
+    ocr_dimension: context.extracted?.dimension || '',
     ocr_customer: context.extracted?.customer || '',
     ocr_revision: context.extracted?.revision || '',
     ocr_shape_category: context.extracted?.shapeCategory || '',
@@ -1813,7 +1815,7 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
         productName: payload.product_name || '',
         customer: payload.file_name || '',
         material: payload.ocr_material || '',
-        thickness: payload.ocr_thickness || '',
+        dimension: payload.ocr_dimension || payload.ocr_thickness || '',
         revision: payload.ocr_revision || '',
         shapeCategory: payload.ocr_shape_category || '',
         ocrText: payload.ocr_text || '',
@@ -2013,7 +2015,7 @@ const server = createServer(async (request, response) => {
         drawingNo: highConfidence ? (extracted.drawingNo || '') : '',
         productName: highConfidence ? (extracted.productName || '') : '',
         material: highConfidence ? (extracted.material || '') : '',
-        thickness: highConfidence ? (extracted.thickness || '') : '',
+        dimension: highConfidence ? (extracted.dimension || '') : '',
         ocrLines,
         ocr: {
           engine: ocr.engine,
@@ -2145,7 +2147,7 @@ const server = createServer(async (request, response) => {
               drawingNo: queryProfile.drawingNo || body.drawingNo || '',
               productName: queryProfile.productName || body.productName || '',
               material: queryProfile.material || body.material || '',
-              thickness: queryProfile.thickness || body.thickness || '',
+              dimension: queryProfile.dimension || body.dimension || '',
               customer: queryProfile.customer || body.customer || '',
               revision: queryProfile.revision || body.revision || '',
               shapeCategory: queryProfile.shapeCategory || body.shapeCategory || '',
@@ -2163,7 +2165,7 @@ const server = createServer(async (request, response) => {
               drawingNo: indexed.payload.ocr_drawing_no || indexed.payload.drawing_no || '',
               productName: indexed.payload.ocr_product_name || indexed.payload.product_name || '',
               material: indexed.payload.ocr_material || '',
-              thickness: indexed.payload.ocr_thickness || '',
+              dimension: indexed.payload.ocr_dimension || indexed.payload.ocr_thickness || '',
               customer: indexed.payload.ocr_customer || '',
               revision: indexed.payload.ocr_revision || '',
               shapeCategory: indexed.payload.ocr_shape_category || '',
@@ -2288,7 +2290,7 @@ const server = createServer(async (request, response) => {
       indexLog('extraction done', {
         drawingNo: extracted.drawingNo,
         material: extracted.material,
-        thickness: extracted.thickness,
+        dimension: extracted.dimension,
         customer: extracted.customer,
         revision: extracted.revision,
         shapeCategory: extracted.shapeCategory,
@@ -2349,7 +2351,7 @@ const server = createServer(async (request, response) => {
           drawingNo: extracted.drawingNo,
           productName: extracted.productName,
           material: extracted.material,
-          thickness: extracted.thickness,
+          dimension: extracted.dimension,
           customer: extracted.customer,
           revision: extracted.revision,
           shapeCategory: extracted.shapeCategory,
