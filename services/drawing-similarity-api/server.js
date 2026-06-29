@@ -36,7 +36,8 @@ if (!embeddingRotations.length) {
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const VERTEX_PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT_ID || '';
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'us-central1';
-const VERTEX_MODEL = process.env.VERTEX_MODEL || 'gemini-2.0-flash-001';
+const VERTEX_MODEL = process.env.VERTEX_MODEL || 'gemini-3.5-flash';
+const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash';
 const SA_CREDENTIALS_JSON = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || '';
 const defaultOcrEngine = GEMINI_API_KEY ? 'gemini' : (VERTEX_PROJECT_ID || SA_CREDENTIALS_JSON) ? 'vertex' : (process.env.NODE_ENV === 'production' ? 'tesseract' : 'none');
 const ocrEngine = String(process.env.OCR_ENGINE || defaultOcrEngine).toLowerCase();
@@ -500,7 +501,7 @@ const buildOcrTextGemini = async (pngBuffer) => {
   ].join('\n');
 
   const res = await fetch(
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=' + GEMINI_API_KEY,
+    `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=` + GEMINI_API_KEY,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -626,7 +627,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   ].join('\n');
 
   const accessToken = await getGeminiAccessToken();
-  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent';
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
 
   const res = await fetch(endpoint, {
     method: 'POST',
