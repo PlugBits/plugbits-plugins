@@ -537,15 +537,16 @@ const buildOcrTextGemini = async (pngBuffer) => {
 };
 
 let _gcpTokenCache = null;
+let _geminiTokenCache = null;
 
-const getGcpAccessTokenFromServiceAccountKey = async (keyJson) => {
+const getGcpAccessTokenFromServiceAccountKey = async (keyJson, scope) => {
   const { client_email, private_key } = keyJson;
   const iat = Math.floor(Date.now() / 1000);
   const exp = iat + 3600;
   const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
   const payload = Buffer.from(JSON.stringify({
     iss: client_email,
-    scope: 'https://www.googleapis.com/auth/cloud-platform',
+    scope,
     aud: 'https://oauth2.googleapis.com/token',
     exp,
     iat
@@ -576,7 +577,7 @@ const getGcpAccessToken = async () => {
   let data;
   if (SA_CREDENTIALS_JSON) {
     const keyJson = JSON.parse(Buffer.from(SA_CREDENTIALS_JSON, 'base64').toString('utf8'));
-    data = await getGcpAccessTokenFromServiceAccountKey(keyJson);
+    data = await getGcpAccessTokenFromServiceAccountKey(keyJson, 'https://www.googleapis.com/auth/cloud-platform');
   } else {
     const res = await fetch(
       'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
@@ -593,9 +594,25 @@ const getGcpAccessToken = async () => {
   return _gcpTokenCache.token;
 };
 
+const getGeminiAccessToken = async () => {
+  const now = Date.now();
+  if (_geminiTokenCache && _geminiTokenCache.expiresAt > now + 30000) {
+    return _geminiTokenCache.token;
+  }
+  if (!SA_CREDENTIALS_JSON) {
+    const err = new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON is required for Gemini API auth');
+    err.status = 500;
+    throw err;
+  }
+  const keyJson = JSON.parse(Buffer.from(SA_CREDENTIALS_JSON, 'base64').toString('utf8'));
+  const data = await getGcpAccessTokenFromServiceAccountKey(keyJson, 'https://www.googleapis.com/auth/generative-language');
+  _geminiTokenCache = { token: data.access_token, expiresAt: now + (data.expires_in || 3599) * 1000 };
+  return _geminiTokenCache.token;
+};
+
 const buildOcrTextVertexAI = async (pngBuffer) => {
-  if (!VERTEX_PROJECT_ID && !SA_CREDENTIALS_JSON) {
-    const err = new Error('GOOGLE_CLOUD_PROJECT or GOOGLE_APPLICATION_CREDENTIALS_JSON must be set');
+  if (!SA_CREDENTIALS_JSON) {
+    const err = new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON must be set for Gemini OCR');
     err.status = 500;
     throw err;
   }
@@ -608,13 +625,8 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
     '見つからない場合は空文字にしてください。'
   ].join('\n');
 
-  const accessToken = await getGcpAccessToken();
-  let projectId = VERTEX_PROJECT_ID;
-  if (!projectId && SA_CREDENTIALS_JSON) {
-    const keyJson = JSON.parse(Buffer.from(SA_CREDENTIALS_JSON, 'base64').toString('utf8'));
-    projectId = keyJson.project_id || '';
-  }
-  const endpoint = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${VERTEX_LOCATION}/publishers/google/models/${VERTEX_MODEL}:generateContent`;
+  const accessToken = await getGeminiAccessToken();
+  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -630,7 +642,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    const err = new Error('Vertex AI HTTP ' + res.status + ': ' + errText.slice(0, 200));
+    const err = new Error('Gemini API HTTP ' + res.status + ': ' + errText.slice(0, 200));
     err.status = res.status;
     throw err;
   }
