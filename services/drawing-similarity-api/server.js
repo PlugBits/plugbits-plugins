@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createSign } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -36,7 +36,8 @@ if (!embeddingRotations.length) {
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const VERTEX_PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT_ID || '';
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'us-central1';
-const defaultOcrEngine = GEMINI_API_KEY ? 'gemini' : VERTEX_PROJECT_ID ? 'vertex' : (process.env.NODE_ENV === 'production' ? 'tesseract' : 'none');
+const SA_CREDENTIALS_JSON = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || '';
+const defaultOcrEngine = GEMINI_API_KEY ? 'gemini' : (VERTEX_PROJECT_ID || SA_CREDENTIALS_JSON) ? 'vertex' : (process.env.NODE_ENV === 'production' ? 'tesseract' : 'none');
 const ocrEngine = String(process.env.OCR_ENGINE || defaultOcrEngine).toLowerCase();
 const ocrLangs = String(process.env.OCR_LANGS || 'eng+jpn').trim();
 const tesseractBin = process.env.TESSERACT_BIN || 'tesseract';
@@ -535,26 +536,68 @@ const buildOcrTextGemini = async (pngBuffer) => {
 };
 
 let _gcpTokenCache = null;
+
+const getGcpAccessTokenFromServiceAccountKey = async (keyJson) => {
+  const { client_email, private_key } = keyJson;
+  const iat = Math.floor(Date.now() / 1000);
+  const exp = iat + 3600;
+  const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT' })).toString('base64url');
+  const payload = Buffer.from(JSON.stringify({
+    iss: client_email,
+    scope: 'https://www.googleapis.com/auth/cloud-platform',
+    aud: 'https://oauth2.googleapis.com/token',
+    exp,
+    iat
+  })).toString('base64url');
+  const sign = createSign('RSA-SHA256');
+  sign.update(`${header}.${payload}`);
+  const signature = sign.sign(private_key, 'base64url');
+  const jwt = `${header}.${payload}.${signature}`;
+  const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer', assertion: jwt })
+  });
+  if (!tokenRes.ok) {
+    const errText = await tokenRes.text().catch(() => '');
+    const err = new Error('SA key token exchange failed: ' + errText.slice(0, 200));
+    err.status = 500;
+    throw err;
+  }
+  return tokenRes.json();
+};
+
 const getGcpAccessToken = async () => {
   const now = Date.now();
   if (_gcpTokenCache && _gcpTokenCache.expiresAt > now + 30000) {
     return _gcpTokenCache.token;
   }
-  const res = await fetch(
-    'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
-    { headers: { 'Metadata-Flavor': 'Google' } }
-  );
-  if (!res.ok) {
-    const err = new Error('Failed to get GCP access token: HTTP ' + res.status);
-    err.status = 500;
-    throw err;
+  let data;
+  if (SA_CREDENTIALS_JSON) {
+    const keyJson = JSON.parse(Buffer.from(SA_CREDENTIALS_JSON, 'base64').toString('utf8'));
+    data = await getGcpAccessTokenFromServiceAccountKey(keyJson);
+  } else {
+    const res = await fetch(
+      'http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token',
+      { headers: { 'Metadata-Flavor': 'Google' } }
+    );
+    if (!res.ok) {
+      const err = new Error('Failed to get GCP access token: HTTP ' + res.status);
+      err.status = 500;
+      throw err;
+    }
+    data = await res.json();
   }
-  const data = await res.json();
   _gcpTokenCache = { token: data.access_token, expiresAt: now + (data.expires_in || 3599) * 1000 };
   return _gcpTokenCache.token;
 };
 
 const buildOcrTextVertexAI = async (pngBuffer) => {
+  if (!VERTEX_PROJECT_ID && !SA_CREDENTIALS_JSON) {
+    const err = new Error('GOOGLE_CLOUD_PROJECT or GOOGLE_APPLICATION_CREDENTIALS_JSON must be set');
+    err.status = 500;
+    throw err;
+  }
   const base64 = pngBuffer.toString('base64');
   const prompt = [
     '工業図面の表題欄（title block）から図番と品名を抽出してください。',
@@ -565,7 +608,12 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   ].join('\n');
 
   const accessToken = await getGcpAccessToken();
-  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+  let projectId = VERTEX_PROJECT_ID;
+  if (!projectId && SA_CREDENTIALS_JSON) {
+    const keyJson = JSON.parse(Buffer.from(SA_CREDENTIALS_JSON, 'base64').toString('utf8'));
+    projectId = keyJson.project_id || '';
+  }
+  const endpoint = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${VERTEX_LOCATION}/publishers/google/models/gemini-2.0-flash:generateContent`;
 
   const res = await fetch(endpoint, {
     method: 'POST',
