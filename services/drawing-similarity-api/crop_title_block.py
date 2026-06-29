@@ -13,8 +13,8 @@ def main():
     input_path = sys.argv[1]
     output_path = sys.argv[2]
 
-    bottom_frac = float(os.environ.get('OCR_CROP_BOTTOM_FRAC', '0.38'))
-    right_frac = float(os.environ.get('OCR_CROP_RIGHT_FRAC', '0.55'))
+    bottom_frac = float(os.environ.get('OCR_CROP_BOTTOM_FRAC', '0.22'))
+    right_frac = float(os.environ.get('OCR_CROP_RIGHT_FRAC', '0.32'))
 
     img = Image.open(input_path)
     w, h = img.size
