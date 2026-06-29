@@ -780,6 +780,21 @@
     '  transition: border-color .15s, background .15s; }',
     '.chip input[type=checkbox] { display: none; }',
     '.chip.selected { background: #eff6ff; border-color: #3b82f6; color: #1d4ed8; }',
+    '.ac-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 26px; margin-top: 6px; }',
+    '.ac-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;',
+    '  background: #eff6ff; border: 1px solid #3b82f6; color: #1d4ed8;',
+    '  border-radius: 9999px; font-size: 13px; }',
+    '.ac-chip-del { background: none; border: none; cursor: pointer; color: #93c5fd;',
+    '  font-size: 14px; line-height: 1; padding: 0 0 0 4px; }',
+    '.ac-chip-del:hover { color: #1d4ed8; }',
+    '.ac-input-row { position: relative; margin-top: 6px; }',
+    '.ac-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: #fff;',
+    '  border: 1px solid #d1d5db; border-top: none; border-radius: 0 0 5px 5px;',
+    '  max-height: 200px; overflow-y: auto; z-index: 10; list-style: none; padding: 0; margin: 0;',
+    '  box-shadow: 0 4px 8px rgba(0,0,0,.1); }',
+    '.ac-item { padding: 8px 12px; font-size: 13px; cursor: pointer; color: #374151; }',
+    '.ac-item:hover, .ac-item.active { background: #eff6ff; color: #1d4ed8; }',
+    '.ac-item.new { color: #059669; font-style: italic; }',
     '.form-actions { display: flex; gap: 10px; margin-top: 24px; padding-top: 20px;',
     '  border-top: 1px solid #f0f0f0; }',
     '.btn-primary { flex: 1; padding: 10px; background: #3b82f6; color: #fff;',
@@ -948,6 +963,119 @@
       content.append(title, spinner);
     };
 
+    // オートコンプリート付き複数選択フィールド
+    const makeAutoChipsField = (labelText, suggestions, allowNew) => {
+      const selected = [];
+      const group = document.createElement('div');
+      group.className = 'field-group';
+      const lbl = document.createElement('div');
+      lbl.className = 'field-label';
+      lbl.textContent = labelText;
+      const chipsDiv = document.createElement('div');
+      chipsDiv.className = 'ac-chips';
+      const inputRow = document.createElement('div');
+      inputRow.className = 'ac-input-row';
+      const input = document.createElement('input');
+      input.className = 'field-input';
+      input.type = 'text';
+      input.placeholder = '入力して検索...';
+      input.setAttribute('autocomplete', 'off');
+      const dropdown = document.createElement('ul');
+      dropdown.className = 'ac-dropdown';
+      dropdown.hidden = true;
+
+      const renderChips = () => {
+        chipsDiv.innerHTML = '';
+        selected.forEach((val) => {
+          const chip = document.createElement('span');
+          chip.className = 'ac-chip';
+          chip.appendChild(document.createTextNode(val));
+          const del = document.createElement('button');
+          del.className = 'ac-chip-del';
+          del.type = 'button';
+          del.textContent = '×';
+          del.addEventListener('click', () => {
+            const idx = selected.indexOf(val);
+            if (idx >= 0) { selected.splice(idx, 1); }
+            renderChips();
+          });
+          chip.appendChild(del);
+          chipsDiv.appendChild(chip);
+        });
+      };
+
+      const updateDropdown = (q) => {
+        const lower = q.trim().toLowerCase();
+        const filtered = suggestions.filter(
+          (s) => !selected.includes(s) && (!lower || s.toLowerCase().includes(lower))
+        );
+        dropdown.innerHTML = '';
+        const items = [...filtered.slice(0, 8)];
+        const trimmed = q.trim();
+        if (allowNew && trimmed
+          && !suggestions.some((s) => s.toLowerCase() === trimmed.toLowerCase())
+          && !selected.includes(trimmed)) {
+          items.push('__new__:' + trimmed);
+        }
+        if (!items.length) { dropdown.hidden = true; return; }
+        items.forEach((s) => {
+          const isNew = s.startsWith('__new__:');
+          const val = isNew ? s.slice(8) : s;
+          const li = document.createElement('li');
+          li.className = 'ac-item' + (isNew ? ' new' : '');
+          li.textContent = isNew ? '"' + val + '" を追加' : val;
+          li.dataset.value = val;
+          dropdown.appendChild(li);
+        });
+        dropdown.hidden = false;
+      };
+
+      const addItem = (val) => {
+        if (!val || selected.includes(val)) { return; }
+        selected.push(val);
+        if (!suggestions.includes(val)) { suggestions.push(val); }
+        renderChips();
+        input.value = '';
+        dropdown.hidden = true;
+      };
+
+      input.addEventListener('focus', () => updateDropdown(input.value));
+      input.addEventListener('input', () => updateDropdown(input.value));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const active = dropdown.querySelector('.ac-item.active');
+          if (active) { addItem(active.dataset.value); return; }
+          if (input.value.trim()) { addItem(input.value.trim()); }
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          const els = [...dropdown.querySelectorAll('.ac-item')];
+          const idx = els.indexOf(dropdown.querySelector('.active'));
+          els.forEach((el) => el.classList.remove('active'));
+          const next = els[idx + 1] || els[0];
+          if (next) { next.classList.add('active'); }
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          const els = [...dropdown.querySelectorAll('.ac-item')];
+          const idx = els.indexOf(dropdown.querySelector('.active'));
+          els.forEach((el) => el.classList.remove('active'));
+          const prev = els[idx - 1] || els[els.length - 1];
+          if (prev) { prev.classList.add('active'); }
+        } else if (e.key === 'Escape') {
+          dropdown.hidden = true;
+        }
+      });
+      input.addEventListener('blur', () => { setTimeout(() => { dropdown.hidden = true; }, 150); });
+      dropdown.addEventListener('mousedown', (e) => {
+        const item = e.target.closest('.ac-item');
+        if (item) { e.preventDefault(); addItem(item.dataset.value); }
+      });
+
+      inputRow.append(input, dropdown);
+      group.append(lbl, chipsDiv, inputRow);
+      return { element: group, getValues: () => [...selected] };
+    };
+
     // --- State: Form ---
     const showFormState = (file, analyzeResult, availableTags) => {
       clear();
@@ -1017,58 +1145,20 @@
       productNameGroup.append(productNameLabel, productNameInput);
       content.appendChild(productNameGroup);
 
-      // 加工方法 chips
-      const selectedProcesses = new Set();
-      if (processOptions.length > 0) {
-        const processGroup = document.createElement('div');
-        processGroup.className = 'field-group';
-        const processLabel = document.createElement('div');
-        processLabel.className = 'field-label';
-        processLabel.textContent = '加工方法';
-        const chipGrid = document.createElement('div');
-        chipGrid.className = 'chip-grid';
-        processOptions.forEach((opt) => {
-          const chip = document.createElement('label');
-          chip.className = 'chip';
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.value = opt;
-          cb.addEventListener('change', () => {
-            if (cb.checked) { selectedProcesses.add(opt); chip.classList.add('selected'); }
-            else { selectedProcesses.delete(opt); chip.classList.remove('selected'); }
-          });
-          chip.append(cb, document.createTextNode(opt));
-          chipGrid.appendChild(chip);
-        });
-        processGroup.append(processLabel, chipGrid);
-        content.appendChild(processGroup);
+      // 加工方法 autocomplete
+      let getProcessValues = () => [];
+      {
+        const { element, getValues } = makeAutoChipsField('加工方法', [...processOptions], false);
+        content.appendChild(element);
+        getProcessValues = getValues;
       }
 
-      // タグ chips
-      const selectedTags = new Set();
-      if (availableTags.length > 0) {
-        const tagsGroup = document.createElement('div');
-        tagsGroup.className = 'field-group';
-        const tagsLabel = document.createElement('div');
-        tagsLabel.className = 'field-label';
-        tagsLabel.textContent = 'タグ';
-        const chipGrid = document.createElement('div');
-        chipGrid.className = 'chip-grid';
-        availableTags.forEach((tag) => {
-          const chip = document.createElement('label');
-          chip.className = 'chip';
-          const cb = document.createElement('input');
-          cb.type = 'checkbox';
-          cb.value = tag;
-          cb.addEventListener('change', () => {
-            if (cb.checked) { selectedTags.add(tag); chip.classList.add('selected'); }
-            else { selectedTags.delete(tag); chip.classList.remove('selected'); }
-          });
-          chip.append(cb, document.createTextNode(tag));
-          chipGrid.appendChild(chip);
-        });
-        tagsGroup.append(tagsLabel, chipGrid);
-        content.appendChild(tagsGroup);
+      // タグ autocomplete
+      let getTagValues = () => [];
+      {
+        const { element, getValues } = makeAutoChipsField('タグ', [...availableTags], true);
+        content.appendChild(element);
+        getTagValues = getValues;
       }
 
       // Actions
@@ -1101,8 +1191,8 @@
             file,
             drawingNo,
             productNameInput.value.trim(),
-            [...selectedProcesses],
-            [...selectedTags]
+            getProcessValues(),
+            getTagValues()
           );
         } catch (error) {
           showDoneState(false, '登録に失敗しました。', error.message);
