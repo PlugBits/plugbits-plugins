@@ -722,18 +722,27 @@ const callGeminiVision = async (pngBuffer, prompt, maxOutputTokens = 256) => {
 
 const locateTitleBlock = async (pngBuffer) => {
   const raw = await callGeminiVision(pngBuffer, GEMINI_LOCATE_PROMPT, 128);
+  console.log('[ocr] locate pass1 raw=' + JSON.stringify(raw));
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return null;
+  if (start === -1 || end === -1 || end <= start) {
+    console.log('[ocr] locate pass1 no JSON found, fallback to full image');
+    return null;
+  }
   try {
     const bbox = JSON.parse(raw.slice(start, end + 1));
     const x = Number(bbox.x);
     const y = Number(bbox.y);
     const w = Number(bbox.width);
     const h = Number(bbox.height);
-    if (!Number.isFinite(x) || !Number.isFinite(y) || w <= 0 || h <= 0) return null;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || w <= 0 || h <= 0) {
+      console.log('[ocr] locate pass1 invalid bbox x=' + x + ' y=' + y + ' w=' + w + ' h=' + h);
+      return null;
+    }
+    console.log('[ocr] locate pass1 bbox x=' + x + ' y=' + y + ' w=' + w + ' h=' + h);
     return { x, y, width: w, height: h };
-  } catch {
+  } catch (e) {
+    console.log('[ocr] locate pass1 parse error=' + e.message + ' raw=' + JSON.stringify(raw));
     return null;
   }
 };
@@ -1939,10 +1948,28 @@ const server = createServer(async (request, response) => {
 
       const useGemini = ocrEngine === 'gemini' || ocrEngine === 'vertex';
       let ocrBuffer;
+      let debugBbox = null;
+      let debugOcrPath = 'full';
       if (useGemini) {
         const { pngBuffer: ocrPng } = await convertPdfFirstPageToPng(pdfBuffer, ocrDpi);
-        const bbox = await locateTitleBlock(ocrPng).catch(() => null);
-        ocrBuffer = bbox ? await cropToRegion(ocrPng, bbox).catch(() => ocrPng) : ocrPng;
+        console.log('[ocr] high-dpi render bytes=' + ocrPng.length + ' dpi=' + ocrDpi);
+        const bbox = await locateTitleBlock(ocrPng).catch((e) => {
+          console.log('[ocr] locate failed error=' + e.message);
+          return null;
+        });
+        debugBbox = bbox;
+        if (bbox) {
+          ocrBuffer = await cropToRegion(ocrPng, bbox).catch((e) => {
+            console.log('[ocr] crop failed error=' + e.message + ', using full image');
+            return ocrPng;
+          });
+          debugOcrPath = 'cropped';
+          console.log('[ocr] pass2 crop bytes=' + ocrBuffer.length);
+        } else {
+          ocrBuffer = ocrPng;
+          debugOcrPath = 'full-fallback';
+          console.log('[ocr] pass2 no bbox, using full high-dpi image');
+        }
       } else {
         ocrBuffer = await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
       }
@@ -1951,6 +1978,7 @@ const server = createServer(async (request, response) => {
         buildOcrText(ocrBuffer, {}),
         buildShapeProfile(pngBuffer, {})
       ]);
+      console.log('[ocr] pass2 raw=' + JSON.stringify(ocr.text) + ' extracted=' + JSON.stringify(ocr.geminiExtracted));
 
       const isGemini = ocr.engine === 'gemini';
       const extracted = isGemini
@@ -1978,6 +2006,11 @@ const server = createServer(async (request, response) => {
           bboxAspectRatio: shape.bboxAspectRatio,
           inkRatio: shape.inkRatio,
           edgeDensity: shape.edgeDensity
+        },
+        debug: {
+          ocrPath: debugOcrPath,
+          titleBlockBbox: debugBbox,
+          geminiRawText: ocr.text || ''
         }
       });
     } catch (error) {
