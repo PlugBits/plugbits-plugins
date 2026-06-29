@@ -493,11 +493,14 @@ const buildOcrTextGemini = async (pngBuffer) => {
   }
   const base64 = pngBuffer.toString('base64');
   const prompt = [
-    '工業図面の表題欄（title block）から図番と品名を抽出してください。',
-    '以下のJSON形式のみで返してください（説明文・コードブロック不要）:',
+    'You are an OCR assistant for Japanese engineering drawings.',
+    'Find the title block (表題欄) in this drawing — typically in the bottom-right corner.',
+    'Extract the drawing number (図番) and part name (品名) from the title block.',
+    'Return ONLY a JSON object with no explanation, no markdown, no code block:',
     '{"drawingNo":"","productName":""}',
-    '図番はアルファベット+数字のコード（例: K2054-05681）、品名は部品名称です。',
-    '見つからない場合は空文字にしてください。'
+    'drawingNo: alphanumeric code like K2054-05681 or ABC-12345. Empty string if not found.',
+    'productName: Japanese part name. Empty string if not found.',
+    'Return raw JSON only. No other text.'
   ].join('\n');
 
   const res = await fetch(
@@ -619,11 +622,14 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   }
   const base64 = pngBuffer.toString('base64');
   const prompt = [
-    '工業図面の表題欄（title block）から図番と品名を抽出してください。',
-    '以下のJSON形式のみで返してください（説明文・コードブロック不要）:',
+    'You are an OCR assistant for Japanese engineering drawings.',
+    'Find the title block (表題欄) in this drawing — typically in the bottom-right corner.',
+    'Extract the drawing number (図番) and part name (品名) from the title block.',
+    'Return ONLY a JSON object with no explanation, no markdown, no code block:',
     '{"drawingNo":"","productName":""}',
-    '図番はアルファベット+数字のコード（例: K2054-05681）、品名は部品名称です。',
-    '見つからない場合は空文字にしてください。'
+    'drawingNo: alphanumeric code like K2054-05681 or ABC-12345. Empty string if not found.',
+    'productName: Japanese part name. Empty string if not found.',
+    'Return raw JSON only. No other text.'
   ].join('\n');
 
   const accessToken = await getGeminiAccessToken();
@@ -1841,10 +1847,13 @@ const server = createServer(async (request, response) => {
 
       const { pngBuffer } = await convertPdfFirstPageToPng(pdfBuffer);
 
-      const croppedBuffer = await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
+      const useGemini = ocrEngine === 'gemini' || ocrEngine === 'vertex';
+      const ocrBuffer = useGemini
+        ? pngBuffer
+        : await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
 
       const [ocr, shape] = await Promise.all([
-        buildOcrText(croppedBuffer, {}),
+        buildOcrText(ocrBuffer, {}),
         buildShapeProfile(pngBuffer, {})
       ]);
 
