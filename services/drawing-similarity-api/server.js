@@ -1958,23 +1958,9 @@ const server = createServer(async (request, response) => {
       if (useGemini) {
         const { pngBuffer: ocrPng } = await convertPdfFirstPageToPng(pdfBuffer, ocrDpi);
         console.log('[ocr] high-dpi render bytes=' + ocrPng.length + ' dpi=' + ocrDpi);
-        const bbox = await locateTitleBlock(ocrPng).catch((e) => {
-          console.log('[ocr] locate failed error=' + e.message);
-          return null;
-        });
-        debugBbox = bbox;
-        if (bbox) {
-          ocrBuffer = await cropToRegion(ocrPng, bbox).catch((e) => {
-            console.log('[ocr] crop failed error=' + e.message + ', using full image');
-            return ocrPng;
-          });
-          debugOcrPath = 'cropped';
-          console.log('[ocr] pass2 crop bytes=' + ocrBuffer.length);
-        } else {
-          ocrBuffer = ocrPng;
-          debugOcrPath = 'full-fallback';
-          console.log('[ocr] pass2 no bbox, using full high-dpi image');
-        }
+        ocrBuffer = await cropPngForOcr(ocrPng).catch(() => ocrPng);
+        debugOcrPath = 'fraction';
+        console.log('[ocr] pass2 fraction crop bytes=' + ocrBuffer.length);
       } else {
         ocrBuffer = await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
       }
