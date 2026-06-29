@@ -500,7 +500,7 @@ const buildOcrTextGemini = async (pngBuffer) => {
   ].join('\n');
 
   const res = await fetch(
-    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=' + GEMINI_API_KEY,
+    'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent?key=' + GEMINI_API_KEY,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -626,7 +626,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   ].join('\n');
 
   const accessToken = await getGeminiAccessToken();
-  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+  const endpoint = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-001:generateContent';
 
   const res = await fetch(endpoint, {
     method: 'POST',
