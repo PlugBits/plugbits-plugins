@@ -521,7 +521,8 @@ const GEMINI_LOCATE_PROMPT = [
   'Fill in the above JSON with the pixel coordinates of the title block (表題欄) in this engineering drawing image.',
   'The title block is the bordered table (usually bottom-right corner) containing fields like 図番, 品名, material, scale, etc.',
   'x and y are the top-left corner pixel coordinates. width and height are in pixels.',
-  'Your entire response must be ONLY the JSON object — no other text.',
+  'IMPORTANT: Do NOT use markdown. Do NOT use code blocks. Do NOT use backticks. No ```json wrapper.',
+  'Your entire response must be ONLY the raw JSON object — no other text before or after.',
   'Output ONLY the JSON. Start with { and end with }.'
 ].join('\n');
 
@@ -723,7 +724,9 @@ const callGeminiVision = async (pngBuffer, prompt, maxOutputTokens = 256) => {
 };
 
 const locateTitleBlock = async (pngBuffer) => {
-  const raw = await callGeminiVision(pngBuffer, GEMINI_LOCATE_PROMPT, 128);
+  const rawFull = await callGeminiVision(pngBuffer, GEMINI_LOCATE_PROMPT, 128);
+  // Strip markdown code fences if present (e.g. ```json\n{...}\n```)
+  const raw = rawFull.replace(/^```[a-z]*\s*/i, '').replace(/\s*```\s*$/, '').trim();
   console.log('[ocr] locate pass1 raw=' + JSON.stringify(raw));
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
