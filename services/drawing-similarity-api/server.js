@@ -36,6 +36,7 @@ if (!embeddingRotations.length) {
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const VERTEX_PROJECT_ID = process.env.GOOGLE_CLOUD_PROJECT || process.env.VERTEX_PROJECT_ID || '';
 const VERTEX_LOCATION = process.env.VERTEX_LOCATION || 'us-central1';
+const VERTEX_MODEL = process.env.VERTEX_MODEL || 'gemini-2.0-flash-001';
 const SA_CREDENTIALS_JSON = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || '';
 const defaultOcrEngine = GEMINI_API_KEY ? 'gemini' : (VERTEX_PROJECT_ID || SA_CREDENTIALS_JSON) ? 'vertex' : (process.env.NODE_ENV === 'production' ? 'tesseract' : 'none');
 const ocrEngine = String(process.env.OCR_ENGINE || defaultOcrEngine).toLowerCase();
@@ -613,7 +614,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
     const keyJson = JSON.parse(Buffer.from(SA_CREDENTIALS_JSON, 'base64').toString('utf8'));
     projectId = keyJson.project_id || '';
   }
-  const endpoint = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${VERTEX_LOCATION}/publishers/google/models/gemini-2.0-flash:generateContent`;
+  const endpoint = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${projectId}/locations/${VERTEX_LOCATION}/publishers/google/models/${VERTEX_MODEL}:generateContent`;
 
   const res = await fetch(endpoint, {
     method: 'POST',
