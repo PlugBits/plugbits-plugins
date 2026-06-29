@@ -486,26 +486,19 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 };
 
 const GEMINI_OCR_PROMPT = [
-  'You are an OCR assistant for engineering drawings (工業図面).',
-  'Find the title block in this drawing. It is typically in the bottom-right corner.',
-  'The title block contains labeled fields. Look for labels like:',
-  '  図番, DWG NO, DRAWING NO, DRAWING NUMBER → drawing number',
-  '  品名, PART NAME, PART, NAME → part name',
-  'IMPORTANT: Title blocks often have individual character cells separated by grid lines.',
-  'When reading a field like a drawing number, concatenate all characters ignoring the cell borders.',
-  'Example: if you see "K", "2", "0", "5", "4", "-", "0", "5", "6", "8", "1" in separate cells, output "K2054-05681".',
-  'The part name may be in Japanese, English, or both — return whichever is present.',
-  'If both Japanese and English versions exist, prefer the Japanese one.',
-  'Return ONLY this JSON with no explanation, no markdown, no code block:',
   '{"drawingNo":"","productName":""}',
-  'drawingNo: the full drawing number code. Empty string if not found.',
-  'productName: the part name (Japanese or English). Empty string if not found.'
+  '',
+  'Fill in the above JSON from the engineering drawing image. Rules:',
+  '- Your response must start with { and end with }. Nothing else.',
+  '- drawingNo: value in the 図番 or DWG NO field. Grid lines may separate each character — concatenate them all (e.g. K2054-05681).',
+  '- productName: value in the 品名 or PART NAME field. Use Japanese if shown, otherwise English.',
+  '- Use empty string "" if a field is not found.',
+  '- Do NOT write any explanation, preamble, or code block. Output the JSON object only.'
 ].join('\n');
 
 const GEMINI_OCR_GENERATION_CONFIG = {
   temperature: 0,
-  maxOutputTokens: 256,
-  responseMimeType: 'application/json'
+  maxOutputTokens: 256
 };
 
 const extractGeminiJson = (raw) => {
