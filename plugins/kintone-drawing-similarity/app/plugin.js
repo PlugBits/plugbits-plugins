@@ -729,7 +729,10 @@
     '  background: rgba(17,24,39,.78); color: #fff; font-size: 12px; font-weight: 700; }',
     '.sim-hero-link { display: block; margin-top: 8px; color: #1d4ed8; font-weight: 700; font-size: 14px;',
     '  text-decoration: none; }',
-    '.sim-hero-meta { margin-top: 2px; color: #6b7280; font-size: 12px; }'
+    '.sim-hero-meta { margin-top: 2px; color: #6b7280; font-size: 12px; }',
+    '.sim-shape-comment { margin-top: 4px; color: #6d28d9; font-size: 11px; font-style: italic; }',
+    '.sim-shape-comment-query { margin-top: 8px; font-size: 12px; }',
+    '.sim-shape-comment-query[hidden] { display: none; }'
   ].join('\n');
 
   const parseOptionsList = (str) =>
@@ -1583,6 +1586,14 @@
     meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
 
     card.append(thumbBox, link, meta);
+
+    if (item.shapeComment) {
+      const shapeComment = document.createElement('div');
+      shapeComment.className = 'sim-shape-comment';
+      shapeComment.textContent = 'AI形状コメント: ' + item.shapeComment;
+      card.appendChild(shapeComment);
+    }
+
     return card;
   };
 
@@ -1624,6 +1635,14 @@
     score.textContent = formatPercent(item.score);
 
     body.append(link, meta, detail);
+
+    if (item.shapeComment) {
+      const shapeComment = document.createElement('div');
+      shapeComment.className = 'sim-shape-comment';
+      shapeComment.textContent = 'AI形状コメント: ' + item.shapeComment;
+      body.appendChild(shapeComment);
+    }
+
     scoreBox.append(vector, score);
     li.append(thumbBox, body, scoreBox);
     return li;
@@ -1731,6 +1750,11 @@
       previewPanel.appendChild(ph);
     }
 
+    const queryShapeCommentEl = document.createElement('div');
+    queryShapeCommentEl.className = 'sim-shape-comment sim-shape-comment-query';
+    queryShapeCommentEl.hidden = true;
+    previewPanel.appendChild(queryShapeCommentEl);
+
     const formPanel = document.createElement('div');
     formPanel.className = 'form-panel';
 
@@ -1760,7 +1784,14 @@
         }
         return response.json();
       })
-      .then((data) => renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl))
+      .then((data) => {
+        const queryShapeComment = data && data.extracted && data.extracted.shapeComment;
+        if (queryShapeComment) {
+          queryShapeCommentEl.hidden = false;
+          queryShapeCommentEl.textContent = 'AI形状コメント: ' + queryShapeComment;
+        }
+        renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl);
+      })
       .catch((error) => {
         statusEl.textContent = '類似図面検索に失敗しました: ' + error.message;
       });

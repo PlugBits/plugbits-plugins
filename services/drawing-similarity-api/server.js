@@ -499,7 +499,7 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 };
 
 const GEMINI_OCR_PROMPT = [
-  '{"drawingNo":"","productName":"","material":"","dimension":""}',
+  '{"drawingNo":"","productName":"","material":"","dimension":"","shapeComment":""}',
   '',
   'This is a full-page engineering drawing image. Locate the title block (表題欄) — the bordered table usually at the bottom-right corner — then fill in the JSON above.',
   'YOUR ENTIRE RESPONSE MUST BE ONLY THE JSON — no explanation, no markdown, no other text.',
@@ -531,6 +531,13 @@ const GEMINI_OCR_PROMPT = [
   '- This value often appears right after the material code in the 材質 field.',
   '- If no dimension is found anywhere in the title block, return "".',
   '',
+  'SHAPE COMMENT (shapeComment):',
+  '- Look at the actual drawn shape/outline in the drawing area (ignore the title block here).',
+  '- Write ONE short Japanese sentence describing the overall form: rough category (例: L字ブラケット, 円筒軸, 平板, パイプ, カバー) and notable features (穴の数や配置, 折り曲げ, スリット, フランジ等).',
+  '- Example: "L字型のブラケットで、4隅に取付穴、中央に大きな丸穴が1つある"',
+  '- This is a free-text reference comment for a human reviewer — it is NOT used for scoring, so describe what you actually see rather than guessing.',
+  '- If you cannot make out the shape, return "".',
+  '',
   'Use "" for any field you cannot find.',
   'Output ONLY the JSON. Start with { and end with }.'
 ].join('\n');
@@ -555,11 +562,11 @@ const GEMINI_LOCATE_PROMPT = [
 const extractGeminiJson = (raw) => {
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '', material: '', dimension: '' };
+  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '', material: '', dimension: '', shapeComment: '' };
   try {
     return JSON.parse(raw.slice(start, end + 1));
   } catch {
-    return { drawingNo: '', productName: '', material: '', dimension: '' };
+    return { drawingNo: '', productName: '', material: '', dimension: '', shapeComment: '' };
   }
 };
 
@@ -1637,6 +1644,7 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     ocr_revision: context.extracted?.revision || '',
     ocr_shape_category: context.extracted?.shapeCategory || '',
     ocr_extraction_confidence: context.extracted?.extractionConfidence ?? null,
+    ocr_shape_comment: context.shapeComment || '',
     shape_engine: context.shape?.engine || 'none',
     shape_mode: context.shape?.mode || 'none',
     shape_image_mode: shapeImageMode,
@@ -1835,6 +1843,7 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
         dimension: payload.ocr_dimension || payload.ocr_thickness || '',
         revision: payload.ocr_revision || '',
         shapeCategory: payload.ocr_shape_category || '',
+        shapeComment: payload.ocr_shape_comment || '',
         ocrText: payload.ocr_text || '',
         shape: normalizeShapeProfile(payload.shape_profile_json || payload.shape_profile || null),
         vectorRaw: scored.scoreBreakdown.vectorRaw,
@@ -2271,6 +2280,7 @@ const server = createServer(async (request, response) => {
               customer: indexed.payload.ocr_customer || '',
               revision: indexed.payload.ocr_revision || '',
               shapeCategory: indexed.payload.ocr_shape_category || '',
+              shapeComment: indexed.payload.ocr_shape_comment || '',
               ocrTextLength: String(indexed.payload.ocr_text || '').length,
               shape: normalizeShapeProfile(indexed?.payload?.shape_profile_json || indexed?.payload?.shape_profile || null)
             } : null,
@@ -2389,6 +2399,9 @@ const server = createServer(async (request, response) => {
       step = 'extraction';
       indexLog('extraction start');
       const extracted = extractOcrFields(ocr.text, body);
+      // Vertex/Gemini本体への形状コメント依頼は、表題欄テキスト抽出（extractOcrFields）とは独立に
+      // geminiExtracted.shapeComment から直接取り出す。スコアには使わず、検索結果での人手確認用の参考情報。
+      const shapeComment = String(ocr.geminiExtracted?.shapeComment || '').trim();
       indexLog('extraction done', {
         drawingNo: extracted.drawingNo,
         material: extracted.material,
@@ -2396,7 +2409,8 @@ const server = createServer(async (request, response) => {
         customer: extracted.customer,
         revision: extracted.revision,
         shapeCategory: extracted.shapeCategory,
-        confidence: extracted.extractionConfidence
+        confidence: extracted.extractionConfidence,
+        shapeComment
       });
 
       step = 'embedding';
@@ -2431,7 +2445,8 @@ const server = createServer(async (request, response) => {
         errorLog: indexError,
         ocr,
         extracted,
-        shape
+        shape,
+        shapeComment
       });
 
       sendJson(response, 202, {
@@ -2457,7 +2472,8 @@ const server = createServer(async (request, response) => {
           customer: extracted.customer,
           revision: extracted.revision,
           shapeCategory: extracted.shapeCategory,
-          extractionConfidence: extracted.extractionConfidence
+          extractionConfidence: extracted.extractionConfidence,
+          shapeComment
         },
         shape: {
           engine: shape.engine,
