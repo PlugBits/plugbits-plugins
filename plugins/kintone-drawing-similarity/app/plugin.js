@@ -427,8 +427,8 @@
                   permanentFileName = files[0].name || permanentFileName;
                 }
               }
-              // Register similarity index using the permanent fileKey
-              await fetch(apiBaseUrl + '/index', {
+              // Register similarity index in the background — do not await so navigation is not blocked
+              fetch(apiBaseUrl + '/index', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
