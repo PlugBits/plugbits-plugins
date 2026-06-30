@@ -689,7 +689,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
     body: JSON.stringify({
-      contents: [{ parts: [
+      contents: [{ role: 'user', parts: [
         { text: GEMINI_OCR_PROMPT },
         { inline_data: { mime_type: 'image/png', data: base64 } }
       ]}],
