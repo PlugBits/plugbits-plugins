@@ -307,11 +307,41 @@
     if (config.shapeTagField) {
       kintone.app.record.setFieldShown(config.shapeTagField, false);
     }
+
+    // Pre-fill fields when redirected from the list-screen registration modal
+    let pendingReg = null;
+    if (event.type === 'app.record.create.show') {
+      try {
+        const raw = sessionStorage.getItem('pb_pending_registration');
+        if (raw) {
+          const parsed = JSON.parse(raw);
+          if (parsed.appId === String(kintone.app.getId() || '')) {
+            pendingReg = parsed;
+            const obj = kintone.app.record.get();
+            const setField = (code, value) => {
+              if (code && obj.record[code] !== undefined) obj.record[code].value = value;
+            };
+            setField(config.drawingNoField, pendingReg.drawingNo);
+            setField(config.productNameField, pendingReg.productName);
+            setField(config.materialField, pendingReg.material);
+            setField(config.dimensionField, pendingReg.dimension);
+            setField(config.processField, pendingReg.processes.join(','));
+            setField(config.tagField, pendingReg.tags.join(','));
+            if (config.shapeTagField) setField(config.shapeTagField, pendingReg.shapeTags.join(','));
+            if (config.pdfFileField && pendingReg.fileKey) {
+              obj.record[config.pdfFileField].value = [{ fileKey: pendingReg.fileKey, name: pendingReg.fileName }];
+            }
+            kintone.app.record.set(obj);
+          }
+        }
+      } catch (_) {}
+    }
+
     const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
     const tenantId = deriveTenantId();
     const appId = String(kintone.app.getId() || '');
-    const currentTags = parseTags(getFieldValue(event.record, config.tagField));
-    const currentAiTags = config.shapeTagField ? parseTags(getFieldValue(event.record, config.shapeTagField)) : [];
+    const currentTags = pendingReg ? pendingReg.tags : parseTags(getFieldValue(event.record, config.tagField));
+    const currentAiTags = pendingReg ? pendingReg.shapeTags : (config.shapeTagField ? parseTags(getFieldValue(event.record, config.shapeTagField)) : []);
     const allTags = apiBaseUrl ? await fetchTags(apiBaseUrl, tenantId, appId) : [];
     renderTagUi(spaceEl, currentTags, currentAiTags, allTags, true, ({ tags, shapeTags }) => {
       const obj = kintone.app.record.get();
@@ -350,6 +380,38 @@
         ...(shapeTagsForSync !== undefined ? { shapeTags: shapeTagsForSync } : {})
       })
     }).catch(() => {});
+
+    // Register similarity index when redirected from the list-screen registration modal
+    if (event.type === 'app.record.create.submit.success') {
+      try {
+        const raw = sessionStorage.getItem('pb_pending_registration');
+        if (raw) {
+          const pending = JSON.parse(raw);
+          if (pending.appId === String(kintone.app.getId() || '')) {
+            sessionStorage.removeItem('pb_pending_registration');
+            fetch(apiBaseUrl + '/index', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                appId: pending.appId,
+                recordId,
+                tenantId: pending.tenantId,
+                drawingNo: pending.drawingNo,
+                productName: getFieldValue(record, config.productNameField) || pending.productName,
+                material: getFieldValue(record, config.materialField) || pending.material,
+                dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
+                tags,
+                shapeTags: shapeTagsForSync || '',
+                fileKey: pending.fileKey,
+                fileName: pending.fileName,
+                limit: 10
+              })
+            }).catch(() => {});
+          }
+        }
+      } catch (_) {}
+    }
+
     return event;
   });
 
@@ -1664,11 +1726,24 @@
               app: appId, id: recordId, record: recordFields
             });
           } else {
-            if (drawingNoField) recordFields[drawingNoField] = { value: drawingNo };
-            const res = await kintone.api(kintone.api.url('/k/v1/record', true), 'POST', {
-              app: appId, record: recordFields
-            });
-            recordId = res.id;
+            // New record: redirect to kintone create form so user can fill required fields
+            const pending = {
+              appId: String(appId),
+              tenantId,
+              drawingNo,
+              productName,
+              material,
+              dimension,
+              processes,
+              tags,
+              shapeTags,
+              fileKey,
+              fileName: file ? file.name : ''
+            };
+            sessionStorage.setItem('pb_pending_registration', JSON.stringify(pending));
+            showRegisteringState('編集画面へ移動します...');
+            setTimeout(() => { window.location.href = '/k/' + appId + '/edit'; }, 800);
+            return;
           }
         }
       } catch (error) {
