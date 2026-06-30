@@ -2429,9 +2429,14 @@ const server = createServer(async (request, response) => {
       // Vertex/Gemini本体への形状コメント・形状タグ依頼は、表題欄テキスト抽出（extractOcrFields）とは独立に
       // geminiExtracted から直接取り出す。shapeCommentは表示専用、shapeTagsはscoreCandidateの補助ボーナスに使う。
       const shapeComment = String(ocr.geminiExtracted?.shapeComment || '').trim();
-      const shapeTags = Array.isArray(ocr.geminiExtracted?.shapeTags)
-        ? ocr.geminiExtracted.shapeTags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, 6)
+      const geminiShapeTags = Array.isArray(ocr.geminiExtracted?.shapeTags)
+        ? ocr.geminiExtracted.shapeTags.map((tag) => String(tag).trim()).filter(Boolean)
         : [];
+      // 登録モーダルでユーザーがAI形状タグを編集した場合はそちらを優先する。
+      // 一括登録など shapeTags を送らない呼び出し元は、Geminiの抽出結果をそのまま使う。
+      const shapeTags = typeof body.shapeTags === 'string'
+        ? parseTags(body.shapeTags).slice(0, 6)
+        : geminiShapeTags.slice(0, 6);
       indexLog('extraction done', {
         drawingNo: extracted.drawingNo,
         material: extracted.material,

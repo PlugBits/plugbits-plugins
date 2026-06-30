@@ -668,6 +668,9 @@
     '.ac-chip-del { background: none; border: none; cursor: pointer; color: #93c5fd;',
     '  font-size: 14px; line-height: 1; padding: 0 0 0 4px; }',
     '.ac-chip-del:hover { color: #1d4ed8; }',
+    '.ac-chip-ai { background: #ede9fe; border-color: #8b5cf6; color: #5b21b6; }',
+    '.ac-chip-ai .ac-chip-del { color: #c4b5fd; }',
+    '.ac-chip-ai .ac-chip-del:hover { color: #5b21b6; }',
     '.ac-input-row { position: relative; margin-top: 6px; }',
     '.ac-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: #fff;',
     '  border: 1px solid #d1d5db; border-top: none; border-radius: 0 0 5px 5px;',
@@ -731,8 +734,6 @@
     '  text-decoration: none; }',
     '.sim-hero-meta { margin-top: 2px; color: #6b7280; font-size: 12px; }',
     '.sim-shape-comment { margin-top: 4px; color: #6d28d9; font-size: 11px; font-style: italic; }',
-    '.sim-shape-comment-query { margin-top: 8px; font-size: 12px; }',
-    '.sim-shape-comment-query[hidden] { display: none; }',
     '.sim-shape-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }',
     '.sim-shape-tag { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;',
     '  background: #ede9fe; color: #5b21b6; font-size: 10px; font-weight: 600; }'
@@ -1142,6 +1143,126 @@
       return { element: group, getValues: () => [...selected] };
     };
 
+    // タグ欄: ユーザータグとAI形状タグ（提案）を同じ欄に表示し、色で区別する。
+    // 同じ文字列でも由来（origin）が違えば別チップとして残し、個別に削除できる。
+    const makeTagChipsField = (labelText, suggestions, initialUserTags, initialAiTags) => {
+      let items = [
+        ...initialUserTags.map((value) => ({ value, origin: 'user' })),
+        ...initialAiTags.map((value) => ({ value, origin: 'ai' }))
+      ];
+      const group = document.createElement('div');
+      group.className = 'field-group';
+      const lbl = document.createElement('div');
+      lbl.className = 'field-label';
+      lbl.textContent = labelText;
+      const chipsDiv = document.createElement('div');
+      chipsDiv.className = 'ac-chips';
+      const inputRow = document.createElement('div');
+      inputRow.className = 'ac-input-row';
+      const input = document.createElement('input');
+      input.className = 'field-input';
+      input.type = 'text';
+      input.placeholder = '入力して検索...';
+      input.setAttribute('autocomplete', 'off');
+      const dropdown = document.createElement('ul');
+      dropdown.className = 'ac-dropdown';
+      dropdown.hidden = true;
+
+      const renderChips = () => {
+        chipsDiv.innerHTML = '';
+        items.forEach((item, idx) => {
+          const chip = document.createElement('span');
+          chip.className = 'ac-chip' + (item.origin === 'ai' ? ' ac-chip-ai' : '');
+          chip.appendChild(document.createTextNode(item.value));
+          const del = document.createElement('button');
+          del.className = 'ac-chip-del';
+          del.type = 'button';
+          del.textContent = '×';
+          del.addEventListener('click', () => {
+            items.splice(idx, 1);
+            renderChips();
+          });
+          chip.appendChild(del);
+          chipsDiv.appendChild(chip);
+        });
+      };
+
+      const updateDropdown = (q) => {
+        const lower = q.trim().toLowerCase();
+        const filtered = suggestions.filter((s) => !lower || s.toLowerCase().includes(lower));
+        dropdown.innerHTML = '';
+        const items2 = [...filtered.slice(0, 8)];
+        const trimmed = q.trim();
+        if (trimmed && !suggestions.some((s) => s.toLowerCase() === trimmed.toLowerCase())) {
+          items2.push('__new__:' + trimmed);
+        }
+        if (!items2.length) { dropdown.hidden = true; return; }
+        items2.forEach((s) => {
+          const isNew = s.startsWith('__new__:');
+          const val = isNew ? s.slice(8) : s;
+          const li = document.createElement('li');
+          li.className = 'ac-item' + (isNew ? ' new' : '');
+          li.textContent = isNew ? '"' + val + '" を追加' : val;
+          li.dataset.value = val;
+          dropdown.appendChild(li);
+        });
+        dropdown.hidden = false;
+      };
+
+      const addItem = (val) => {
+        const value = val.trim();
+        if (!value || items.some((it) => it.value === value && it.origin === 'user')) { return; }
+        items.push({ value, origin: 'user' });
+        if (!suggestions.includes(value)) { suggestions.push(value); }
+        renderChips();
+        input.value = '';
+        dropdown.hidden = true;
+      };
+
+      input.addEventListener('focus', () => updateDropdown(input.value));
+      input.addEventListener('input', () => updateDropdown(input.value));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          e.preventDefault();
+          const active = dropdown.querySelector('.ac-item.active');
+          if (active) { addItem(active.dataset.value); return; }
+          if (input.value.trim()) { addItem(input.value); }
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          const els = [...dropdown.querySelectorAll('.ac-item')];
+          const idx = els.indexOf(dropdown.querySelector('.active'));
+          els.forEach((el) => el.classList.remove('active'));
+          const next = els[idx + 1] || els[0];
+          if (next) { next.classList.add('active'); }
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          const els = [...dropdown.querySelectorAll('.ac-item')];
+          const idx = els.indexOf(dropdown.querySelector('.active'));
+          els.forEach((el) => el.classList.remove('active'));
+          const prev = els[idx - 1] || els[els.length - 1];
+          if (prev) { prev.classList.add('active'); }
+        } else if (e.key === 'Escape') {
+          dropdown.hidden = true;
+        }
+      });
+      input.addEventListener('blur', () => { setTimeout(() => { dropdown.hidden = true; }, 150); });
+      dropdown.addEventListener('mousedown', (e) => {
+        const item = e.target.closest('.ac-item');
+        if (item) { e.preventDefault(); addItem(item.dataset.value); }
+      });
+
+      renderChips();
+      inputRow.append(input, dropdown);
+      group.append(lbl, chipsDiv, inputRow);
+      return {
+        element: group,
+        getValues: () => ({
+          tags: items.filter((it) => it.origin === 'user').map((it) => it.value),
+          shapeTags: items.filter((it) => it.origin === 'ai').map((it) => it.value)
+        })
+      };
+    };
+
     // 既存値からのオートコンプリート付き単一値フィールド（自由入力も可）
     const makeAutoCompleteInput = (suggestions, initialValue) => {
       const wrap = document.createElement('div');
@@ -1300,6 +1421,15 @@
       dimensionGroup.append(dimensionLabel, dimensionAc.element);
       formPanel.appendChild(dimensionGroup);
 
+      // AI形状コメント（登録確認画面のみで表示。スコアリングには使わない参考情報）
+      const shapeComment = analyzeResult.extracted && analyzeResult.extracted.shapeComment;
+      if (shapeComment) {
+        const shapeCommentEl = document.createElement('div');
+        shapeCommentEl.className = 'sim-shape-comment';
+        shapeCommentEl.textContent = 'AI形状コメント: ' + shapeComment;
+        formPanel.appendChild(shapeCommentEl);
+      }
+
       // 加工方法 autocomplete
       let getProcessValues = () => [];
       {
@@ -1308,10 +1438,13 @@
         getProcessValues = getValues;
       }
 
-      // タグ autocomplete
-      let getTagValues = () => [];
+      // タグ（ユーザータグ + AI形状タグの提案を同じ欄に表示、色で区別）
+      const shapeTagSuggestions = Array.isArray(analyzeResult.extracted && analyzeResult.extracted.shapeTags)
+        ? analyzeResult.extracted.shapeTags
+        : [];
+      let getTagValues = () => ({ tags: [], shapeTags: [] });
       {
-        const { element, getValues } = makeAutoChipsField('タグ', [...availableTags], true);
+        const { element, getValues } = makeTagChipsField('タグ', [...availableTags], [], shapeTagSuggestions);
         formPanel.appendChild(element);
         getTagValues = getValues;
       }
@@ -1440,7 +1573,9 @@
     };
 
     // --- Registration ---
-    const doRegister = async (file, drawingNo, productName, material, dimension, processes, tags, reuseFileKey) => {
+    const doRegister = async (file, drawingNo, productName, material, dimension, processes, tagValues, reuseFileKey) => {
+      const tags = tagValues.tags;
+      const shapeTags = tagValues.shapeTags;
       let fileKey;
       if (reuseFileKey) {
         fileKey = reuseFileKey;
@@ -1504,6 +1639,7 @@
             material,
             dimension,
             tags: tags.join(','),
+            shapeTags: shapeTags.join(','),
             fileKey,
             fileName: file.name,
             limit: 10
@@ -1605,13 +1741,6 @@
 
     card.append(thumbBox, link, meta);
 
-    if (item.shapeComment) {
-      const shapeComment = document.createElement('div');
-      shapeComment.className = 'sim-shape-comment';
-      shapeComment.textContent = 'AI形状コメント: ' + item.shapeComment;
-      card.appendChild(shapeComment);
-    }
-
     const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
     if (shapeTagsEl) {
       card.appendChild(shapeTagsEl);
@@ -1658,13 +1787,6 @@
     score.textContent = formatPercent(item.score);
 
     body.append(link, meta, detail);
-
-    if (item.shapeComment) {
-      const shapeComment = document.createElement('div');
-      shapeComment.className = 'sim-shape-comment';
-      shapeComment.textContent = 'AI形状コメント: ' + item.shapeComment;
-      body.appendChild(shapeComment);
-    }
 
     const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
     if (shapeTagsEl) {
@@ -1778,11 +1900,6 @@
       previewPanel.appendChild(ph);
     }
 
-    const queryShapeCommentEl = document.createElement('div');
-    queryShapeCommentEl.className = 'sim-shape-comment sim-shape-comment-query';
-    queryShapeCommentEl.hidden = true;
-    previewPanel.appendChild(queryShapeCommentEl);
-
     const queryShapeTagsEl = document.createElement('div');
     queryShapeTagsEl.className = 'sim-shape-tags';
     previewPanel.appendChild(queryShapeTagsEl);
@@ -1817,11 +1934,6 @@
         return response.json();
       })
       .then((data) => {
-        const queryShapeComment = data && data.extracted && data.extracted.shapeComment;
-        if (queryShapeComment) {
-          queryShapeCommentEl.hidden = false;
-          queryShapeCommentEl.textContent = 'AI形状コメント: ' + queryShapeComment;
-        }
         const queryShapeTags = data && data.extracted && data.extracted.shapeTags;
         const queryShapeTagsChips = buildShapeTagsEl(queryShapeTags);
         if (queryShapeTagsChips) {
