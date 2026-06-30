@@ -901,7 +901,13 @@
     overlay.appendChild(modal);
     shadow.append(style, overlay);
 
-    const closeModal = () => host.remove();
+    let kintoneRecordChanged = false;
+    const closeModal = () => {
+      host.remove();
+      if (kintoneRecordChanged) {
+        window.location.reload();
+      }
+    };
     xBtn.addEventListener('click', closeModal);
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
 
@@ -1561,6 +1567,7 @@
       } catch (error) {
         throw new Error('kintoneレコード保存失敗: ' + error.message);
       }
+      kintoneRecordChanged = true;
 
       showRegisteringState('ベクトルインデックスを登録中...');
       try {
