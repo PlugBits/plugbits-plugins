@@ -326,27 +326,6 @@
   });
 
   // Inject the pre-uploaded PDF fileKey at save time so it is included in the record creation POST.
-  // FILE fields set in create.show event.record are ignored by kintone's save mechanism.
-  kintone.events.on('app.record.create.submit', (event) => {
-    try {
-      const raw = sessionStorage.getItem('pb_pending_registration');
-      if (!raw) return event;
-      const pending = JSON.parse(raw);
-      if (pending.appId !== String(kintone.app.getId() || '')) return event;
-
-      const config = kintone.plugin.app.getConfig(PLUGIN_ID);
-      if (config.pdfFileField && pending.fileKey && event.record[config.pdfFileField] !== undefined) {
-        const existing = event.record[config.pdfFileField].value;
-        if (!existing || existing.length === 0) {
-          event.record[config.pdfFileField].value = [{ fileKey: pending.fileKey }];
-        }
-      }
-    } catch (e) {
-      console.warn('[pb] submit file inject error', e);
-    }
-    return event;
-  });
-
   kintone.events.on(['app.record.edit.show', 'app.record.create.show'], async (event) => {
     const config = kintone.plugin.app.getConfig(PLUGIN_ID);
     if (!config.tagField || !config.tagSpaceId) {
@@ -419,7 +398,7 @@
       })
     }).catch(() => {});
 
-    // Register similarity index when redirected from the list-screen registration modal
+    // Attach pre-uploaded PDF and register similarity index after redirect-based new record creation
     if (event.type === 'app.record.create.submit.success') {
       try {
         const raw = sessionStorage.getItem('pb_pending_registration');
@@ -427,24 +406,37 @@
           const pending = JSON.parse(raw);
           if (pending.appId === String(kintone.app.getId() || '')) {
             sessionStorage.removeItem('pb_pending_registration');
-            fetch(apiBaseUrl + '/index', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                appId: pending.appId,
-                recordId,
-                tenantId: pending.tenantId,
-                drawingNo: pending.drawingNo,
-                productName: getFieldValue(record, config.productNameField) || pending.productName,
-                material: getFieldValue(record, config.materialField) || pending.material,
-                dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
-                tags,
-                shapeTags: shapeTagsForSync || '',
-                fileKey: pending.fileKey,
-                fileName: pending.fileName,
-                limit: 10
-              })
-            }).catch(() => {});
+            const doPostSave = async () => {
+              // Attach the pre-uploaded PDF via REST API (event.record modification cannot set FILE fields)
+              if (pending.fileKey && config.pdfFileField) {
+                await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', {
+                  app: pending.appId,
+                  id: recordId,
+                  record: { [config.pdfFileField]: { value: [{ fileKey: pending.fileKey }] } }
+                });
+              }
+              // Register similarity index
+              await fetch(apiBaseUrl + '/index', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                  appId: pending.appId,
+                  recordId,
+                  tenantId: pending.tenantId,
+                  drawingNo: pending.drawingNo,
+                  productName: getFieldValue(record, config.productNameField) || pending.productName,
+                  material: getFieldValue(record, config.materialField) || pending.material,
+                  dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
+                  tags,
+                  shapeTags: shapeTagsForSync || '',
+                  fileKey: pending.fileKey,
+                  fileName: pending.fileName,
+                  limit: 10
+                })
+              }).catch(() => {});
+              return event;
+            };
+            return doPostSave().catch(() => event);
           }
         }
       } catch (_) {}
