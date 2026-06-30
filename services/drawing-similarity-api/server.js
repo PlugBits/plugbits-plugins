@@ -2005,7 +2005,7 @@ const server = createServer(async (request, response) => {
       ]);
       console.log('[ocr] pass2 raw=' + JSON.stringify(ocr.text) + ' extracted=' + JSON.stringify(ocr.geminiExtracted));
 
-      const isGemini = ocr.engine === 'gemini';
+      const isGemini = ocr.engine === 'gemini' || ocr.engine === 'vertex';
       const extracted = isGemini
         ? ocr.geminiExtracted
         : extractOcrFields(ocr.text, {});
