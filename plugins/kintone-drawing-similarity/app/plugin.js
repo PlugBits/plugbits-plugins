@@ -242,7 +242,9 @@
     img.className = 'sim-thumb-img';
     img.alt = '';
     img.src = apiBaseUrl + '/thumbnail?fileKey=' + encodeURIComponent(fileKey);
-    img.addEventListener('error', () => { thumbBox.textContent = '画像なし'; }, { once: true });
+    img.addEventListener('error', () => {
+      thumbBox.replaceChild(document.createTextNode('画像なし'), img);
+    }, { once: true });
     thumbBox.appendChild(img);
   };
 
@@ -715,7 +717,21 @@
     '.sim-vectorraw { color: #111827;',
     '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;',
     '  font-size: 14px; font-weight: 800; }',
-    '.sim-score { color: #1a1a1a; font-size: 13px; font-weight: 700; }'
+    '.sim-score { color: #1a1a1a; font-size: 13px; font-weight: 700; }',
+    '.sim-preview-panel { flex: 0 0 38%; }',
+    '.sim-form-panel { flex: 0 0 62%; }',
+    '.sim-hero-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }',
+    '.sim-hero-card { display: flex; flex-direction: column; }',
+    '.sim-hero-thumb { position: relative; width: 100%; aspect-ratio: 1 / 1; display: flex;',
+    '  align-items: center; justify-content: center; box-sizing: border-box; border: 1px solid #e5e7eb;',
+    '  border-radius: 8px; background: #f9fafb; color: #9ca3af; font-size: 13px; text-align: center;',
+    '  overflow: hidden; }',
+    '.sim-hero-thumb .sim-thumb-img { width: 100%; height: 100%; object-fit: contain; }',
+    '.sim-hero-score { position: absolute; top: 8px; right: 8px; padding: 3px 9px; border-radius: 9999px;',
+    '  background: rgba(17,24,39,.78); color: #fff; font-size: 12px; font-weight: 700; }',
+    '.sim-hero-link { display: block; margin-top: 10px; color: #1d4ed8; font-weight: 700; font-size: 14px;',
+    '  text-decoration: none; }',
+    '.sim-hero-meta { margin-top: 2px; color: #6b7280; font-size: 12px; }'
   ].join('\n');
 
   const parseOptionsList = (str) =>
@@ -1543,6 +1559,78 @@
     confidenceEl.append(level, scores);
   };
 
+  // 上位3件はサムネイルを主役にした大きいカードで見せ、残りは品番中心の補助リストにする。
+  const buildHeroCard = (item, apiBaseUrl) => {
+    const card = document.createElement('div');
+    card.className = 'sim-hero-card';
+
+    const thumbBox = document.createElement('div');
+    thumbBox.className = 'sim-hero-thumb';
+    loadThumbnail(thumbBox, apiBaseUrl, item.fileKey);
+
+    const scoreBadge = document.createElement('div');
+    scoreBadge.className = 'sim-hero-score';
+    scoreBadge.textContent = formatPercent(item.score);
+    thumbBox.appendChild(scoreBadge);
+
+    const link = document.createElement('a');
+    link.className = 'sim-hero-link';
+    link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = item.drawingNo || 'record ' + item.recordId;
+
+    const meta = document.createElement('div');
+    meta.className = 'sim-hero-meta';
+    meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
+
+    card.append(thumbBox, link, meta);
+    return card;
+  };
+
+  const buildResultRow = (item, apiBaseUrl) => {
+    const li = document.createElement('li');
+    li.className = 'sim-item';
+
+    const thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, false);
+
+    const body = document.createElement('div');
+    const link = document.createElement('a');
+    link.className = 'sim-link';
+    link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
+    link.target = '_blank';
+    link.rel = 'noopener';
+    link.textContent = item.drawingNo || 'record ' + item.recordId;
+
+    const meta = document.createElement('div');
+    meta.className = 'sim-meta';
+    meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
+
+    const rawScore = item.vectorRaw || (item.scoreBreakdown && item.scoreBreakdown.vectorRaw);
+    const detail = document.createElement('div');
+    detail.className = 'sim-detail';
+    const rotationText = item.embeddingRotation === null || item.embeddingRotation === undefined
+      ? ''
+      : ' / rot ' + item.embeddingRotation;
+    detail.textContent = 'vectorRaw ' + formatVectorRaw(rawScore) + rotationText;
+
+    const scoreBox = document.createElement('div');
+    scoreBox.className = 'sim-scorebox';
+
+    const vector = document.createElement('div');
+    vector.className = 'sim-vectorraw';
+    vector.textContent = formatVectorRaw(rawScore);
+
+    const score = document.createElement('div');
+    score.className = 'sim-score';
+    score.textContent = formatPercent(item.score);
+
+    body.append(link, meta, detail);
+    scoreBox.append(vector, score);
+    li.append(thumbBox, body, scoreBox);
+    return li;
+  };
+
   const renderSimilarList = (listEl, statusEl, confidenceEl, data, apiBaseUrl) => {
     const results = Array.isArray(data && data.results) ? data.results : [];
     listEl.textContent = '';
@@ -1555,48 +1643,22 @@
 
     statusEl.textContent = results.length + '件の候補を表示しています。';
 
-    results.forEach((item, index) => {
-      const li = document.createElement('li');
-      li.className = 'sim-item';
+    const heroResults = results.slice(0, THUMBNAIL_AUTO_COUNT);
+    const restResults = results.slice(THUMBNAIL_AUTO_COUNT);
 
-      const thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, index < THUMBNAIL_AUTO_COUNT);
+    if (heroResults.length) {
+      const heroGrid = document.createElement('div');
+      heroGrid.className = 'sim-hero-grid';
+      heroResults.forEach((item) => heroGrid.appendChild(buildHeroCard(item, apiBaseUrl)));
+      listEl.appendChild(heroGrid);
+    }
 
-      const body = document.createElement('div');
-      const link = document.createElement('a');
-      link.className = 'sim-link';
-      link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = item.drawingNo || 'record ' + item.recordId;
-
-      const meta = document.createElement('div');
-      meta.className = 'sim-meta';
-      meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
-
-      const rawScore = item.vectorRaw || (item.scoreBreakdown && item.scoreBreakdown.vectorRaw);
-      const detail = document.createElement('div');
-      detail.className = 'sim-detail';
-      const rotationText = item.embeddingRotation === null || item.embeddingRotation === undefined
-        ? ''
-        : ' / rot ' + item.embeddingRotation;
-      detail.textContent = 'vectorRaw ' + formatVectorRaw(rawScore) + rotationText;
-
-      const scoreBox = document.createElement('div');
-      scoreBox.className = 'sim-scorebox';
-
-      const vector = document.createElement('div');
-      vector.className = 'sim-vectorraw';
-      vector.textContent = formatVectorRaw(rawScore);
-
-      const score = document.createElement('div');
-      score.className = 'sim-score';
-      score.textContent = formatPercent(item.score);
-
-      body.append(link, meta, detail);
-      scoreBox.append(vector, score);
-      li.append(thumbBox, body, scoreBox);
-      listEl.append(li);
-    });
+    if (restResults.length) {
+      const restList = document.createElement('ul');
+      restList.className = 'sim-list';
+      restResults.forEach((item) => restList.appendChild(buildResultRow(item, apiBaseUrl)));
+      listEl.appendChild(restList);
+    }
   };
 
   const openSimilarModal = (config, apiBaseUrl, event) => {
@@ -1642,7 +1704,7 @@
     layout.className = 'form-layout';
 
     const previewPanel = document.createElement('div');
-    previewPanel.className = 'preview-panel';
+    previewPanel.className = 'preview-panel sim-preview-panel';
     const previewLabel = document.createElement('div');
     previewLabel.className = 'preview-label';
     previewLabel.textContent = fileMeta ? (fileMeta.name || '') : '自分の図面';
@@ -1672,7 +1734,7 @@
     }
 
     const formPanel = document.createElement('div');
-    formPanel.className = 'form-panel';
+    formPanel.className = 'form-panel sim-form-panel';
 
     const statusEl = document.createElement('div');
     statusEl.className = 'sim-status';
@@ -1682,8 +1744,8 @@
     confidenceEl.className = 'sim-confidence';
     confidenceEl.hidden = true;
 
-    const listEl = document.createElement('ul');
-    listEl.className = 'sim-list';
+    const listEl = document.createElement('div');
+    listEl.className = 'sim-results';
 
     formPanel.append(statusEl, confidenceEl, listEl);
     layout.append(previewPanel, formPanel);
