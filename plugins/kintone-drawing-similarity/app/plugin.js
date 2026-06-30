@@ -732,7 +732,10 @@
     '.sim-hero-meta { margin-top: 2px; color: #6b7280; font-size: 12px; }',
     '.sim-shape-comment { margin-top: 4px; color: #6d28d9; font-size: 11px; font-style: italic; }',
     '.sim-shape-comment-query { margin-top: 8px; font-size: 12px; }',
-    '.sim-shape-comment-query[hidden] { display: none; }'
+    '.sim-shape-comment-query[hidden] { display: none; }',
+    '.sim-shape-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }',
+    '.sim-shape-tag { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;',
+    '  background: #ede9fe; color: #5b21b6; font-size: 10px; font-weight: 600; }'
   ].join('\n');
 
   const parseOptionsList = (str) =>
@@ -1560,6 +1563,21 @@
     confidenceEl.append(level, scores);
   };
 
+  const buildShapeTagsEl = (tags) => {
+    if (!Array.isArray(tags) || !tags.length) {
+      return null;
+    }
+    const wrap = document.createElement('div');
+    wrap.className = 'sim-shape-tags';
+    tags.forEach((tag) => {
+      const chip = document.createElement('span');
+      chip.className = 'sim-shape-tag';
+      chip.textContent = tag;
+      wrap.appendChild(chip);
+    });
+    return wrap;
+  };
+
   // 上位3件はサムネイルを主役にした大きいカードで見せ、残りは品番中心の補助リストにする。
   const buildHeroCard = (item, apiBaseUrl) => {
     const card = document.createElement('div');
@@ -1592,6 +1610,11 @@
       shapeComment.className = 'sim-shape-comment';
       shapeComment.textContent = 'AI形状コメント: ' + item.shapeComment;
       card.appendChild(shapeComment);
+    }
+
+    const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
+    if (shapeTagsEl) {
+      card.appendChild(shapeTagsEl);
     }
 
     return card;
@@ -1641,6 +1664,11 @@
       shapeComment.className = 'sim-shape-comment';
       shapeComment.textContent = 'AI形状コメント: ' + item.shapeComment;
       body.appendChild(shapeComment);
+    }
+
+    const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
+    if (shapeTagsEl) {
+      body.appendChild(shapeTagsEl);
     }
 
     scoreBox.append(vector, score);
@@ -1755,6 +1783,10 @@
     queryShapeCommentEl.hidden = true;
     previewPanel.appendChild(queryShapeCommentEl);
 
+    const queryShapeTagsEl = document.createElement('div');
+    queryShapeTagsEl.className = 'sim-shape-tags';
+    previewPanel.appendChild(queryShapeTagsEl);
+
     const formPanel = document.createElement('div');
     formPanel.className = 'form-panel';
 
@@ -1789,6 +1821,11 @@
         if (queryShapeComment) {
           queryShapeCommentEl.hidden = false;
           queryShapeCommentEl.textContent = 'AI形状コメント: ' + queryShapeComment;
+        }
+        const queryShapeTags = data && data.extracted && data.extracted.shapeTags;
+        const queryShapeTagsChips = buildShapeTagsEl(queryShapeTags);
+        if (queryShapeTagsChips) {
+          queryShapeTagsEl.replaceWith(queryShapeTagsChips);
         }
         renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl);
       })

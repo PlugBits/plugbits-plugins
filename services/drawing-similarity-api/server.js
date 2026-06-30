@@ -68,6 +68,7 @@ const scoreVectorWeight = Number(process.env.SCORE_VECTOR_WEIGHT || 0.78);
 const scoreMetadataWeight = Number(process.env.SCORE_METADATA_WEIGHT || 0.12);
 const scoreShapeWeight = Number(process.env.SCORE_SHAPE_WEIGHT || 0.10);
 const scoreTypeBonus = Number(process.env.SCORE_TYPE_BONUS || 0.05);
+const scoreAiShapeTagBonus = Number(process.env.SCORE_AI_SHAPE_TAG_BONUS || 0.05);
 const parseTags = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 let payloadIndexesReady = false;
 
@@ -179,7 +180,9 @@ const getRuntimeInfo = () => ({
     vectorCeiling: scoreVectorCeiling,
     vectorWeight: scoreVectorWeight,
     metadataWeight: scoreMetadataWeight,
-    shapeWeight: scoreShapeWeight
+    shapeWeight: scoreShapeWeight,
+    typeBonus: scoreTypeBonus,
+    aiShapeTagBonus: scoreAiShapeTagBonus
   },
   nodeVersion: process.version,
   cwd: process.cwd(),
@@ -499,7 +502,7 @@ const buildOpenClipVector = async (buffer, context = {}) => {
 };
 
 const GEMINI_OCR_PROMPT = [
-  '{"drawingNo":"","productName":"","material":"","dimension":"","shapeComment":""}',
+  '{"drawingNo":"","productName":"","material":"","dimension":"","shapeComment":"","shapeTags":[]}',
   '',
   'This is a full-page engineering drawing image. Locate the title block (表題欄) — the bordered table usually at the bottom-right corner — then fill in the JSON above.',
   'YOUR ENTIRE RESPONSE MUST BE ONLY THE JSON — no explanation, no markdown, no other text.',
@@ -538,6 +541,13 @@ const GEMINI_OCR_PROMPT = [
   '- This is a free-text reference comment for a human reviewer — it is NOT used for scoring, so describe what you actually see rather than guessing.',
   '- If you cannot make out the shape, return "".',
   '',
+  'SHAPE TAGS (shapeTags):',
+  '- Same shape you just described, but broken into 1–4 short keyword tags instead of a sentence.',
+  '- Each tag should be a short noun phrase, no punctuation: rough category first (例: "L字ブラケット"), then notable features (例: "丸穴4", "曲げ2", "フランジ", "スリット").',
+  '- These tags ARE used for similarity matching, so keep wording consistent and reusable across drawings — prefer the same tag text for the same feature instead of inventing new phrasing each time.',
+  '- Example: ["L字ブラケット", "丸穴4", "曲げ2"]',
+  '- If you cannot make out the shape, return [].',
+  '',
   'Use "" for any field you cannot find.',
   'Output ONLY the JSON. Start with { and end with }.'
 ].join('\n');
@@ -562,11 +572,11 @@ const GEMINI_LOCATE_PROMPT = [
 const extractGeminiJson = (raw) => {
   const start = raw.indexOf('{');
   const end = raw.lastIndexOf('}');
-  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '', material: '', dimension: '', shapeComment: '' };
+  if (start === -1 || end === -1 || end <= start) return { drawingNo: '', productName: '', material: '', dimension: '', shapeComment: '', shapeTags: [] };
   try {
     return JSON.parse(raw.slice(start, end + 1));
   } catch {
-    return { drawingNo: '', productName: '', material: '', dimension: '', shapeComment: '' };
+    return { drawingNo: '', productName: '', material: '', dimension: '', shapeComment: '', shapeTags: [] };
   }
 };
 
@@ -1277,7 +1287,8 @@ const buildQueryProfile = (body = {}, indexedPayload = null) => ({
   revision: String(indexedPayload?.ocr_revision || body.revision || '').trim(),
   shapeCategory: String(indexedPayload?.ocr_shape_category || body.shapeCategory || '').trim(),
   ocrText: String(indexedPayload?.ocr_text || body.ocrText || '').trim(),
-  tags: parseTags(indexedPayload?.tags || body.tags || '')
+  tags: parseTags(indexedPayload?.tags || body.tags || ''),
+  shapeTags: parseTags(indexedPayload?.ocr_shape_tags || body.shapeTags || '')
 });
 
 const scoreCandidate = (candidatePayload = {}, query = {}) => {
@@ -1384,10 +1395,23 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
     }
   }
 
+  // AI（Vertex/Gemini）が登録時に推定した形状タグの一致度。ユーザーが手入力するtagsとは別軸の補助シグナル。
+  const queryShapeTags = Array.isArray(query.shapeTags) ? query.shapeTags : [];
+  const candidateShapeTags = parseTags(candidatePayload.ocr_shape_tags || '');
+  let shapeTagBonus = 0;
+  if (queryShapeTags.length > 0 && candidateShapeTags.length > 0) {
+    const sharedShapeTags = queryShapeTags.filter((t) => candidateShapeTags.includes(t));
+    if (sharedShapeTags.length > 0) {
+      shapeTagBonus = scoreAiShapeTagBonus * sharedShapeTags.length / Math.min(queryShapeTags.length, candidateShapeTags.length);
+      reasons.push('shapeTag:' + sharedShapeTags.join(','));
+    }
+  }
+
   breakdown.metadata = Number(metadataScore.toFixed(4));
   breakdown.bonus = Number((metadataBonus + breakdown.shape).toFixed(3));
   breakdown.tag = Number(tagBonus.toFixed(4));
-  breakdown.total = Number(clamp01(weightedTotal + tagBonus).toFixed(4));
+  breakdown.shapeTag = Number(shapeTagBonus.toFixed(4));
+  breakdown.total = Number(clamp01(weightedTotal + tagBonus + shapeTagBonus).toFixed(4));
 
   if (!reasons.length && candidatePayload.ocr_text) {
     reasons.push('ocr text available');
@@ -1645,6 +1669,7 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     ocr_shape_category: context.extracted?.shapeCategory || '',
     ocr_extraction_confidence: context.extracted?.extractionConfidence ?? null,
     ocr_shape_comment: context.shapeComment || '',
+    ocr_shape_tags: Array.isArray(context.shapeTags) ? context.shapeTags.filter(Boolean).join(',') : '',
     shape_engine: context.shape?.engine || 'none',
     shape_mode: context.shape?.mode || 'none',
     shape_image_mode: shapeImageMode,
@@ -1844,6 +1869,7 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
         revision: payload.ocr_revision || '',
         shapeCategory: payload.ocr_shape_category || '',
         shapeComment: payload.ocr_shape_comment || '',
+        shapeTags: parseTags(payload.ocr_shape_tags || ''),
         ocrText: payload.ocr_text || '',
         shape: normalizeShapeProfile(payload.shape_profile_json || payload.shape_profile || null),
         vectorRaw: scored.scoreBreakdown.vectorRaw,
@@ -2281,6 +2307,7 @@ const server = createServer(async (request, response) => {
               revision: indexed.payload.ocr_revision || '',
               shapeCategory: indexed.payload.ocr_shape_category || '',
               shapeComment: indexed.payload.ocr_shape_comment || '',
+              shapeTags: parseTags(indexed.payload.ocr_shape_tags || ''),
               ocrTextLength: String(indexed.payload.ocr_text || '').length,
               shape: normalizeShapeProfile(indexed?.payload?.shape_profile_json || indexed?.payload?.shape_profile || null)
             } : null,
@@ -2399,9 +2426,12 @@ const server = createServer(async (request, response) => {
       step = 'extraction';
       indexLog('extraction start');
       const extracted = extractOcrFields(ocr.text, body);
-      // Vertex/Gemini本体への形状コメント依頼は、表題欄テキスト抽出（extractOcrFields）とは独立に
-      // geminiExtracted.shapeComment から直接取り出す。スコアには使わず、検索結果での人手確認用の参考情報。
+      // Vertex/Gemini本体への形状コメント・形状タグ依頼は、表題欄テキスト抽出（extractOcrFields）とは独立に
+      // geminiExtracted から直接取り出す。shapeCommentは表示専用、shapeTagsはscoreCandidateの補助ボーナスに使う。
       const shapeComment = String(ocr.geminiExtracted?.shapeComment || '').trim();
+      const shapeTags = Array.isArray(ocr.geminiExtracted?.shapeTags)
+        ? ocr.geminiExtracted.shapeTags.map((tag) => String(tag).trim()).filter(Boolean).slice(0, 6)
+        : [];
       indexLog('extraction done', {
         drawingNo: extracted.drawingNo,
         material: extracted.material,
@@ -2410,7 +2440,8 @@ const server = createServer(async (request, response) => {
         revision: extracted.revision,
         shapeCategory: extracted.shapeCategory,
         confidence: extracted.extractionConfidence,
-        shapeComment
+        shapeComment,
+        shapeTags
       });
 
       step = 'embedding';
@@ -2446,7 +2477,8 @@ const server = createServer(async (request, response) => {
         ocr,
         extracted,
         shape,
-        shapeComment
+        shapeComment,
+        shapeTags
       });
 
       sendJson(response, 202, {
@@ -2473,7 +2505,8 @@ const server = createServer(async (request, response) => {
           revision: extracted.revision,
           shapeCategory: extracted.shapeCategory,
           extractionConfidence: extracted.extractionConfidence,
-          shapeComment
+          shapeComment,
+          shapeTags
         },
         shape: {
           engine: shape.engine,
