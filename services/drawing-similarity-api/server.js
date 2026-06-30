@@ -1948,7 +1948,7 @@ const convertPdfFirstPageToPng = async (pdfBuffer, dpi = renderDpi) => {
   }
 };
 
-const thumbnailMaxWidth = Number(process.env.THUMBNAIL_MAX_WIDTH || 240);
+const thumbnailMaxWidth = Number(process.env.THUMBNAIL_MAX_WIDTH || 480);
 
 // 縮小PNGをその場でレンダリングして返すだけで、どこにも保存しない（kintoneを正本のまま保つ）。
 const convertPdfFirstPageToThumbnailPng = async (pdfBuffer, maxWidth = thumbnailMaxWidth) => {
