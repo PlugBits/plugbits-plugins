@@ -404,59 +404,17 @@
       renderTagUi(spaceEl, tags, [], false, null);
     }
 
-    indexButton.addEventListener('click', async () => {
+    indexButton.addEventListener('click', () => {
       if (!apiBaseUrl) {
         setStatus(panel, 'プラグイン設定でAPI Base URLを設定してください。');
         return;
       }
 
-      const payload = buildRecordPayload(event, config);
-      if (!payload.fileKey) {
-        setStatus(panel, 'PDFファイルフィールドにファイルが見つかりません。');
-        return;
-      }
-
-      indexButton.disabled = true;
-      setStatus(panel, 'PDFを取得して画像化・登録しています...');
-
-      try {
-        const response = await fetch(apiBaseUrl + '/index', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(payload)
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data.error || 'API returned ' + response.status);
-        }
-
-        const qdrantStatus = data.qdrant && data.qdrant.upserted
-          ? ' / Qdrant登録済み'
-          : ' / Qdrant未設定';
-        const vectorStatus = data.vector
-          ? ' / ' + data.vector.provider + ' ' + data.vector.size + 'd'
-          : '';
-        const rotationStatus = data.vector && Array.isArray(data.vector.rotations)
-          ? ' / rot ' + data.vector.rotations.join(',')
-          : '';
-        const collectionStatus = data.qdrant && data.qdrant.collection
-          ? ' / ' + data.qdrant.collection
-          : '';
-        const recordStatus = data.recordId
-          ? ' / record ' + data.recordId
-          : '';
-        setStatus(
-          panel,
-          '登録が完了しました: ' + data.fileName + ' / ' + data.image.widthHint + 'px相当 / ' + data.image.bytes + ' bytes' + qdrantStatus + vectorStatus + rotationStatus + collectionStatus + recordStatus
-        );
-      } catch (error) {
-        setStatus(panel, '図面登録に失敗しました: ' + error.message);
-      } finally {
-        indexButton.disabled = false;
-      }
+      const fileMeta = getFirstFile(event.record, config.pdfFileField);
+      openRegisterModal(config, apiBaseUrl, {
+        recordId: event.recordId,
+        fileMeta
+      });
     });
 
     button.addEventListener('click', async () => {
@@ -877,7 +835,33 @@
     }
   };
 
-  const openRegisterModal = (config, apiBaseUrl) => {
+  const fetchFieldValueSuggestions = async (apiBaseUrl, tenantId) => {
+    const empty = { drawingNos: [], productNames: [], materials: [], dimensions: [] };
+    try {
+      const res = await fetch(apiBaseUrl + '/field-values?tenantId=' + encodeURIComponent(tenantId || 'default'));
+      if (!res.ok) return empty;
+      const data = await res.json();
+      return {
+        drawingNos: Array.isArray(data.drawingNos) ? data.drawingNos : [],
+        productNames: Array.isArray(data.productNames) ? data.productNames : [],
+        materials: Array.isArray(data.materials) ? data.materials : [],
+        dimensions: Array.isArray(data.dimensions) ? data.dimensions : []
+      };
+    } catch {
+      return empty;
+    }
+  };
+
+  const downloadKintoneFile = async (fileKey) => {
+    const url = kintone.api.url('/k/v1/file', true) + '?fileKey=' + encodeURIComponent(fileKey);
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error('ファイル取得に失敗しました (HTTP ' + res.status + ')');
+    }
+    return res.blob();
+  };
+
+  const openRegisterModal = (config, apiBaseUrl, existingContext = null) => {
     const appId = kintone.app.getId();
     const tenantId = config.tenantId || 'default';
     const drawingNoField = config.drawingNoField || '';
@@ -1014,6 +998,75 @@
       content.append(header, layout);
     };
 
+    // --- State: Existing PDF (detail screen entry point) ---
+    const showExistingState = (fileMeta) => {
+      clear();
+      modal.classList.add('wide');
+
+      const header = document.createElement('div');
+      header.className = 'modal-header';
+      const title = document.createElement('h2');
+      title.textContent = '既存の図面';
+      header.appendChild(title);
+
+      const layout = document.createElement('div');
+      layout.className = 'form-layout';
+
+      const previewPanel = document.createElement('div');
+      previewPanel.className = 'preview-panel';
+      const previewLabel = document.createElement('div');
+      previewLabel.className = 'preview-label';
+      previewLabel.textContent = fileMeta.name || '';
+      previewPanel.appendChild(previewLabel);
+      const previewPh = document.createElement('div');
+      previewPh.className = 'preview-placeholder';
+      previewPh.textContent = 'プレビューを読み込み中...';
+      previewPanel.appendChild(previewPh);
+
+      const formPanel = document.createElement('div');
+      formPanel.className = 'form-panel';
+      const desc = document.createElement('div');
+      desc.className = 'section-label';
+      desc.textContent = '登録済みのPDFがあります。再計算するか、図面を差し替えてください。';
+      const actions = document.createElement('div');
+      actions.className = 'form-actions';
+      const recalcBtn = document.createElement('button');
+      recalcBtn.className = 'btn-primary';
+      recalcBtn.type = 'button';
+      recalcBtn.textContent = 'このPDFで再計算';
+      recalcBtn.disabled = true;
+      const replaceBtn = document.createElement('button');
+      replaceBtn.className = 'btn-secondary';
+      replaceBtn.type = 'button';
+      replaceBtn.textContent = '図面を差し替える';
+      actions.append(recalcBtn, replaceBtn);
+      formPanel.append(desc, actions);
+
+      layout.append(previewPanel, formPanel);
+      content.append(header, layout);
+
+      replaceBtn.addEventListener('click', () => showDropState());
+
+      let currentFile = null;
+      downloadKintoneFile(fileMeta.fileKey).then((blob) => {
+        currentFile = new File([blob], fileMeta.name || 'drawing.pdf', { type: 'application/pdf' });
+        const blobUrl = URL.createObjectURL(currentFile);
+        const embed = document.createElement('embed');
+        embed.src = blobUrl;
+        embed.type = 'application/pdf';
+        embed.className = 'preview-embed';
+        previewPanel.replaceChild(embed, previewPh);
+        recalcBtn.disabled = false;
+      }).catch((error) => {
+        previewPh.textContent = 'プレビューを表示できません: ' + error.message;
+      });
+
+      recalcBtn.addEventListener('click', () => {
+        if (!currentFile) return;
+        handleFile(currentFile, fileMeta.fileKey);
+      });
+    };
+
     // オートコンプリート付き複数選択フィールド
     const makeAutoChipsField = (labelText, suggestions, allowNew) => {
       const selected = [];
@@ -1127,8 +1180,76 @@
       return { element: group, getValues: () => [...selected] };
     };
 
+    // 既存値からのオートコンプリート付き単一値フィールド（自由入力も可）
+    const makeAutoCompleteInput = (suggestions, initialValue) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'ac-input-row';
+      const input = document.createElement('input');
+      input.className = 'field-input';
+      input.type = 'text';
+      input.value = initialValue || '';
+      input.setAttribute('autocomplete', 'off');
+      const dropdown = document.createElement('ul');
+      dropdown.className = 'ac-dropdown';
+      dropdown.hidden = true;
+
+      const updateDropdown = (q) => {
+        const lower = q.trim().toLowerCase();
+        const filtered = suggestions.filter((s) => !lower || s.toLowerCase().includes(lower));
+        dropdown.innerHTML = '';
+        const items = filtered.slice(0, 8);
+        if (!items.length) { dropdown.hidden = true; return; }
+        items.forEach((s) => {
+          const li = document.createElement('li');
+          li.className = 'ac-item';
+          li.textContent = s;
+          li.dataset.value = s;
+          dropdown.appendChild(li);
+        });
+        dropdown.hidden = false;
+      };
+
+      const selectValue = (val) => {
+        input.value = val;
+        dropdown.hidden = true;
+      };
+
+      input.addEventListener('focus', () => updateDropdown(input.value));
+      input.addEventListener('input', () => updateDropdown(input.value));
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          const active = dropdown.querySelector('.ac-item.active');
+          if (active) { e.preventDefault(); selectValue(active.dataset.value); }
+        } else if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          const els = [...dropdown.querySelectorAll('.ac-item')];
+          const idx = els.indexOf(dropdown.querySelector('.active'));
+          els.forEach((el) => el.classList.remove('active'));
+          const next = els[idx + 1] || els[0];
+          if (next) { next.classList.add('active'); }
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          const els = [...dropdown.querySelectorAll('.ac-item')];
+          const idx = els.indexOf(dropdown.querySelector('.active'));
+          els.forEach((el) => el.classList.remove('active'));
+          const prev = els[idx - 1] || els[els.length - 1];
+          if (prev) { prev.classList.add('active'); }
+        } else if (e.key === 'Escape') {
+          dropdown.hidden = true;
+        }
+      });
+      input.addEventListener('blur', () => { setTimeout(() => { dropdown.hidden = true; }, 150); });
+      dropdown.addEventListener('mousedown', (e) => {
+        const item = e.target.closest('.ac-item');
+        if (item) { e.preventDefault(); selectValue(item.dataset.value); }
+      });
+
+      wrap.append(input, dropdown);
+      return { element: wrap, input };
+    };
+
     // --- State: Form ---
-    const showFormState = (file, analyzeResult, availableTags) => {
+    const showFormState = (file, analyzeResult, availableTags, fieldValues, reuseFileKey) => {
       clear();
       modal.classList.add('wide');
       let drawingNoInput, productNameInput, materialInput, dimensionInput;
@@ -1198,18 +1319,18 @@
         formPanel.append(ocrLabel, candidates);
       }
 
+      const fv = fieldValues || { drawingNos: [], productNames: [], materials: [], dimensions: [] };
+
       // 図番
       const drawingNoGroup = document.createElement('div');
       drawingNoGroup.className = 'field-group';
       const drawingNoLabel = document.createElement('label');
       drawingNoLabel.className = 'field-label';
       drawingNoLabel.textContent = '図番 *';
-      drawingNoInput = document.createElement('input');
-      drawingNoInput.className = 'field-input';
-      drawingNoInput.type = 'text';
-      drawingNoInput.placeholder = '図番を入力';
-      drawingNoInput.value = analyzeResult.drawingNo || '';
-      drawingNoGroup.append(drawingNoLabel, drawingNoInput);
+      const drawingNoAc = makeAutoCompleteInput(fv.drawingNos, analyzeResult.drawingNo || '');
+      drawingNoInput = drawingNoAc.input;
+      drawingNoInput.placeholder = '図番を入力（既存から選択も可）';
+      drawingNoGroup.append(drawingNoLabel, drawingNoAc.element);
       formPanel.appendChild(drawingNoGroup);
 
       // 品名
@@ -1218,12 +1339,10 @@
       const productNameLabel = document.createElement('label');
       productNameLabel.className = 'field-label';
       productNameLabel.textContent = '品名';
-      productNameInput = document.createElement('input');
-      productNameInput.className = 'field-input';
-      productNameInput.type = 'text';
-      productNameInput.placeholder = '品名を入力';
-      productNameInput.value = analyzeResult.productName || '';
-      productNameGroup.append(productNameLabel, productNameInput);
+      const productNameAc = makeAutoCompleteInput(fv.productNames, analyzeResult.productName || '');
+      productNameInput = productNameAc.input;
+      productNameInput.placeholder = '品名を入力（既存から選択も可）';
+      productNameGroup.append(productNameLabel, productNameAc.element);
       formPanel.appendChild(productNameGroup);
 
       // 材質
@@ -1232,12 +1351,10 @@
       const materialLabel = document.createElement('label');
       materialLabel.className = 'field-label';
       materialLabel.textContent = '材質';
-      materialInput = document.createElement('input');
-      materialInput.className = 'field-input';
-      materialInput.type = 'text';
+      const materialAc = makeAutoCompleteInput(fv.materials, analyzeResult.material || '');
+      materialInput = materialAc.input;
       materialInput.placeholder = '例: SPCC, SUS304, S45C';
-      materialInput.value = analyzeResult.material || '';
-      materialGroup.append(materialLabel, materialInput);
+      materialGroup.append(materialLabel, materialAc.element);
       formPanel.appendChild(materialGroup);
 
       // 寸法 (板厚 / 外径)
@@ -1246,12 +1363,10 @@
       const dimensionLabel = document.createElement('label');
       dimensionLabel.className = 'field-label';
       dimensionLabel.textContent = '寸法 (板厚 / 外径)';
-      dimensionInput = document.createElement('input');
-      dimensionInput.className = 'field-input';
-      dimensionInput.type = 'text';
+      const dimensionAc = makeAutoCompleteInput(fv.dimensions, analyzeResult.dimension || '');
+      dimensionInput = dimensionAc.input;
       dimensionInput.placeholder = '例: t1.6, φ28.6';
-      dimensionInput.value = analyzeResult.dimension || '';
-      dimensionGroup.append(dimensionLabel, dimensionInput);
+      dimensionGroup.append(dimensionLabel, dimensionAc.element);
       formPanel.appendChild(dimensionGroup);
 
       // 加工方法 autocomplete
@@ -1303,7 +1418,8 @@
             materialInput.value.trim(),
             dimensionInput.value.trim(),
             getProcessValues(),
-            getTagValues()
+            getTagValues(),
+            reuseFileKey
           );
         } catch (error) {
           showDoneState(false, '登録に失敗しました。', error.message);
@@ -1368,7 +1484,7 @@
     };
 
     // --- File handler ---
-    const handleFile = async (file) => {
+    const handleFile = async (file, reuseFileKey) => {
       showAnalyzingState(file);
       let analyzeResult;
       try {
@@ -1385,18 +1501,25 @@
         showDoneState(false, 'OCR解析に失敗しました。', error.message);
         return;
       }
-      const availableTags = await fetchExistingTags(apiBaseUrl, tenantId);
-      showFormState(file, analyzeResult, availableTags);
+      const [availableTags, fieldValues] = await Promise.all([
+        fetchExistingTags(apiBaseUrl, tenantId),
+        fetchFieldValueSuggestions(apiBaseUrl, tenantId)
+      ]);
+      showFormState(file, analyzeResult, availableTags, fieldValues, reuseFileKey);
     };
 
     // --- Registration ---
-    const doRegister = async (file, drawingNo, productName, material, dimension, processes, tags) => {
-      showRegisteringState('ファイルをアップロード中...');
+    const doRegister = async (file, drawingNo, productName, material, dimension, processes, tags, reuseFileKey) => {
       let fileKey;
-      try {
-        fileKey = await uploadFileToKintone(file);
-      } catch (error) {
-        throw new Error('ファイルアップロード失敗: ' + error.message);
+      if (reuseFileKey) {
+        fileKey = reuseFileKey;
+      } else {
+        showRegisteringState('ファイルをアップロード中...');
+        try {
+          fileKey = await uploadFileToKintone(file);
+        } catch (error) {
+          throw new Error('ファイルアップロード失敗: ' + error.message);
+        }
       }
 
       showRegisteringState('kintoneレコードを保存中...');
@@ -1408,18 +1531,26 @@
 
       let recordId;
       try {
-        const existing = await findRecordByDrawingNo(drawingNo, drawingNoField, appId);
-        if (existing) {
-          recordId = existing['$id'].value;
+        if (existingContext && existingContext.recordId) {
+          recordId = existingContext.recordId;
+          if (drawingNoField) recordFields[drawingNoField] = { value: drawingNo };
           await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', {
             app: appId, id: recordId, record: recordFields
           });
         } else {
-          if (drawingNoField) recordFields[drawingNoField] = { value: drawingNo };
-          const res = await kintone.api(kintone.api.url('/k/v1/record', true), 'POST', {
-            app: appId, record: recordFields
-          });
-          recordId = res.id;
+          const existing = await findRecordByDrawingNo(drawingNo, drawingNoField, appId);
+          if (existing) {
+            recordId = existing['$id'].value;
+            await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', {
+              app: appId, id: recordId, record: recordFields
+            });
+          } else {
+            if (drawingNoField) recordFields[drawingNoField] = { value: drawingNo };
+            const res = await kintone.api(kintone.api.url('/k/v1/record', true), 'POST', {
+              app: appId, record: recordFields
+            });
+            recordId = res.id;
+          }
         }
       } catch (error) {
         throw new Error('kintoneレコード保存失敗: ' + error.message);
@@ -1466,7 +1597,11 @@
       }
     };
 
-    showDropState();
+    if (existingContext && existingContext.fileMeta) {
+      showExistingState(existingContext.fileMeta);
+    } else {
+      showDropState();
+    }
   };
 
   kintone.events.on('app.record.index.show', (event) => {

@@ -2085,6 +2085,57 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  if (request.method === 'GET' && url.pathname === '/field-values') {
+    if (!isQdrantConfigured()) {
+      sendJson(response, 200, { drawingNos: [], productNames: [], materials: [], dimensions: [] });
+      return;
+    }
+    try {
+      const tenantId = url.searchParams.get('tenantId') || 'default';
+      const filter = {
+        must: [{ key: 'tenant_id', match: { value: tenantId } }]
+      };
+      const drawingNoSet = new Set();
+      const productNameSet = new Set();
+      const materialSet = new Set();
+      const dimensionSet = new Set();
+      let nextOffset = null;
+      let hasMore = true;
+      while (hasMore) {
+        const scrollBody = {
+          limit: 250,
+          with_payload: ['drawing_no', 'product_name', 'ocr_material', 'ocr_dimension'],
+          filter
+        };
+        if (nextOffset != null) {
+          scrollBody.offset = nextOffset;
+        }
+        const data = await qdrantRequest(
+          '/collections/' + encodeURIComponent(qdrantCollection) + '/points/scroll',
+          { method: 'POST', body: JSON.stringify(scrollBody) }
+        );
+        for (const point of (data.result?.points || [])) {
+          const payload = point.payload || {};
+          if (payload.drawing_no) drawingNoSet.add(String(payload.drawing_no).trim());
+          if (payload.product_name) productNameSet.add(String(payload.product_name).trim());
+          if (payload.ocr_material) materialSet.add(String(payload.ocr_material).trim());
+          if (payload.ocr_dimension) dimensionSet.add(String(payload.ocr_dimension).trim());
+        }
+        nextOffset = data.result?.next_page_offset ?? null;
+        hasMore = nextOffset != null;
+      }
+      sendJson(response, 200, {
+        drawingNos: [...drawingNoSet].filter(Boolean).sort(),
+        productNames: [...productNameSet].filter(Boolean).sort(),
+        materials: [...materialSet].filter(Boolean).sort(),
+        dimensions: [...dimensionSet].filter(Boolean).sort()
+      });
+    } catch (error) {
+      sendJson(response, 500, { error: error.message });
+    }
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/tag') {
     try {
       const body = await readJson(request);
