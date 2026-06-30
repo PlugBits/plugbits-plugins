@@ -799,7 +799,16 @@
         try { resolve(JSON.parse(xhr.responseText).fileKey); }
         catch { reject(new Error('ファイルアップロードレスポンス解析失敗')); }
       } else {
-        reject(new Error('ファイルアップロード失敗: HTTP ' + xhr.status));
+        let message = 'HTTP ' + xhr.status;
+        try {
+          const errData = JSON.parse(xhr.responseText);
+          if (errData.code === 'CB_CS01') {
+            message = 'ページの有効期限が切れています。ページを再読み込みしてから再度お試しください。';
+          } else if (errData.message) {
+            message = errData.message;
+          }
+        } catch (_) { /* レスポンスがJSONでない場合はHTTPステータスのみ */ }
+        reject(new Error(message));
       }
     };
     xhr.onerror = () => reject(new Error('ファイルアップロードネットワークエラー'));
