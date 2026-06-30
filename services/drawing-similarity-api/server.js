@@ -678,7 +678,12 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   }
   const base64 = pngBuffer.toString('base64');
   const accessToken = await getGcpAccessToken();
-  const endpoint = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_LOCATION}/publishers/google/models/${VERTEX_MODEL}:generateContent`;
+  // The global endpoint has no location prefix in the hostname (unlike regional endpoints).
+  // Gemini 3.x models are often only served on the global endpoint, not regional ones.
+  const vertexHost = VERTEX_LOCATION === 'global'
+    ? 'aiplatform.googleapis.com'
+    : `${VERTEX_LOCATION}-aiplatform.googleapis.com`;
+  const endpoint = `https://${vertexHost}/v1/projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_LOCATION}/publishers/google/models/${VERTEX_MODEL}:generateContent`;
 
   const res = await fetch(endpoint, {
     method: 'POST',
