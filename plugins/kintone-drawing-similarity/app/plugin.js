@@ -318,11 +318,31 @@
       setField(config.processField, pending.processes.join(','));
       setField(config.tagField, pending.tags.join(','));
       if (config.shapeTagField) setField(config.shapeTagField, pending.shapeTags.join(','));
-      if (config.pdfFileField && pending.fileKey && rec[config.pdfFileField] !== undefined) {
-        rec[config.pdfFileField].value = [{ fileKey: pending.fileKey, name: pending.fileName }];
-      }
+      // FILE fields cannot be pre-filled via event.record on create.show — injected at submit instead.
     } catch (e) {
       console.warn('[pb] pending registration pre-fill error', e);
+    }
+    return event;
+  });
+
+  // Inject the pre-uploaded PDF fileKey at save time so it is included in the record creation POST.
+  // FILE fields set in create.show event.record are ignored by kintone's save mechanism.
+  kintone.events.on('app.record.create.submit', (event) => {
+    try {
+      const raw = sessionStorage.getItem('pb_pending_registration');
+      if (!raw) return event;
+      const pending = JSON.parse(raw);
+      if (pending.appId !== String(kintone.app.getId() || '')) return event;
+
+      const config = kintone.plugin.app.getConfig(PLUGIN_ID);
+      if (config.pdfFileField && pending.fileKey && event.record[config.pdfFileField] !== undefined) {
+        const existing = event.record[config.pdfFileField].value;
+        if (!existing || existing.length === 0) {
+          event.record[config.pdfFileField].value = [{ fileKey: pending.fileKey }];
+        }
+      }
+    } catch (e) {
+      console.warn('[pb] submit file inject error', e);
     }
     return event;
   });
