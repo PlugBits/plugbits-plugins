@@ -36,6 +36,11 @@
   color: #1f2933;
 }
 
+.pb-field input[readonly] {
+  background: #f1f4f7;
+  color: #5b6b7c;
+}
+
 .pb-actions {
   display: flex;
   gap: 10px;

@@ -5,6 +5,9 @@
 
   const normalizeBaseUrl = (value) => String(value || '').replace(/\/+$/, '');
 
+  // kintoneのサブドメインをそのままテナントIDとして使う。保存値に頼るとドメインとズレる恐れがあるため毎回ここで算出する。
+  const deriveTenantId = () => (window.location.hostname || '').split('.')[0] || 'default';
+
   const getFieldValue = (record, fieldCode) => {
     if (!fieldCode || !record[fieldCode]) {
       return '';
@@ -38,7 +41,7 @@
     return {
       appId: kintone.app.getId(),
       recordId: event.recordId,
-      tenantId: config.tenantId || 'default',
+      tenantId: deriveTenantId(),
       drawingNo: getFieldValue(event.record, config.drawingNoField),
       productName: getFieldValue(event.record, config.productNameField),
       tags: getFieldValue(event.record, config.tagField),
@@ -340,7 +343,7 @@
       return event;
     }
     const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
-    const tenantId = config.tenantId || 'default';
+    const tenantId = deriveTenantId();
     const appId = String(kintone.app.getId() || '');
     const currentTags = parseTags(getFieldValue(event.record, config.tagField));
     const allTags = apiBaseUrl ? await fetchTags(apiBaseUrl, tenantId, appId) : [];
@@ -368,7 +371,7 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        tenantId: config.tenantId || 'default',
+        tenantId: deriveTenantId(),
         appId: String(kintone.app.getId() || ''),
         recordId,
         tags
@@ -649,7 +652,7 @@
       const payload = {
         appId,
         recordId,
-        tenantId: config.tenantId || 'default',
+        tenantId: deriveTenantId(),
         drawingNo: config.drawingNoField && record[config.drawingNoField]
           ? String(record[config.drawingNoField].value || '')
           : '',
@@ -854,7 +857,7 @@
 
   const openRegisterModal = (config, apiBaseUrl, existingContext = null) => {
     const appId = kintone.app.getId();
-    const tenantId = config.tenantId || 'default';
+    const tenantId = deriveTenantId();
     const drawingNoField = config.drawingNoField || '';
     const productNameField = config.productNameField || '';
     const materialField = config.materialField || '';

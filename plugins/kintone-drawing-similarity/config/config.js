@@ -2,11 +2,15 @@
   'use strict';
 
   const PLUGIN_ID = kintone.$PLUGIN_ID;
-  const textFields = ['apiBaseUrl', 'tenantId', 'tagSpaceId', 'processOptions'];
+  const editableTextFields = ['apiBaseUrl', 'tagSpaceId', 'processOptions'];
+  const textFields = [...editableTextFields, 'tenantId'];
   const selectFields = ['drawingNoField', 'productNameField', 'pdfFileField', 'materialField', 'dimensionField', 'tagField', 'processField'];
   const fields = [...textFields, ...selectFields];
 
   const LAYOUT_ONLY_TYPES = new Set(['SUBTABLE', 'GROUP', 'REFERENCE_TABLE', 'LABEL', 'SPACER', 'HR', 'RECORD_NUMBER', 'CATEGORY', 'STATUS', 'STATUS_ASSIGNEE']);
+
+  // kintoneのサブドメインをテナントIDとして使う。手入力にすると環境間でズレるため常にドメインから再計算する。
+  const deriveTenantId = () => (window.location.hostname || '').split('.')[0] || 'default';
 
   const getElement = (id) => document.getElementById(id);
 
@@ -47,12 +51,14 @@
     selectEl.value = fieldCode || '';
   };
 
-  textFields.forEach((field) => {
+  editableTextFields.forEach((field) => {
     const element = getElement(field);
     if (element) {
       element.value = config[field] || '';
     }
   });
+
+  getElement('tenantId').value = deriveTenantId();
 
   kintone.api(kintone.api.url('/k/v1/app/form/fields', true), 'GET', { app: kintone.app.getId() })
     .then((resp) => {
