@@ -790,6 +790,7 @@
 
   const uploadFileToKintone = (file) => new Promise((resolve, reject) => {
     const fd = new FormData();
+    fd.append('__REQUEST_TOKEN__', kintone.getRequestToken());
     fd.append('file', file);
     const xhr = new XMLHttpRequest();
     xhr.open('POST', kintone.api.url('/k/v1/file', true));
