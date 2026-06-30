@@ -294,6 +294,35 @@
     });
   };
 
+  // Dedicated handler: pre-fill fields from sessionStorage when redirected from the list-screen modal.
+  // Runs independently of tag UI configuration so early-returns in the tag handler don't block it.
+  kintone.events.on('app.record.create.show', (event) => {
+    try {
+      const raw = sessionStorage.getItem('pb_pending_registration');
+      if (!raw) return event;
+      const pending = JSON.parse(raw);
+      if (pending.appId !== String(kintone.app.getId() || '')) return event;
+
+      const config = kintone.plugin.app.getConfig(PLUGIN_ID);
+      const obj = kintone.app.record.get();
+      const setField = (code, value) => {
+        if (code && obj.record[code] !== undefined) obj.record[code].value = value;
+      };
+      setField(config.drawingNoField, pending.drawingNo);
+      setField(config.productNameField, pending.productName);
+      setField(config.materialField, pending.material);
+      setField(config.dimensionField, pending.dimension);
+      setField(config.processField, pending.processes.join(','));
+      setField(config.tagField, pending.tags.join(','));
+      if (config.shapeTagField) setField(config.shapeTagField, pending.shapeTags.join(','));
+      if (config.pdfFileField && pending.fileKey) {
+        obj.record[config.pdfFileField].value = [{ fileKey: pending.fileKey, name: pending.fileName }];
+      }
+      kintone.app.record.set(obj);
+    } catch (_) {}
+    return event;
+  });
+
   kintone.events.on(['app.record.edit.show', 'app.record.create.show'], async (event) => {
     const config = kintone.plugin.app.getConfig(PLUGIN_ID);
     if (!config.tagField || !config.tagSpaceId) {
@@ -308,30 +337,15 @@
       kintone.app.record.setFieldShown(config.shapeTagField, false);
     }
 
-    // Pre-fill fields when redirected from the list-screen registration modal
-    let pendingReg = null;
+    // Read tag values: prefer sessionStorage pending data (already set in the dedicated handler above)
+    let pendingTags = null;
     if (event.type === 'app.record.create.show') {
       try {
         const raw = sessionStorage.getItem('pb_pending_registration');
         if (raw) {
           const parsed = JSON.parse(raw);
           if (parsed.appId === String(kintone.app.getId() || '')) {
-            pendingReg = parsed;
-            const obj = kintone.app.record.get();
-            const setField = (code, value) => {
-              if (code && obj.record[code] !== undefined) obj.record[code].value = value;
-            };
-            setField(config.drawingNoField, pendingReg.drawingNo);
-            setField(config.productNameField, pendingReg.productName);
-            setField(config.materialField, pendingReg.material);
-            setField(config.dimensionField, pendingReg.dimension);
-            setField(config.processField, pendingReg.processes.join(','));
-            setField(config.tagField, pendingReg.tags.join(','));
-            if (config.shapeTagField) setField(config.shapeTagField, pendingReg.shapeTags.join(','));
-            if (config.pdfFileField && pendingReg.fileKey) {
-              obj.record[config.pdfFileField].value = [{ fileKey: pendingReg.fileKey, name: pendingReg.fileName }];
-            }
-            kintone.app.record.set(obj);
+            pendingTags = { tags: parsed.tags, shapeTags: parsed.shapeTags };
           }
         }
       } catch (_) {}
@@ -340,8 +354,8 @@
     const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
     const tenantId = deriveTenantId();
     const appId = String(kintone.app.getId() || '');
-    const currentTags = pendingReg ? pendingReg.tags : parseTags(getFieldValue(event.record, config.tagField));
-    const currentAiTags = pendingReg ? pendingReg.shapeTags : (config.shapeTagField ? parseTags(getFieldValue(event.record, config.shapeTagField)) : []);
+    const currentTags = pendingTags ? pendingTags.tags : parseTags(getFieldValue(event.record, config.tagField));
+    const currentAiTags = pendingTags ? pendingTags.shapeTags : (config.shapeTagField ? parseTags(getFieldValue(event.record, config.shapeTagField)) : []);
     const allTags = apiBaseUrl ? await fetchTags(apiBaseUrl, tenantId, appId) : [];
     renderTagUi(spaceEl, currentTags, currentAiTags, allTags, true, ({ tags, shapeTags }) => {
       const obj = kintone.app.record.get();
