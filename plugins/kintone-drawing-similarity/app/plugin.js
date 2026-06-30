@@ -228,35 +228,6 @@
     spaceEl.appendChild(container);
   };
 
-  const setStatus = (panel, message) => {
-    const status = panel.querySelector('.pb-similarity-status');
-    status.textContent = message;
-  };
-
-  const renderConfidence = (panel, confidence) => {
-    const summary = panel.querySelector('.pb-similarity-confidence');
-    if (!confidence) {
-      summary.hidden = true;
-      summary.textContent = '';
-      return;
-    }
-
-    summary.hidden = false;
-    summary.innerHTML = '';
-
-    const level = document.createElement('span');
-    level.className = 'pb-similarity-confidence-level level-' + String(confidence.level || 'low');
-    level.textContent = '信頼度 ' + confidenceLabel(confidence.level);
-
-    const scores = document.createElement('span');
-    scores.className = 'pb-similarity-confidence-scores';
-    scores.textContent = 'Top ' + formatVectorRaw(confidence.topScore) +
-      ' / 2位 ' + formatVectorRaw(confidence.secondScore) +
-      ' / 差 ' + formatVectorRaw(confidence.margin);
-
-    summary.append(level, scores);
-  };
-
   const THUMBNAIL_AUTO_COUNT = 3;
 
   // 一覧では上位3件だけ自動でサムネイルを取得し、残りはボタンを押したときだけ取得する。
@@ -268,7 +239,7 @@
     }
     thumbBox.textContent = '';
     const img = document.createElement('img');
-    img.className = 'pb-similarity-thumb-img';
+    img.className = 'sim-thumb-img';
     img.alt = '';
     img.src = apiBaseUrl + '/thumbnail?fileKey=' + encodeURIComponent(fileKey);
     img.addEventListener('error', () => { thumbBox.textContent = '画像なし'; }, { once: true });
@@ -277,7 +248,7 @@
 
   const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad) => {
     const thumbBox = document.createElement('div');
-    thumbBox.className = 'pb-similarity-thumb';
+    thumbBox.className = 'sim-thumb';
 
     if (autoLoad) {
       loadThumbnail(thumbBox, apiBaseUrl, fileKey);
@@ -286,87 +257,15 @@
 
     const loadBtn = document.createElement('button');
     loadBtn.type = 'button';
-    loadBtn.className = 'pb-similarity-thumb-load';
+    loadBtn.className = 'sim-thumb-load';
     loadBtn.textContent = 'プレビュー取得';
     loadBtn.addEventListener('click', () => loadThumbnail(thumbBox, apiBaseUrl, fileKey));
     thumbBox.appendChild(loadBtn);
     return thumbBox;
   };
 
-  const renderResults = (panel, data, apiBaseUrl) => {
-    const results = Array.isArray(data && data.results) ? data.results : [];
-    const list = panel.querySelector('.pb-similarity-list');
-    list.textContent = '';
-    renderConfidence(panel, data ? data.matchConfidence : null);
-
-    if (!results.length) {
-      setStatus(panel, '類似図面は見つかりませんでした。');
-      return;
-    }
-
-    setStatus(panel, results.length + '件の候補を表示しています。');
-
-    results.forEach((item, index) => {
-      const li = document.createElement('li');
-      li.className = 'pb-similarity-item';
-
-      const thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, index < THUMBNAIL_AUTO_COUNT);
-
-      const body = document.createElement('div');
-      const link = document.createElement('a');
-      link.className = 'pb-similarity-link';
-      link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
-      link.textContent = item.drawingNo || 'record ' + item.recordId;
-
-      const meta = document.createElement('div');
-      meta.className = 'pb-similarity-meta';
-      meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
-
-      const rawScore = item.vectorRaw || (item.scoreBreakdown && item.scoreBreakdown.vectorRaw);
-      const detail = document.createElement('div');
-      detail.className = 'pb-similarity-detail';
-      const rotationText = item.embeddingRotation === null || item.embeddingRotation === undefined
-        ? ''
-        : ' / rot ' + item.embeddingRotation;
-      detail.textContent = 'vectorRaw ' + formatVectorRaw(rawScore) + rotationText;
-
-      const scoreBox = document.createElement('div');
-      scoreBox.className = 'pb-similarity-scorebox';
-
-      const vector = document.createElement('div');
-      vector.className = 'pb-similarity-vectorraw';
-      vector.textContent = formatVectorRaw(rawScore);
-
-      const score = document.createElement('div');
-      score.className = 'pb-similarity-score';
-      score.textContent = formatPercent(item.score);
-
-      body.append(link, meta, detail);
-      scoreBox.append(vector, score);
-      li.append(thumbBox, body, scoreBox);
-      list.append(li);
-    });
-  };
-
-  const createPanel = (button) => {
-    const panel = document.createElement('section');
-    panel.id = 'pb-similarity-panel';
-    panel.className = 'pb-similarity-panel';
-    panel.innerHTML = [
-      '<div class="pb-similarity-header">',
-      '<h2 class="pb-similarity-title">類似図面検索</h2>',
-      '</div>',
-      '<div class="pb-similarity-status">検索ボタンを押すと候補を表示します。</div>',
-      '<div class="pb-similarity-confidence" hidden></div>',
-      '<ul class="pb-similarity-list"></ul>'
-    ].join('');
-
-    button.parentNode.insertAdjacentElement('afterend', panel);
-    return panel;
-  };
-
   const clearPluginUi = () => {
-    document.querySelectorAll('#pb-similarity-index, #pb-similarity-search, #pb-similarity-panel, .pb-similarity-panel').forEach((element) => {
+    document.querySelectorAll('#pb-similarity-index, #pb-similarity-search').forEach((element) => {
       element.remove();
     });
   };
@@ -437,8 +336,6 @@
     button.textContent = '類似図面検索';
     header.append(indexButton, button);
 
-    const panel = createPanel(button);
-
     if (config.tagField && config.tagSpaceId) {
       const spaceEl = kintone.app.record.getSpaceElement(config.tagSpaceId);
       const tags = parseTags(getFieldValue(event.record, config.tagField));
@@ -447,7 +344,7 @@
 
     indexButton.addEventListener('click', () => {
       if (!apiBaseUrl) {
-        setStatus(panel, 'プラグイン設定でAPI Base URLを設定してください。');
+        window.alert('プラグイン設定でAPI Base URLを設定してください。');
         return;
       }
 
@@ -458,35 +355,13 @@
       });
     });
 
-    button.addEventListener('click', async () => {
+    button.addEventListener('click', () => {
       if (!apiBaseUrl) {
-        setStatus(panel, 'プラグイン設定でAPI Base URLを設定してください。');
+        window.alert('プラグイン設定でAPI Base URLを設定してください。');
         return;
       }
 
-      button.disabled = true;
-      setStatus(panel, '検索しています...');
-
-      try {
-        const response = await fetch(apiBaseUrl + '/similar', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify(buildRecordPayload(event, config))
-        });
-
-        if (!response.ok) {
-          throw new Error('API returned ' + response.status);
-        }
-
-        const data = await response.json();
-        renderResults(panel, data, apiBaseUrl);
-      } catch (error) {
-        setStatus(panel, '類似図面検索に失敗しました: ' + error.message);
-      } finally {
-        button.disabled = false;
-      }
+      openSimilarModal(config, apiBaseUrl, event);
     });
 
     return event;
@@ -813,7 +688,34 @@
     '.result-msg { font-size: 15px; margin-bottom: 8px; color: #1a1a1a; }',
     '.result-detail { font-size: 12px; color: #6b7280; white-space: pre-wrap; }',
     '.result-ok .result-icon { color: #059669; }',
-    '.result-error .result-icon { color: #dc2626; }'
+    '.result-error .result-icon { color: #dc2626; }',
+    '.sim-status { padding-bottom: 12px; color: #6b7280; font-size: 13px; }',
+    '.sim-confidence { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; color: #374151; font-size: 12px; }',
+    '.sim-confidence[hidden] { display: none; }',
+    '.sim-confidence-level { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px;',
+    '  border-radius: 9999px; font-weight: 700; }',
+    '.sim-confidence-level.level-high { background: #dcfce7; color: #166534; }',
+    '.sim-confidence-level.level-medium { background: #fef3c7; color: #92400e; }',
+    '.sim-confidence-level.level-low { background: #fee2e2; color: #991b1b; }',
+    '.sim-confidence-scores { color: #6b7280; }',
+    '.sim-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }',
+    '.sim-item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 10px;',
+    '  border: 1px solid #e5e7eb; border-radius: 6px; }',
+    '.sim-thumb { display: flex; align-items: center; justify-content: center; box-sizing: border-box;',
+    '  width: 64px; height: 64px; border: 1px solid #e5e7eb; border-radius: 4px; background: #f9fafb;',
+    '  color: #9ca3af; font-size: 10px; text-align: center; overflow: hidden; }',
+    '.sim-thumb-img { max-width: 100%; max-height: 100%; object-fit: contain; }',
+    '.sim-thumb-load { border: none; background: transparent; color: #3b82f6; font-size: 10px;',
+    '  cursor: pointer; padding: 4px; }',
+    '.sim-link { color: #1d4ed8; font-weight: 700; text-decoration: none; }',
+    '.sim-meta { margin-top: 4px; color: #6b7280; font-size: 12px; }',
+    '.sim-detail { margin-top: 4px; color: #374151;',
+    '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 12px; }',
+    '.sim-scorebox { display: grid; min-width: 64px; justify-items: end; gap: 3px; }',
+    '.sim-vectorraw { color: #111827;',
+    '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;',
+    '  font-size: 14px; font-weight: 800; }',
+    '.sim-score { color: #1a1a1a; font-size: 13px; font-weight: 700; }'
   ].join('\n');
 
   const parseOptionsList = (str) =>
@@ -1614,6 +1516,194 @@
     } else {
       showDropState();
     }
+  };
+
+  // === 類似図面検索（Shadow DOM モーダル、左に自分の図面・右に候補） ===
+
+  const renderSimilarConfidence = (confidenceEl, confidence) => {
+    if (!confidence) {
+      confidenceEl.hidden = true;
+      confidenceEl.textContent = '';
+      return;
+    }
+
+    confidenceEl.hidden = false;
+    confidenceEl.innerHTML = '';
+
+    const level = document.createElement('span');
+    level.className = 'sim-confidence-level level-' + String(confidence.level || 'low');
+    level.textContent = '信頼度 ' + confidenceLabel(confidence.level);
+
+    const scores = document.createElement('span');
+    scores.className = 'sim-confidence-scores';
+    scores.textContent = 'Top ' + formatVectorRaw(confidence.topScore) +
+      ' / 2位 ' + formatVectorRaw(confidence.secondScore) +
+      ' / 差 ' + formatVectorRaw(confidence.margin);
+
+    confidenceEl.append(level, scores);
+  };
+
+  const renderSimilarList = (listEl, statusEl, confidenceEl, data, apiBaseUrl) => {
+    const results = Array.isArray(data && data.results) ? data.results : [];
+    listEl.textContent = '';
+    renderSimilarConfidence(confidenceEl, data ? data.matchConfidence : null);
+
+    if (!results.length) {
+      statusEl.textContent = '類似図面は見つかりませんでした。';
+      return;
+    }
+
+    statusEl.textContent = results.length + '件の候補を表示しています。';
+
+    results.forEach((item, index) => {
+      const li = document.createElement('li');
+      li.className = 'sim-item';
+
+      const thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, index < THUMBNAIL_AUTO_COUNT);
+
+      const body = document.createElement('div');
+      const link = document.createElement('a');
+      link.className = 'sim-link';
+      link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = item.drawingNo || 'record ' + item.recordId;
+
+      const meta = document.createElement('div');
+      meta.className = 'sim-meta';
+      meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
+
+      const rawScore = item.vectorRaw || (item.scoreBreakdown && item.scoreBreakdown.vectorRaw);
+      const detail = document.createElement('div');
+      detail.className = 'sim-detail';
+      const rotationText = item.embeddingRotation === null || item.embeddingRotation === undefined
+        ? ''
+        : ' / rot ' + item.embeddingRotation;
+      detail.textContent = 'vectorRaw ' + formatVectorRaw(rawScore) + rotationText;
+
+      const scoreBox = document.createElement('div');
+      scoreBox.className = 'sim-scorebox';
+
+      const vector = document.createElement('div');
+      vector.className = 'sim-vectorraw';
+      vector.textContent = formatVectorRaw(rawScore);
+
+      const score = document.createElement('div');
+      score.className = 'sim-score';
+      score.textContent = formatPercent(item.score);
+
+      body.append(link, meta, detail);
+      scoreBox.append(vector, score);
+      li.append(thumbBox, body, scoreBox);
+      listEl.append(li);
+    });
+  };
+
+  const openSimilarModal = (config, apiBaseUrl, event) => {
+    const fileMeta = getFirstFile(event.record, config.pdfFileField);
+
+    const host = document.createElement('div');
+    host.id = 'pb-similar-host';
+    document.body.appendChild(host);
+    const shadow = host.attachShadow({ mode: 'closed' });
+
+    const style = document.createElement('style');
+    style.textContent = REGISTER_CSS;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal wide';
+
+    const xBtn = document.createElement('button');
+    xBtn.className = 'btn-close';
+    xBtn.type = 'button';
+    xBtn.textContent = '×';
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+
+    modal.append(xBtn, content);
+    overlay.appendChild(modal);
+    shadow.append(style, overlay);
+
+    const closeModal = () => host.remove();
+    xBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    const title = document.createElement('h2');
+    title.textContent = '類似図面検索';
+    header.appendChild(title);
+
+    const layout = document.createElement('div');
+    layout.className = 'form-layout';
+
+    const previewPanel = document.createElement('div');
+    previewPanel.className = 'preview-panel';
+    const previewLabel = document.createElement('div');
+    previewLabel.className = 'preview-label';
+    previewLabel.textContent = fileMeta ? (fileMeta.name || '') : '自分の図面';
+    previewPanel.appendChild(previewLabel);
+
+    if (fileMeta) {
+      const previewPh = document.createElement('div');
+      previewPh.className = 'preview-placeholder';
+      previewPh.textContent = 'プレビューを読み込み中...';
+      previewPanel.appendChild(previewPh);
+
+      downloadKintoneFile(fileMeta.fileKey).then((blob) => {
+        const blobUrl = URL.createObjectURL(blob);
+        const embed = document.createElement('embed');
+        embed.src = blobUrl;
+        embed.type = 'application/pdf';
+        embed.className = 'preview-embed';
+        previewPanel.replaceChild(embed, previewPh);
+      }).catch((error) => {
+        previewPh.textContent = 'プレビューを表示できません: ' + error.message;
+      });
+    } else {
+      const ph = document.createElement('div');
+      ph.className = 'preview-placeholder';
+      ph.textContent = 'PDFが登録されていません';
+      previewPanel.appendChild(ph);
+    }
+
+    const formPanel = document.createElement('div');
+    formPanel.className = 'form-panel';
+
+    const statusEl = document.createElement('div');
+    statusEl.className = 'sim-status';
+    statusEl.textContent = '検索しています...';
+
+    const confidenceEl = document.createElement('div');
+    confidenceEl.className = 'sim-confidence';
+    confidenceEl.hidden = true;
+
+    const listEl = document.createElement('ul');
+    listEl.className = 'sim-list';
+
+    formPanel.append(statusEl, confidenceEl, listEl);
+    layout.append(previewPanel, formPanel);
+    content.append(header, layout);
+
+    fetch(apiBaseUrl + '/similar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(buildRecordPayload(event, config))
+    })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('API returned ' + response.status);
+        }
+        return response.json();
+      })
+      .then((data) => renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl))
+      .catch((error) => {
+        statusEl.textContent = '類似図面検索に失敗しました: ' + error.message;
+      });
   };
 
   kintone.events.on('app.record.index.show', (event) => {
