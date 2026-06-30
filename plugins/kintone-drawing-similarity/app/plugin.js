@@ -295,8 +295,8 @@
   };
 
   // Dedicated handler: pre-fill fields from sessionStorage when redirected from the list-screen modal.
-  // Runs independently of tag UI configuration so early-returns in the tag handler don't block it.
-  // Sets each field individually so a type mismatch on one field doesn't silently block the rest.
+  // Uses event.record directly (kintone standard pattern) — kintone.app.record.get/set must not be
+  // called during handler execution.
   kintone.events.on('app.record.create.show', (event) => {
     try {
       const raw = sessionStorage.getItem('pb_pending_registration');
@@ -305,17 +305,10 @@
       if (pending.appId !== String(kintone.app.getId() || '')) return event;
 
       const config = kintone.plugin.app.getConfig(PLUGIN_ID);
+      const rec = event.record;
 
       const setField = (code, value) => {
-        if (!code) return;
-        try {
-          const obj = kintone.app.record.get();
-          if (!obj || obj.record[code] === undefined) return;
-          obj.record[code].value = value;
-          kintone.app.record.set(obj);
-        } catch (e) {
-          console.warn('[pb] pre-fill failed for field', code, e);
-        }
+        if (code && rec[code] !== undefined) rec[code].value = value;
       };
 
       setField(config.drawingNoField, pending.drawingNo);
@@ -325,8 +318,8 @@
       setField(config.processField, pending.processes.join(','));
       setField(config.tagField, pending.tags.join(','));
       if (config.shapeTagField) setField(config.shapeTagField, pending.shapeTags.join(','));
-      if (config.pdfFileField && pending.fileKey) {
-        setField(config.pdfFileField, [{ fileKey: pending.fileKey, name: pending.fileName }]);
+      if (config.pdfFileField && pending.fileKey && rec[config.pdfFileField] !== undefined) {
+        rec[config.pdfFileField].value = [{ fileKey: pending.fileKey, name: pending.fileName }];
       }
     } catch (e) {
       console.warn('[pb] pending registration pre-fill error', e);
