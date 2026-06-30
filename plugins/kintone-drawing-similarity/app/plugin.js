@@ -75,13 +75,14 @@
     return _tagsCache;
   };
 
-  const renderTagUi = (spaceEl, initialTags, allTags, editable, onTagsChange) => {
+  const renderTagUi = (spaceEl, initialTags, initialAiTags, allTags, editable, onTagsChange) => {
     if (!spaceEl) {
       return;
     }
     spaceEl.innerHTML = '';
 
     let currentTags = [...initialTags];
+    let currentAiTags = [...(initialAiTags || [])];
 
     const container = document.createElement('div');
     container.className = 'pb-tag-container';
@@ -89,9 +90,11 @@
     const chipsWrap = document.createElement('div');
     chipsWrap.className = 'pb-tag-chips';
 
+    const notify = () => { if (onTagsChange) onTagsChange({ tags: currentTags, shapeTags: currentAiTags }); };
+
     const renderChips = () => {
       chipsWrap.innerHTML = '';
-      if (!currentTags.length && !editable) {
+      if (!currentTags.length && !currentAiTags.length && !editable) {
         return;
       }
       currentTags.forEach((tag) => {
@@ -107,7 +110,26 @@
           removeBtn.addEventListener('click', () => {
             currentTags = currentTags.filter((t) => t !== tag);
             renderChips();
-            onTagsChange(currentTags);
+            notify();
+          });
+          chip.appendChild(removeBtn);
+        }
+        chipsWrap.appendChild(chip);
+      });
+      currentAiTags.forEach((tag) => {
+        const chip = document.createElement('span');
+        chip.className = 'pb-tag-chip pb-tag-chip-ai';
+        chip.textContent = tag;
+        if (editable) {
+          const removeBtn = document.createElement('button');
+          removeBtn.className = 'pb-tag-remove';
+          removeBtn.type = 'button';
+          removeBtn.setAttribute('aria-label', tag + ' を削除');
+          removeBtn.textContent = '×';
+          removeBtn.addEventListener('click', () => {
+            currentAiTags = currentAiTags.filter((t) => t !== tag);
+            renderChips();
+            notify();
           });
           chip.appendChild(removeBtn);
         }
@@ -169,7 +191,7 @@
           allTags.push(tag);
         }
         renderChips();
-        onTagsChange(currentTags);
+        notify();
         input.value = '';
         dropdown.hidden = true;
       };
@@ -281,14 +303,22 @@
     if (!spaceEl) {
       return event;
     }
+    kintone.app.record.setFieldShown(config.tagField, false);
+    if (config.shapeTagField) {
+      kintone.app.record.setFieldShown(config.shapeTagField, false);
+    }
     const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
     const tenantId = deriveTenantId();
     const appId = String(kintone.app.getId() || '');
     const currentTags = parseTags(getFieldValue(event.record, config.tagField));
+    const currentAiTags = config.shapeTagField ? parseTags(getFieldValue(event.record, config.shapeTagField)) : [];
     const allTags = apiBaseUrl ? await fetchTags(apiBaseUrl, tenantId, appId) : [];
-    renderTagUi(spaceEl, currentTags, allTags, true, (tags) => {
+    renderTagUi(spaceEl, currentTags, currentAiTags, allTags, true, ({ tags, shapeTags }) => {
       const obj = kintone.app.record.get();
       obj.record[config.tagField].value = stringifyTags(tags);
+      if (config.shapeTagField) {
+        obj.record[config.shapeTagField].value = stringifyTags(shapeTags);
+      }
       kintone.app.record.set(obj);
     });
     return event;
@@ -306,6 +336,9 @@
       return event;
     }
     const tags = stringifyTags(parseTags(getFieldValue(record, config.tagField)));
+    const shapeTagsForSync = config.shapeTagField
+      ? stringifyTags(parseTags(getFieldValue(record, config.shapeTagField)))
+      : undefined;
     fetch(apiBaseUrl + '/tag', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -313,7 +346,8 @@
         tenantId: deriveTenantId(),
         appId: String(kintone.app.getId() || ''),
         recordId,
-        tags
+        tags,
+        ...(shapeTagsForSync !== undefined ? { shapeTags: shapeTagsForSync } : {})
       })
     }).catch(() => {});
     return event;
@@ -339,9 +373,14 @@
     header.append(indexButton, button);
 
     if (config.tagField && config.tagSpaceId) {
+      kintone.app.record.setFieldShown(config.tagField, false);
+      if (config.shapeTagField) {
+        kintone.app.record.setFieldShown(config.shapeTagField, false);
+      }
       const spaceEl = kintone.app.record.getSpaceElement(config.tagSpaceId);
       const tags = parseTags(getFieldValue(event.record, config.tagField));
-      renderTagUi(spaceEl, tags, [], false, null);
+      const aiTags = config.shapeTagField ? parseTags(getFieldValue(event.record, config.shapeTagField)) : [];
+      renderTagUi(spaceEl, tags, aiTags, [], false, null);
     }
 
     indexButton.addEventListener('click', () => {
@@ -825,6 +864,7 @@
     const dimensionField = config.dimensionField || '';
     const processField = config.processField || '';
     const tagsField = config.tagField || '';
+    const shapeTagField = config.shapeTagField || '';
     const pdfFileField = config.pdfFileField || '';
     const processOptions = parseOptionsList(config.processOptions);
 
@@ -1595,6 +1635,7 @@
       if (dimensionField) recordFields[dimensionField] = { value: dimension };
       if (processField) recordFields[processField] = { value: processes.join(',') };
       if (tagsField) recordFields[tagsField] = { value: tags.join(',') };
+      if (shapeTagField) recordFields[shapeTagField] = { value: shapeTags.join(',') };
       if (pdfFileField) recordFields[pdfFileField] = { value: [{ fileKey }] };
 
       let recordId;

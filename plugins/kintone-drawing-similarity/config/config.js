@@ -4,7 +4,7 @@
   const PLUGIN_ID = kintone.$PLUGIN_ID;
   const editableTextFields = ['apiBaseUrl', 'tagSpaceId', 'processOptions'];
   const textFields = [...editableTextFields, 'tenantId'];
-  const selectFields = ['drawingNoField', 'productNameField', 'pdfFileField', 'materialField', 'dimensionField', 'tagField', 'processField'];
+  const selectFields = ['drawingNoField', 'productNameField', 'pdfFileField', 'materialField', 'dimensionField', 'tagField', 'shapeTagField', 'processField'];
   const fields = [...textFields, ...selectFields];
 
   const LAYOUT_ONLY_TYPES = new Set(['SUBTABLE', 'GROUP', 'REFERENCE_TABLE', 'LABEL', 'SPACER', 'HR', 'RECORD_NUMBER', 'CATEGORY', 'STATUS', 'STATUS_ASSIGNEE']);

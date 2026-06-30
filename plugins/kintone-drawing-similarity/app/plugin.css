@@ -61,6 +61,19 @@
   background: #bfdbfe;
 }
 
+.pb-tag-chip-ai {
+  background: #ede9fe;
+  color: #5b21b6;
+}
+
+.pb-tag-chip-ai .pb-tag-remove {
+  color: #c4b5fd;
+}
+
+.pb-tag-chip-ai .pb-tag-remove:hover {
+  background: #ddd6fe;
+}
+
 .pb-tag-input-wrap {
   position: relative;
   margin-top: 6px;

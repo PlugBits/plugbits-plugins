@@ -2230,10 +2230,14 @@ const server = createServer(async (request, response) => {
       }
       const tags = parseTags(body.tags);
       const tagsStr = tags.join(',');
+      const qdrantPayload = { tags: tagsStr };
+      if (typeof body.shapeTags === 'string') {
+        qdrantPayload.ocr_shape_tags = parseTags(body.shapeTags);
+      }
       const pointIds = embeddingRotations.map((rot) => toPointIdWithRotation(body.recordId, rot));
       await qdrantRequest(
         '/collections/' + encodeURIComponent(qdrantCollection) + '/points/payload?wait=true',
-        { method: 'POST', body: JSON.stringify({ payload: { tags: tagsStr }, points: pointIds }) }
+        { method: 'POST', body: JSON.stringify({ payload: qdrantPayload, points: pointIds }) }
       );
       sendJson(response, 200, { ok: true, recordId: body.recordId, tags });
     } catch (error) {
