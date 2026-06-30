@@ -854,7 +854,9 @@
 
   const downloadKintoneFile = async (fileKey) => {
     const url = kintone.api.url('/k/v1/file', true) + '?fileKey=' + encodeURIComponent(fileKey);
-    const res = await fetch(url);
+    const res = await fetch(url, {
+      headers: { 'X-Requested-With': 'XMLHttpRequest' }
+    });
     if (!res.ok) {
       throw new Error('ファイル取得に失敗しました (HTTP ' + res.status + ')');
     }
@@ -866,6 +868,8 @@
     const tenantId = config.tenantId || 'default';
     const drawingNoField = config.drawingNoField || '';
     const productNameField = config.productNameField || '';
+    const materialField = config.materialField || '';
+    const dimensionField = config.dimensionField || '';
     const processField = config.processField || '';
     const tagsField = config.tagField || '';
     const pdfFileField = config.pdfFileField || '';
@@ -1525,6 +1529,8 @@
       showRegisteringState('kintoneレコードを保存中...');
       const recordFields = {};
       if (productNameField) recordFields[productNameField] = { value: productName };
+      if (materialField) recordFields[materialField] = { value: material };
+      if (dimensionField) recordFields[dimensionField] = { value: dimension };
       if (processField) recordFields[processField] = { value: processes.join(',') };
       if (tagsField) recordFields[tagsField] = { value: tags.join(',') };
       if (pdfFileField) recordFields[pdfFileField] = { value: [{ fileKey }] };
