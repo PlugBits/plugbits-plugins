@@ -137,8 +137,9 @@ for (let i = 0; i < pairs.length; i++) {
     const mark = expectedSet.has(String(r.recordId)) ? '✓' : ' ';
     const bd = r.scoreBreakdown || {};
     const tagPart = bd.tag > 0 ? ' +tag' + fmt4(bd.tag) : '';
+    const shapeTagPart = bd.shapeTag > 0 ? ' +shape' + fmt4(bd.shapeTag) : '';
     const reasonPart = r.reasons && r.reasons.length ? ' [' + r.reasons.slice(0, 3).join(',') + ']' : '';
-    return mark + String(r.recordId) + '(v' + fmt4(r.vectorRaw || 0) + tagPart + ' tot' + fmt4(r.score || 0) + ')' + reasonPart;
+    return mark + String(r.recordId) + '(v' + fmt4(r.vectorRaw || 0) + tagPart + shapeTagPart + ' tot' + fmt4(r.score || 0) + ')' + reasonPart;
   });
   console.log('  結果  :');
   topDisplay.forEach((line) => console.log('    ' + line));
