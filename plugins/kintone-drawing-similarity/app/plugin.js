@@ -730,17 +730,6 @@
     '.spinner-wrap { text-align: center; padding: 40px 0; color: #6b7280; font-size: 14px; }',
     '.section-label { font-size: 11px; color: #6b7280; font-weight: 600;',
     '  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }',
-    '.ocr-candidates { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 20px; }',
-    '.ocr-pill { display: inline-flex; align-items: center; gap: 4px;',
-    '  background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 4px; padding: 3px 6px; }',
-    '.ocr-pill-text { max-width: 200px; overflow: hidden; text-overflow: ellipsis;',
-    '  white-space: nowrap; font-size: 12px; }',
-    '.ocr-btn { font-size: 10px; padding: 1px 5px; border-radius: 3px; border: 1px solid;',
-    '  cursor: pointer; background: transparent; transition: background .1s, color .1s; }',
-    '.ocr-btn-no { border-color: #2563eb; color: #2563eb; }',
-    '.ocr-btn-no:hover { background: #2563eb; color: #fff; }',
-    '.ocr-btn-name { border-color: #059669; color: #059669; }',
-    '.ocr-btn-name:hover { background: #059669; color: #fff; }',
     '.field-group { margin-bottom: 16px; }',
     '.field-label { display: block; font-size: 12px; color: #374151; font-weight: 500; margin-bottom: 5px; }',
     '.field-input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db;',
@@ -1297,37 +1286,6 @@
       // Right: Form panel
       const formPanel = document.createElement('div');
       formPanel.className = 'form-panel';
-
-      // OCR candidates
-      const ocrLines = Array.isArray(analyzeResult.ocrLines) ? analyzeResult.ocrLines : [];
-      if (ocrLines.length > 0) {
-        const ocrLabel = document.createElement('div');
-        ocrLabel.className = 'section-label';
-        ocrLabel.textContent = 'OCR候補 — 図番・品名に振り分け';
-        const candidates = document.createElement('div');
-        candidates.className = 'ocr-candidates';
-        ocrLines.slice(0, 15).forEach((line) => {
-          const pill = document.createElement('span');
-          pill.className = 'ocr-pill';
-          const text = document.createElement('span');
-          text.className = 'ocr-pill-text';
-          text.textContent = line;
-          text.title = line;
-          const btnNo = document.createElement('button');
-          btnNo.className = 'ocr-btn ocr-btn-no';
-          btnNo.type = 'button';
-          btnNo.textContent = '図番';
-          btnNo.addEventListener('click', () => { if (drawingNoInput) drawingNoInput.value = line; });
-          const btnName = document.createElement('button');
-          btnName.className = 'ocr-btn ocr-btn-name';
-          btnName.type = 'button';
-          btnName.textContent = '品名';
-          btnName.addEventListener('click', () => { if (productNameInput) productNameInput.value = line; });
-          pill.append(text, btnNo, btnName);
-          candidates.appendChild(pill);
-        });
-        formPanel.append(ocrLabel, candidates);
-      }
 
       const fv = fieldValues || { drawingNos: [], productNames: [], materials: [], dimensions: [] };
 

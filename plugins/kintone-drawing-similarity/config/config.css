@@ -23,7 +23,8 @@
   font-weight: 700;
 }
 
-.pb-field input {
+.pb-field input,
+.pb-field select {
   box-sizing: border-box;
   width: 100%;
   min-height: 40px;
@@ -31,6 +32,8 @@
   border-radius: 6px;
   padding: 8px 10px;
   font-size: 14px;
+  background: #ffffff;
+  color: #1f2933;
 }
 
 .pb-actions {
