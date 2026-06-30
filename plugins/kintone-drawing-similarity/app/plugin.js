@@ -257,7 +257,43 @@
     summary.append(level, scores);
   };
 
-  const renderResults = (panel, data) => {
+  const THUMBNAIL_AUTO_COUNT = 3;
+
+  // 一覧では上位3件だけ自動でサムネイルを取得し、残りはボタンを押したときだけ取得する。
+  // サムネイルはAPI側で都度レンダリングするだけでどこにも保存されない（kintoneが正本のまま）。
+  const loadThumbnail = (thumbBox, apiBaseUrl, fileKey) => {
+    if (!apiBaseUrl || !fileKey) {
+      thumbBox.textContent = '画像なし';
+      return;
+    }
+    thumbBox.textContent = '';
+    const img = document.createElement('img');
+    img.className = 'pb-similarity-thumb-img';
+    img.alt = '';
+    img.src = apiBaseUrl + '/thumbnail?fileKey=' + encodeURIComponent(fileKey);
+    img.addEventListener('error', () => { thumbBox.textContent = '画像なし'; }, { once: true });
+    thumbBox.appendChild(img);
+  };
+
+  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad) => {
+    const thumbBox = document.createElement('div');
+    thumbBox.className = 'pb-similarity-thumb';
+
+    if (autoLoad) {
+      loadThumbnail(thumbBox, apiBaseUrl, fileKey);
+      return thumbBox;
+    }
+
+    const loadBtn = document.createElement('button');
+    loadBtn.type = 'button';
+    loadBtn.className = 'pb-similarity-thumb-load';
+    loadBtn.textContent = 'プレビュー取得';
+    loadBtn.addEventListener('click', () => loadThumbnail(thumbBox, apiBaseUrl, fileKey));
+    thumbBox.appendChild(loadBtn);
+    return thumbBox;
+  };
+
+  const renderResults = (panel, data, apiBaseUrl) => {
     const results = Array.isArray(data && data.results) ? data.results : [];
     const list = panel.querySelector('.pb-similarity-list');
     list.textContent = '';
@@ -270,9 +306,11 @@
 
     setStatus(panel, results.length + '件の候補を表示しています。');
 
-    results.forEach((item) => {
+    results.forEach((item, index) => {
       const li = document.createElement('li');
       li.className = 'pb-similarity-item';
+
+      const thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, index < THUMBNAIL_AUTO_COUNT);
 
       const body = document.createElement('div');
       const link = document.createElement('a');
@@ -305,7 +343,7 @@
 
       body.append(link, meta, detail);
       scoreBox.append(vector, score);
-      li.append(body, scoreBox);
+      li.append(thumbBox, body, scoreBox);
       list.append(li);
     });
   };
@@ -443,7 +481,7 @@
         }
 
         const data = await response.json();
-        renderResults(panel, data);
+        renderResults(panel, data, apiBaseUrl);
       } catch (error) {
         setStatus(panel, '類似図面検索に失敗しました: ' + error.message);
       } finally {

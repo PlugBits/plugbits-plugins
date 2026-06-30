@@ -136,6 +136,17 @@ const sendJson = (response, status, payload) => {
   response.end(JSON.stringify(payload));
 };
 
+const sendBinary = (response, status, contentType, buffer) => {
+  response.writeHead(status, {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Content-Type': contentType,
+    'Cache-Control': 'no-store'
+  });
+  response.end(buffer);
+};
+
 const getRuntimeInfo = () => ({
   embeddingProvider,
   embeddingImageMode,
@@ -1816,6 +1827,7 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
       }, queryProfile);
       return {
         recordId: payload.record_id || item.id,
+        fileKey: payload.file_key || '',
         drawingNo: payload.drawing_no || 'record ' + item.id,
         productName: payload.product_name || '',
         customer: payload.file_name || '',
@@ -1931,6 +1943,24 @@ const convertPdfFirstPageToPng = async (pdfBuffer, dpi = renderDpi) => {
       pngBuffer: await readFile(imagePath),
       imagePath
     };
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
+};
+
+const thumbnailMaxWidth = Number(process.env.THUMBNAIL_MAX_WIDTH || 240);
+
+// 縮小PNGをその場でレンダリングして返すだけで、どこにも保存しない（kintoneを正本のまま保つ）。
+const convertPdfFirstPageToThumbnailPng = async (pdfBuffer, maxWidth = thumbnailMaxWidth) => {
+  const workDir = await mkdtemp(join(tmpdir(), 'drawing-similarity-thumb-'));
+  const pdfPath = join(workDir, 'source.pdf');
+  const outputBase = join(workDir, 'thumb');
+  const imagePath = outputBase + '.png';
+
+  try {
+    await writeFile(pdfPath, pdfBuffer);
+    await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-scale-to-x', String(maxWidth), '-scale-to-y', '-1', pdfPath, outputBase]);
+    return readFile(imagePath);
   } finally {
     await rm(workDir, { recursive: true, force: true });
   }
@@ -2132,6 +2162,22 @@ const server = createServer(async (request, response) => {
       });
     } catch (error) {
       sendJson(response, 500, { error: error.message });
+    }
+    return;
+  }
+
+  if (request.method === 'GET' && url.pathname === '/thumbnail') {
+    const fileKey = url.searchParams.get('fileKey') || '';
+    if (!fileKey) {
+      sendJson(response, 400, { error: 'fileKey is required' });
+      return;
+    }
+    try {
+      const pdfBuffer = await fetchKintoneFile(fileKey);
+      const thumbBuffer = await convertPdfFirstPageToThumbnailPng(pdfBuffer);
+      sendBinary(response, 200, 'image/png', thumbBuffer);
+    } catch (error) {
+      sendJson(response, 502, { error: error.message });
     }
     return;
   }
