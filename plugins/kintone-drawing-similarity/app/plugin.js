@@ -718,18 +718,17 @@
     '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;',
     '  font-size: 14px; font-weight: 800; }',
     '.sim-score { color: #1a1a1a; font-size: 13px; font-weight: 700; }',
-    '.sim-preview-panel { flex: 0 0 38%; }',
-    '.sim-form-panel { flex: 0 0 62%; }',
-    '.sim-hero-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin-bottom: 20px; }',
+    '.sim-hero-grid { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }',
     '.sim-hero-card { display: flex; flex-direction: column; }',
-    '.sim-hero-thumb { position: relative; width: 100%; aspect-ratio: 1 / 1; display: flex;',
+    '.sim-hero-thumb { position: relative; width: 100%; height: 280px; display: flex;',
     '  align-items: center; justify-content: center; box-sizing: border-box; border: 1px solid #e5e7eb;',
     '  border-radius: 8px; background: #f9fafb; color: #9ca3af; font-size: 13px; text-align: center;',
     '  overflow: hidden; }',
-    '.sim-hero-thumb .sim-thumb-img { width: 100%; height: 100%; object-fit: contain; }',
+    '.sim-hero-thumb .sim-thumb-img { max-width: 100%; max-height: 100%; width: auto; height: auto;',
+    '  object-fit: contain; }',
     '.sim-hero-score { position: absolute; top: 8px; right: 8px; padding: 3px 9px; border-radius: 9999px;',
     '  background: rgba(17,24,39,.78); color: #fff; font-size: 12px; font-weight: 700; }',
-    '.sim-hero-link { display: block; margin-top: 10px; color: #1d4ed8; font-weight: 700; font-size: 14px;',
+    '.sim-hero-link { display: block; margin-top: 8px; color: #1d4ed8; font-weight: 700; font-size: 14px;',
     '  text-decoration: none; }',
     '.sim-hero-meta { margin-top: 2px; color: #6b7280; font-size: 12px; }'
   ].join('\n');
@@ -1704,7 +1703,7 @@
     layout.className = 'form-layout';
 
     const previewPanel = document.createElement('div');
-    previewPanel.className = 'preview-panel sim-preview-panel';
+    previewPanel.className = 'preview-panel';
     const previewLabel = document.createElement('div');
     previewLabel.className = 'preview-label';
     previewLabel.textContent = fileMeta ? (fileMeta.name || '') : '自分の図面';
@@ -1734,7 +1733,7 @@
     }
 
     const formPanel = document.createElement('div');
-    formPanel.className = 'form-panel sim-form-panel';
+    formPanel.className = 'form-panel';
 
     const statusEl = document.createElement('div');
     statusEl.className = 'sim-status';
