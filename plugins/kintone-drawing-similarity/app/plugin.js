@@ -408,14 +408,26 @@
             sessionStorage.removeItem('pb_pending_registration');
             const doPostSave = async () => {
               // Attach the pre-uploaded PDF via REST API (event.record modification cannot set FILE fields)
+              let permanentFileKey = pending.fileKey;
+              let permanentFileName = pending.fileName;
               if (pending.fileKey && config.pdfFileField) {
                 await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', {
                   app: pending.appId,
                   id: recordId,
                   record: { [config.pdfFileField]: { value: [{ fileKey: pending.fileKey }] } }
                 });
+                // The temporary fileKey is consumed on attachment — read back the permanent fileKey
+                const updated = await kintone.api(kintone.api.url('/k/v1/record', true), 'GET', {
+                  app: pending.appId,
+                  id: recordId
+                });
+                const files = updated.record[config.pdfFileField] && updated.record[config.pdfFileField].value;
+                if (files && files.length > 0) {
+                  permanentFileKey = files[0].fileKey || permanentFileKey;
+                  permanentFileName = files[0].name || permanentFileName;
+                }
               }
-              // Register similarity index
+              // Register similarity index using the permanent fileKey
               await fetch(apiBaseUrl + '/index', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -429,8 +441,8 @@
                   dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
                   tags,
                   shapeTags: shapeTagsForSync || '',
-                  fileKey: pending.fileKey,
-                  fileName: pending.fileName,
+                  fileKey: permanentFileKey,
+                  fileName: permanentFileName,
                   limit: 10
                 })
               }).catch(() => {});
