@@ -671,14 +671,14 @@ const getGeminiAccessToken = async () => {
 };
 
 const buildOcrTextVertexAI = async (pngBuffer) => {
-  if (!SA_CREDENTIALS_JSON) {
-    const err = new Error('GOOGLE_APPLICATION_CREDENTIALS_JSON must be set for Gemini OCR');
+  if (!VERTEX_PROJECT_ID) {
+    const err = new Error('GOOGLE_CLOUD_PROJECT (or VERTEX_PROJECT_ID) must be set for Vertex AI OCR');
     err.status = 500;
     throw err;
   }
   const base64 = pngBuffer.toString('base64');
-  const accessToken = await getGeminiAccessToken();
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`;
+  const accessToken = await getGcpAccessToken();
+  const endpoint = `https://${VERTEX_LOCATION}-aiplatform.googleapis.com/v1/projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_LOCATION}/publishers/google/models/${VERTEX_MODEL}:generateContent`;
 
   const res = await fetch(endpoint, {
     method: 'POST',
@@ -694,7 +694,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
-    const err = new Error('Gemini API HTTP ' + res.status + ': ' + errText.slice(0, 200));
+    const err = new Error('Vertex AI HTTP ' + res.status + ': ' + errText.slice(0, 200));
     err.status = res.status;
     throw err;
   }
@@ -703,10 +703,10 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
   const candidate = data?.candidates?.[0];
   const parts = candidate?.content?.parts || [];
   const raw = parts.filter((p) => !p.thought).map((p) => p.text || '').join('').trim();
-  console.log('[ocr] gemini finishReason=' + candidate?.finishReason + ' textLength=' + raw.length);
+  console.log('[ocr] vertex finishReason=' + candidate?.finishReason + ' textLength=' + raw.length);
   const geminiExtracted = extractGeminiJson(raw);
 
-  return { engine: 'gemini', langs: 'ja+en', text: raw, geminiExtracted };
+  return { engine: 'vertex', langs: 'ja+en', text: raw, geminiExtracted };
 };
 
 const callGeminiVision = async (pngBuffer, prompt, maxOutputTokens = 256) => {
