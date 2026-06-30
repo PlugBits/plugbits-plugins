@@ -56,8 +56,10 @@
   const parseTags = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
   const stringifyTags = (tags) => tags.join(',');
 
+  const apiKeyHeader = (key) => key ? { 'X-API-Key': key } : {};
+
   let _tagsCache = null;
-  const fetchTags = async (apiBaseUrl, tenantId, appId) => {
+  const fetchTags = async (apiBaseUrl, tenantId, appId, apiKey) => {
     if (_tagsCache) {
       return _tagsCache;
     }
@@ -66,7 +68,7 @@
       if (appId) {
         params.set('appId', String(appId));
       }
-      const res = await fetch(apiBaseUrl + '/tags?' + params);
+      const res = await fetch(apiBaseUrl + '/tags?' + params, { headers: apiKeyHeader(apiKey) });
       const data = await res.json();
       _tagsCache = Array.isArray(data.tags) ? data.tags : [];
     } catch (_) {
@@ -359,7 +361,7 @@
     const appId = String(kintone.app.getId() || '');
     const currentTags = pendingTags ? pendingTags.tags : parseTags(getFieldValue(event.record, config.tagField));
     const currentAiTags = pendingTags ? pendingTags.shapeTags : (config.shapeTagField ? parseTags(getFieldValue(event.record, config.shapeTagField)) : []);
-    const allTags = apiBaseUrl ? await fetchTags(apiBaseUrl, tenantId, appId) : [];
+    const allTags = apiBaseUrl ? await fetchTags(apiBaseUrl, tenantId, appId, config.apiKey) : [];
     renderTagUi(spaceEl, currentTags, currentAiTags, allTags, true, ({ tags, shapeTags }) => {
       const obj = kintone.app.record.get();
       obj.record[config.tagField].value = stringifyTags(tags);
@@ -388,7 +390,7 @@
       : undefined;
     fetch(apiBaseUrl + '/tag', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
       body: JSON.stringify({
         tenantId: deriveTenantId(),
         appId: String(kintone.app.getId() || ''),
@@ -430,7 +432,7 @@
               // Register similarity index in the background — do not await so navigation is not blocked
               fetch(apiBaseUrl + '/index', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
                 body: JSON.stringify({
                   appId: pending.appId,
                   recordId,
@@ -728,7 +730,7 @@
       try {
         const response = await fetch(apiBaseUrl + '/index', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
           body: JSON.stringify(payload)
         });
         const data = await response.json();
@@ -930,9 +932,12 @@
     return res.records.length > 0 ? res.records[0] : null;
   };
 
-  const fetchExistingTags = async (apiBaseUrl, tenantId) => {
+  const fetchExistingTags = async (apiBaseUrl, tenantId, apiKey) => {
     try {
-      const res = await fetch(apiBaseUrl + '/tags?tenantId=' + encodeURIComponent(tenantId || 'default'));
+      const res = await fetch(
+        apiBaseUrl + '/tags?tenantId=' + encodeURIComponent(tenantId || 'default'),
+        { headers: apiKeyHeader(apiKey) }
+      );
       if (!res.ok) return [];
       const data = await res.json();
       return Array.isArray(data.tags) ? data.tags : [];
@@ -941,10 +946,13 @@
     }
   };
 
-  const fetchFieldValueSuggestions = async (apiBaseUrl, tenantId) => {
+  const fetchFieldValueSuggestions = async (apiBaseUrl, tenantId, apiKey) => {
     const empty = { drawingNos: [], productNames: [], materials: [], dimensions: [] };
     try {
-      const res = await fetch(apiBaseUrl + '/field-values?tenantId=' + encodeURIComponent(tenantId || 'default'));
+      const res = await fetch(
+        apiBaseUrl + '/field-values?tenantId=' + encodeURIComponent(tenantId || 'default'),
+        { headers: apiKeyHeader(apiKey) }
+      );
       if (!res.ok) return empty;
       const data = await res.json();
       return {
@@ -1709,7 +1717,7 @@
         const base64 = await toBase64(file);
         const res = await fetch(apiBaseUrl + '/analyze', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
           body: JSON.stringify({ pdf_base64: base64 })
         });
         const data = await res.json();
@@ -1720,8 +1728,8 @@
         return;
       }
       const [availableTags, fieldValues] = await Promise.all([
-        fetchExistingTags(apiBaseUrl, tenantId),
-        fetchFieldValueSuggestions(apiBaseUrl, tenantId)
+        fetchExistingTags(apiBaseUrl, tenantId, config.apiKey),
+        fetchFieldValueSuggestions(apiBaseUrl, tenantId, config.apiKey)
       ]);
       showFormState(file, analyzeResult, availableTags, fieldValues, reuseFileKey);
     };
@@ -1797,7 +1805,7 @@
       try {
         const indexRes = await fetch(apiBaseUrl + '/index', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
           body: JSON.stringify({
             appId: String(appId),
             recordId: String(recordId),
@@ -2092,7 +2100,7 @@
 
     fetch(apiBaseUrl + '/similar', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
       body: JSON.stringify(buildRecordPayload(event, config))
     })
       .then((response) => {

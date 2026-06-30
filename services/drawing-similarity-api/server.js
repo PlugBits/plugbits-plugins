@@ -72,6 +72,9 @@ const scoreAiShapeTagBonus = Number(process.env.SCORE_AI_SHAPE_TAG_BONUS || 0.05
 const parseTags = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 let payloadIndexesReady = false;
 
+const FIRESTORE_PROJECT_ID = process.env.FIRESTORE_PROJECT_ID || VERTEX_PROJECT_ID || '';
+const TENANT_AUTH_ENABLED = process.env.TENANT_AUTH_ENABLED === 'true';
+
 const formatLogFields = (fields = {}) => Object.entries(fields)
   .filter(([, value]) => value !== undefined && value !== null && value !== '')
   .map(([key, value]) => key + '=' + String(value).replace(/\s+/g, ' ').slice(0, 1000))
@@ -681,6 +684,58 @@ const getGcpAccessToken = async () => {
   _gcpTokenCache = { token: data.access_token, expiresAt: now + (data.expires_in || 3599) * 1000 };
   return _gcpTokenCache.token;
 };
+
+// ---- Tenant authentication via Firestore ----
+
+const _tenantCache = new Map(); // apiKey -> { tenant | null, expiresAt }
+const TENANT_CACHE_TTL_MS = 5 * 60 * 1000;
+const TENANT_CACHE_MISS_TTL_MS = 60 * 1000;
+
+const parseFirestoreFields = (fields) => {
+  if (!fields) return null;
+  const out = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (v.stringValue !== undefined) out[k] = v.stringValue;
+    else if (v.booleanValue !== undefined) out[k] = v.booleanValue;
+    else if (v.integerValue !== undefined) out[k] = Number(v.integerValue);
+    else if (v.doubleValue !== undefined) out[k] = v.doubleValue;
+  }
+  return out;
+};
+
+const resolveTenant = async (apiKey) => {
+  if (!apiKey) return null;
+  const now = Date.now();
+  const cached = _tenantCache.get(apiKey);
+  if (cached && cached.expiresAt > now) return cached.tenant;
+
+  if (!FIRESTORE_PROJECT_ID) {
+    console.warn('[auth] FIRESTORE_PROJECT_ID not set — cannot resolve tenant');
+    return null;
+  }
+  try {
+    const token = await getGcpAccessToken();
+    const docUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/tenants/${encodeURIComponent(apiKey)}`;
+    const res = await fetch(docUrl, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) {
+      _tenantCache.set(apiKey, { tenant: null, expiresAt: now + TENANT_CACHE_MISS_TTL_MS });
+      return null;
+    }
+    const doc = await res.json();
+    const tenant = parseFirestoreFields(doc.fields);
+    if (!tenant || tenant.active === false) {
+      _tenantCache.set(apiKey, { tenant: null, expiresAt: now + TENANT_CACHE_MISS_TTL_MS });
+      return null;
+    }
+    _tenantCache.set(apiKey, { tenant, expiresAt: now + TENANT_CACHE_TTL_MS });
+    return tenant;
+  } catch (e) {
+    console.error('[auth] Firestore lookup error:', e.message);
+    return null;
+  }
+};
+
+// ---- end Tenant authentication ----
 
 const getGeminiAccessToken = async () => {
   const now = Date.now();
@@ -2033,6 +2088,16 @@ const server = createServer(async (request, response) => {
       runtime: getRuntimeInfo()
     });
     return;
+  }
+
+  if (TENANT_AUTH_ENABLED) {
+    const apiKey = request.headers['x-api-key'] || '';
+    const tenant = await resolveTenant(apiKey);
+    if (!tenant) {
+      sendJson(response, 401, { error: 'Invalid or missing API key' });
+      return;
+    }
+    request._tenant = tenant;
   }
 
   if (request.method === 'POST' && url.pathname === '/analyze') {
