@@ -1653,20 +1653,21 @@ const ensurePayloadIndexes = async () => {
   return true;
 };
 
-const toPointId = (recordId) => {
-  const numeric = Number(recordId);
-  if (Number.isSafeInteger(numeric) && numeric > 0) {
-    return numeric;
-  }
-  return createHash('sha256').update(String(recordId)).digest('hex').slice(0, 32);
-};
+// Point ID はテナントで名前空間を分ける。これをしないと、異なるテナントで
+// 同じ recordId（例: どちらも 1）が同一 point に衝突し、後勝ちで上書きされて
+// テナント分離が崩れる。tenantId + recordId(+ rotation) をハッシュして一意化する。
+const toPointId = (tenantId, recordId) =>
+  createHash('sha256').update(String(tenantId || 'default') + ':' + String(recordId)).digest('hex').slice(0, 32);
 
-const toPointIdWithRotation = (recordId, rotation) => {
+const toPointIdWithRotation = (tenantId, recordId, rotation) => {
   const normalizedRotation = ((Number(rotation) || 0) % 360 + 360) % 360;
   if (normalizedRotation === 0) {
-    return toPointId(recordId);
+    return toPointId(tenantId, recordId);
   }
-  return createHash('sha256').update(String(recordId) + ':rot:' + normalizedRotation).digest('hex').slice(0, 32);
+  return createHash('sha256')
+    .update(String(tenantId || 'default') + ':' + String(recordId) + ':rot:' + normalizedRotation)
+    .digest('hex')
+    .slice(0, 32);
 };
 const getPointVector = (point) => {
   if (Array.isArray(point?.vector)) {
@@ -1750,7 +1751,7 @@ const upsertDrawing = async (body, embedding, context = {}) => {
       method: 'PUT',
       body: JSON.stringify({
         points: embeddings.map((entry) => ({
-          id: toPointIdWithRotation(body.recordId, entry.rotation || 0),
+          id: toPointIdWithRotation(body.tenantId, body.recordId, entry.rotation || 0),
           vector: entry.vector,
           payload: {
             ...basePayload,
@@ -1789,7 +1790,7 @@ const getIndexedDrawingVector = async (body) => {
   }
 
   try {
-    const ids = embeddingRotations.map((rotation) => toPointIdWithRotation(body.recordId, rotation));
+    const ids = embeddingRotations.map((rotation) => toPointIdWithRotation(body.tenantId, body.recordId, rotation));
     const data = await qdrantRequest('/collections/' + encodeURIComponent(qdrantCollection) + '/points', {
       method: 'POST',
       body: JSON.stringify({
@@ -2098,6 +2099,14 @@ const server = createServer(async (request, response) => {
       return;
     }
     request._tenant = tenant;
+    // Phase 2: テナントの境界は API キーで決める。クライアント送信の tenantId は
+    // 信用せず、Firestore のテナントドキュメントに紐付いた tenantId を正とする。
+    // 後方互換: ドキュメントに tenantId 系フィールドが無い場合は上書きしない
+    //（従来どおりクライアント値にフォールバック）。
+    const boundTenantId = tenant.tenantId || tenant.tenant_id || tenant.id;
+    if (boundTenantId) {
+      request._forcedTenantId = String(boundTenantId);
+    }
   }
 
   if (request.method === 'POST' && url.pathname === '/analyze') {
@@ -2186,7 +2195,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     try {
-      const tenantId = url.searchParams.get('tenantId') || 'default';
+      const tenantId = request._forcedTenantId || url.searchParams.get('tenantId') || 'default';
       const filter = {
         must: [{ key: 'tenant_id', match: { value: tenantId } }]
       };
@@ -2221,7 +2230,7 @@ const server = createServer(async (request, response) => {
       return;
     }
     try {
-      const tenantId = url.searchParams.get('tenantId') || 'default';
+      const tenantId = request._forcedTenantId || url.searchParams.get('tenantId') || 'default';
       const filter = {
         must: [{ key: 'tenant_id', match: { value: tenantId } }]
       };
@@ -2285,6 +2294,7 @@ const server = createServer(async (request, response) => {
   if (request.method === 'POST' && url.pathname === '/tag') {
     try {
       const body = await readJson(request);
+      if (request._forcedTenantId) body.tenantId = request._forcedTenantId;
       if (!body.recordId) {
         sendJson(response, 400, { error: 'recordId is required' });
         return;
@@ -2299,7 +2309,7 @@ const server = createServer(async (request, response) => {
       if (typeof body.shapeTags === 'string') {
         qdrantPayload.ocr_shape_tags = parseTags(body.shapeTags);
       }
-      const pointIds = embeddingRotations.map((rot) => toPointIdWithRotation(body.recordId, rot));
+      const pointIds = embeddingRotations.map((rot) => toPointIdWithRotation(body.tenantId, body.recordId, rot));
       await qdrantRequest(
         '/collections/' + encodeURIComponent(qdrantCollection) + '/points/payload?wait=true',
         { method: 'POST', body: JSON.stringify({ payload: qdrantPayload, points: pointIds }) }
@@ -2314,6 +2324,7 @@ const server = createServer(async (request, response) => {
   if (request.method === 'POST' && url.pathname === '/similar') {
     try {
       const body = await readJson(request);
+      if (request._forcedTenantId) body.tenantId = request._forcedTenantId;
       if (isQdrantConfigured()) {
         const indexed = await getIndexedDrawingVector(body);
         let vector = indexed?.vector || null;
@@ -2428,6 +2439,7 @@ const server = createServer(async (request, response) => {
     try {
       step = 'payload';
       const body = await readJson(request);
+      if (request._forcedTenantId) body.tenantId = request._forcedTenantId;
       indexLog('payload received', {
         recordId: body.recordId,
         tenantId: body.tenantId || 'default'
