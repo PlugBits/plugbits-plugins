@@ -50,10 +50,7 @@ if (ppkFile) {
   } else {
     resolvedPpk = fallbackPpkFiles.find((candidate) => candidate && existsSync(candidate)) || '';
     if (!resolvedPpk) {
-      // 署名鍵が無い環境（CI など、.ppk は .gitignore された秘密情報）では
-      // 失敗させず、署名なしでパックを続行する。@kintone/plugin-packer は
-      // --ppk 未指定なら新規鍵を生成して zip を出力するため、zip 整合性検査は成立する。
-      console.warn(`pack-plugin: private key not found (${ppkFile}); packing without signing (a fresh key will be generated).`);
+      fail(`pack-plugin: missing private key: ${ppkFile}`);
     }
   }
 }
