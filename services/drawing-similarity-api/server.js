@@ -2326,6 +2326,26 @@ const server = createServer(async (request, response) => {
           null
         );
 
+        if (!vector && body.pdf_base64) {
+          const pdfBuffer = Buffer.from(String(body.pdf_base64 || ''), 'base64');
+          if (!pdfBuffer.length) {
+            sendJson(response, 400, { error: 'Empty PDF content' });
+            return;
+          }
+          const { pngBuffer } = await convertPdfFirstPageToPng(pdfBuffer);
+          const shape = await buildShapeProfile(pngBuffer);
+          queryProfile.shape = shape;
+          const queryEmbeddings = [];
+          for (const rotation of embeddingRotations) {
+            const queryEmbedding = await buildEmbedding(pngBuffer, { rotation });
+            queryEmbedding.rotation = rotation;
+            queryEmbeddings.push(queryEmbedding);
+          }
+          embedding = queryEmbeddings[0];
+          vector = queryEmbeddings.map((entry) => entry.vector);
+          queryVectorSource = 'uploaded-pdf';
+        }
+
         if (!vector && body.fileKey) {
           const { pngBuffer } = await loadRecordImage(body);
           const shape = await buildShapeProfile(pngBuffer);

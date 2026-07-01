@@ -2122,6 +2122,165 @@
       });
   };
 
+  // 一覧画面：kintone に登録せず、手元の PDF をアップロードしてその場で類似検索する。
+  const openUploadSimilarModal = (config, apiBaseUrl) => {
+    const host = document.createElement('div');
+    host.id = 'pb-upload-similar-host';
+    document.body.appendChild(host);
+    const shadow = host.attachShadow({ mode: 'closed' });
+
+    const style = document.createElement('style');
+    style.textContent = REGISTER_CSS;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+
+    const xBtn = document.createElement('button');
+    xBtn.className = 'btn-close';
+    xBtn.type = 'button';
+    xBtn.textContent = '×';
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+
+    modal.append(xBtn, content);
+    overlay.appendChild(modal);
+    shadow.append(style, overlay);
+
+    const closeModal = () => host.remove();
+    xBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+
+    const clear = () => { content.textContent = ''; };
+
+    // --- State: 検索結果（プレビュー＋候補一覧） ---
+    const showResultsState = (file) => {
+      clear();
+      modal.classList.add('wide');
+
+      const header = document.createElement('div');
+      header.className = 'modal-header';
+      const title = document.createElement('h2');
+      title.textContent = '類似図面検索（アップロード）';
+      header.appendChild(title);
+
+      const layout = document.createElement('div');
+      layout.className = 'form-layout';
+
+      const previewPanel = document.createElement('div');
+      previewPanel.className = 'preview-panel';
+      const previewLabel = document.createElement('div');
+      previewLabel.className = 'preview-label';
+      previewLabel.textContent = file.name || '';
+      previewPanel.appendChild(previewLabel);
+      const blobUrl = URL.createObjectURL(file);
+      const embed = document.createElement('embed');
+      embed.src = blobUrl;
+      embed.type = 'application/pdf';
+      embed.className = 'preview-embed';
+      previewPanel.appendChild(embed);
+
+      const formPanel = document.createElement('div');
+      formPanel.className = 'form-panel';
+      const statusEl = document.createElement('div');
+      statusEl.className = 'sim-status';
+      statusEl.textContent = '検索しています...';
+      const confidenceEl = document.createElement('div');
+      confidenceEl.className = 'sim-confidence';
+      confidenceEl.hidden = true;
+      const listEl = document.createElement('div');
+      listEl.className = 'sim-results';
+      formPanel.append(statusEl, confidenceEl, listEl);
+
+      layout.append(previewPanel, formPanel);
+      content.append(header, layout);
+
+      toBase64(file)
+        .then((pdfBase64) => fetch(apiBaseUrl + '/similar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+          body: JSON.stringify({
+            appId: kintone.app.getId(),
+            tenantId: deriveTenantId(),
+            pdf_base64: pdfBase64,
+            fileName: file.name || '',
+            limit: 10
+          })
+        }))
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error('API returned ' + response.status);
+          }
+          return response.json();
+        })
+        .then((data) => {
+          renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl);
+        })
+        .catch((error) => {
+          statusEl.textContent = '類似図面検索に失敗しました: ' + error.message;
+        });
+    };
+
+    const handleFile = (file) => {
+      showResultsState(file);
+    };
+
+    // --- State: ドロップ ---
+    const showDropState = () => {
+      clear();
+      modal.classList.remove('wide');
+
+      const title = document.createElement('h2');
+      title.textContent = '手元の図面で類似検索';
+
+      const dropWrap = document.createElement('div');
+      dropWrap.className = 'dropzone';
+      const icon = document.createElement('div');
+      icon.className = 'drop-icon';
+      icon.textContent = '📄';
+      const main = document.createElement('div');
+      main.className = 'drop-main';
+      main.textContent = 'PDFをここにドロップ';
+      const sub = document.createElement('div');
+      sub.className = 'drop-sub';
+      sub.textContent = 'またはクリックしてファイルを選択（kintoneには登録されません）';
+      const fileInput = document.createElement('input');
+      fileInput.type = 'file';
+      fileInput.accept = '.pdf,application/pdf';
+      fileInput.className = 'file-input';
+      dropWrap.append(icon, main, sub, fileInput);
+
+      dropWrap.addEventListener('click', (e) => {
+        if (e.target !== fileInput) fileInput.click();
+      });
+      dropWrap.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dropWrap.classList.add('drag-over');
+      });
+      dropWrap.addEventListener('dragleave', () => dropWrap.classList.remove('drag-over'));
+      dropWrap.addEventListener('drop', (e) => {
+        e.preventDefault();
+        dropWrap.classList.remove('drag-over');
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
+          handleFile(file);
+        } else {
+          window.alert('PDFファイルをドロップしてください。');
+        }
+      });
+      fileInput.addEventListener('change', () => {
+        if (fileInput.files && fileInput.files[0]) handleFile(fileInput.files[0]);
+      });
+
+      content.append(title, dropWrap);
+    };
+
+    showDropState();
+  };
+
   kintone.events.on('app.record.index.show', (event) => {
     if (document.getElementById('pb-bulk-index-btn')) {
       return event;
@@ -2147,6 +2306,20 @@
 
     registerBtn.addEventListener('click', () => {
       openRegisterModal(config, apiBaseUrl);
+    });
+
+    const uploadSearchBtn = document.createElement('button');
+    uploadSearchBtn.id = 'pb-upload-search-btn';
+    uploadSearchBtn.className = 'pb-similarity-button';
+    uploadSearchBtn.type = 'button';
+    uploadSearchBtn.textContent = '類似検索（アップロード）';
+    header.appendChild(uploadSearchBtn);
+
+    uploadSearchBtn.addEventListener('click', () => {
+      if (document.getElementById('pb-upload-similar-host')) {
+        return;
+      }
+      openUploadSimilarModal(config, apiBaseUrl);
     });
 
     const button = document.createElement('button');
