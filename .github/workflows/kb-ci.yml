@@ -49,7 +49,17 @@ jobs:
         run: npm run build   # ルートの workspaces 経由で各プラグインの build
 
   # 3) ZIP 生成＆ZIP 内整合性検査（manifest と実ファイル）
+  #
+  # 【現在は無効】Pack はローカルで実施する運用のため、このジョブは既定でスキップされる。
+  #   ・スキップ条件: リポジトリ変数 ENABLE_PACK_VERIFY が 'true' でない限り実行されない。
+  #   ・オンラインで復帰させる手順:
+  #       1. Repo Settings → Secrets and variables → Actions → Variables で
+  #          ENABLE_PACK_VERIFY = true を追加（これだけで下記ジョブが再度動く）。
+  #       2. 署名付き zip を配布用に生成したい場合は、各 .ppk を Secrets に登録し、
+  #          npm run verify の前に .keys/ へ復元するステップを追加する
+  #          （鍵が無い場合、pack-plugin.mjs は missing private key で失敗する）。
   pack-and-verify:
+    if: ${{ vars.ENABLE_PACK_VERIFY == 'true' }}
     runs-on: ubuntu-latest
     needs: [build]
     steps:
