@@ -60,6 +60,12 @@
 
   getElement('tenantId').value = deriveTenantId();
 
+  // 一括登録ボタンの表示トグル（既定: 表示）
+  const bulkToggle = getElement('showBulkButton');
+  if (bulkToggle) {
+    bulkToggle.checked = config.showBulkButton !== 'false';
+  }
+
   kintone.api(kintone.api.url('/k/v1/app/form/fields', true), 'GET', { app: kintone.app.getId() })
     .then((resp) => {
       const properties = resp.properties || {};
@@ -90,6 +96,8 @@
       acc[field] = (element.value || '').trim();
       return acc;
     }, {});
+
+    nextConfig.showBulkButton = getElement('showBulkButton') && getElement('showBulkButton').checked ? 'true' : 'false';
 
     if (!nextConfig.apiBaseUrl) {
       window.alert('API Base URLを入力してください。');

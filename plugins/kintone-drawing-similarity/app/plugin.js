@@ -58,6 +58,27 @@
 
   const apiKeyHeader = (key) => key ? { 'X-API-Key': key } : {};
 
+  // --- ヘッダーボタン（アイコン付き・SaaS 風） ---
+  const PB_ICONS = {
+    search: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>',
+    upload: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>',
+    plus: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>',
+    layers: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"></path><path d="m3 12 9 5 9-5"></path><path d="m3 17 9 5 9-5"></path></svg>',
+    refresh: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v5h-5"></path></svg>'
+  };
+
+  const createHeaderButton = ({ id, label, variant = 'primary', icon }) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    if (id) btn.id = id;
+    btn.className = 'pb-similarity-button' + (variant && variant !== 'primary' ? ' ' + variant : '');
+    const iconSvg = icon && PB_ICONS[icon]
+      ? '<span class="pb-btn-icon" aria-hidden="true">' + PB_ICONS[icon] + '</span>'
+      : '';
+    btn.innerHTML = iconSvg + '<span class="pb-btn-label">' + label + '</span>';
+    return btn;
+  };
+
   let _tagsCache = null;
   const fetchTags = async (apiBaseUrl, tenantId, appId, apiKey) => {
     if (_tagsCache) {
@@ -291,7 +312,7 @@
   };
 
   const clearPluginUi = () => {
-    document.querySelectorAll('#pb-similarity-index, #pb-similarity-search').forEach((element) => {
+    document.querySelectorAll('#pb-detail-btns, #pb-similarity-index, #pb-similarity-search').forEach((element) => {
       element.remove();
     });
   };
@@ -465,18 +486,14 @@
     const config = kintone.plugin.app.getConfig(PLUGIN_ID);
     const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
     const header = kintone.app.record.getHeaderMenuSpaceElement();
-    const indexButton = document.createElement('button');
-    indexButton.id = 'pb-similarity-index';
-    indexButton.className = 'pb-similarity-button secondary';
-    indexButton.type = 'button';
-    indexButton.textContent = '図面を登録/更新';
+    const group = document.createElement('div');
+    group.id = 'pb-detail-btns';
+    group.className = 'pb-btn-group';
 
-    const button = document.createElement('button');
-    button.id = 'pb-similarity-search';
-    button.className = 'pb-similarity-button';
-    button.type = 'button';
-    button.textContent = '類似図面検索';
-    header.append(indexButton, button);
+    const button = createHeaderButton({ id: 'pb-similarity-search', label: '類似図面検索', variant: 'primary', icon: 'search' });
+    const indexButton = createHeaderButton({ id: 'pb-similarity-index', label: '図面を登録/更新', variant: 'secondary', icon: 'refresh' });
+    group.append(button, indexButton);
+    header.appendChild(group);
 
     if (config.tagField && config.tagSpaceId) {
       kintone.app.record.setFieldShown(config.tagField, false);
@@ -2282,7 +2299,7 @@
   };
 
   kintone.events.on('app.record.index.show', (event) => {
-    if (document.getElementById('pb-bulk-index-btn')) {
+    if (document.getElementById('pb-list-btns')) {
       return event;
     }
 
@@ -2297,49 +2314,43 @@
       return event;
     }
 
-    const registerBtn = document.createElement('button');
-    registerBtn.id = 'pb-register-btn';
-    registerBtn.className = 'pb-similarity-button';
-    registerBtn.type = 'button';
-    registerBtn.textContent = '図面登録';
-    header.appendChild(registerBtn);
+    const group = document.createElement('div');
+    group.id = 'pb-list-btns';
+    group.className = 'pb-btn-group';
 
+    const registerBtn = createHeaderButton({ id: 'pb-register-btn', label: '図面登録', variant: 'primary', icon: 'plus' });
     registerBtn.addEventListener('click', () => {
       openRegisterModal(config, apiBaseUrl);
     });
+    group.appendChild(registerBtn);
 
-    const uploadSearchBtn = document.createElement('button');
-    uploadSearchBtn.id = 'pb-upload-search-btn';
-    uploadSearchBtn.className = 'pb-similarity-button';
-    uploadSearchBtn.type = 'button';
-    uploadSearchBtn.textContent = '類似検索（アップロード）';
-    header.appendChild(uploadSearchBtn);
-
+    const uploadSearchBtn = createHeaderButton({ id: 'pb-upload-search-btn', label: '類似検索（アップロード）', variant: 'secondary', icon: 'upload' });
     uploadSearchBtn.addEventListener('click', () => {
       if (document.getElementById('pb-upload-similar-host')) {
         return;
       }
       openUploadSimilarModal(config, apiBaseUrl);
     });
+    group.appendChild(uploadSearchBtn);
 
-    const button = document.createElement('button');
-    button.id = 'pb-bulk-index-btn';
-    button.className = 'pb-similarity-button secondary';
-    button.type = 'button';
-    button.textContent = '一括図面登録';
-    header.appendChild(button);
+    // 一括図面登録ボタンは設定でオフにできる（既定は表示）。
+    if (config.showBulkButton !== 'false') {
+      const button = createHeaderButton({ id: 'pb-bulk-index-btn', label: '一括図面登録', variant: 'ghost', icon: 'layers' });
+      button.addEventListener('click', () => {
+        if (document.getElementById('pb-bulk-overlay')) {
+          return;
+        }
+        if (!config.pdfFileField) {
+          window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
+          return;
+        }
+        const overlay = createBulkModal();
+        runBulkIndex(overlay, config, apiBaseUrl);
+      });
+      group.appendChild(button);
+    }
 
-    button.addEventListener('click', () => {
-      if (document.getElementById('pb-bulk-overlay')) {
-        return;
-      }
-      if (!config.pdfFileField) {
-        window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
-        return;
-      }
-      const overlay = createBulkModal();
-      runBulkIndex(overlay, config, apiBaseUrl);
-    });
+    header.appendChild(group);
 
     return event;
   });

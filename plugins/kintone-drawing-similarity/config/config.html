@@ -1,73 +1,124 @@
 <section class="pb-config">
-  <h1>類似図面検索 設定</h1>
+  <header class="pb-config-header">
+    <div class="pb-config-brand">
+      <span class="pb-config-logo" aria-hidden="true">
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>
+      </span>
+      <div>
+        <h1>類似図面検索</h1>
+        <p class="pb-config-sub">プラグイン設定</p>
+      </div>
+    </div>
+  </header>
 
-  <label class="pb-field">
-    <span>API Base URL</span>
-    <input id="apiBaseUrl" type="url" placeholder="https://drawing-similarity.example.run.app" />
-  </label>
+  <div class="pb-card">
+    <div class="pb-card-head">
+      <h2>接続</h2>
+      <p>API エンドポイントと認証情報を設定します。</p>
+    </div>
+    <div class="pb-card-body">
+      <label class="pb-field">
+        <span>API Base URL</span>
+        <input id="apiBaseUrl" type="url" placeholder="https://drawing-similarity-api-xxxx.asia-northeast1.run.app" />
+      </label>
 
-  <label class="pb-field">
-    <span>API Key（テナント認証キー）</span>
-    <input id="apiKey" type="password" placeholder="テナントに割り当てたAPIキーを入力" autocomplete="new-password" />
-  </label>
+      <label class="pb-field">
+        <span>API Key（テナント認証キー）</span>
+        <input id="apiKey" type="password" placeholder="テナントに割り当てたAPIキーを入力" autocomplete="new-password" />
+      </label>
 
-  <label class="pb-field">
-    <span>テナントID（kintoneドメインから自動判定）</span>
-    <input id="tenantId" type="text" readonly />
-  </label>
+      <label class="pb-field">
+        <span>テナントID<em class="pb-hint">kintoneドメインから自動判定</em></span>
+        <input id="tenantId" type="text" readonly />
+      </label>
+    </div>
+  </div>
 
-  <label class="pb-field">
-    <span>図番フィールドコード</span>
-    <select id="drawingNoField"></select>
-  </label>
+  <div class="pb-card">
+    <div class="pb-card-head">
+      <h2>フィールド設定<span class="pb-badge pb-badge-req">必須</span></h2>
+      <p>図面レコードの主要フィールドを対応付けます。</p>
+    </div>
+    <div class="pb-card-body pb-grid">
+      <label class="pb-field">
+        <span>図番フィールドコード</span>
+        <select id="drawingNoField"></select>
+      </label>
 
-  <label class="pb-field">
-    <span>品名フィールドコード</span>
-    <select id="productNameField"></select>
-  </label>
+      <label class="pb-field">
+        <span>品名フィールドコード</span>
+        <select id="productNameField"></select>
+      </label>
 
-  <label class="pb-field">
-    <span>PDFファイルフィールドコード</span>
-    <select id="pdfFileField"></select>
-  </label>
+      <label class="pb-field">
+        <span>PDFファイルフィールドコード</span>
+        <select id="pdfFileField"></select>
+      </label>
 
-  <label class="pb-field">
-    <span>材質フィールドコード（任意）</span>
-    <select id="materialField"></select>
-  </label>
+      <label class="pb-field">
+        <span>加工方法フィールドコード</span>
+        <select id="processField"></select>
+      </label>
+    </div>
+  </div>
 
-  <label class="pb-field">
-    <span>寸法（板厚/外径）フィールドコード（任意）</span>
-    <select id="dimensionField"></select>
-  </label>
+  <div class="pb-card">
+    <div class="pb-card-head">
+      <h2>フィールド設定<span class="pb-badge">任意</span></h2>
+      <p>スコア補正やタグ機能に使うフィールド（未設定でも動作します）。</p>
+    </div>
+    <div class="pb-card-body pb-grid">
+      <label class="pb-field">
+        <span>材質フィールドコード</span>
+        <select id="materialField"></select>
+      </label>
 
-  <label class="pb-field">
-    <span>タグフィールドコード（任意）</span>
-    <select id="tagField"></select>
-  </label>
+      <label class="pb-field">
+        <span>寸法（板厚/外径）フィールドコード</span>
+        <select id="dimensionField"></select>
+      </label>
 
-  <label class="pb-field">
-    <span>AI形状タグフィールドコード（任意）</span>
-    <select id="shapeTagField"></select>
-  </label>
+      <label class="pb-field">
+        <span>タグフィールドコード</span>
+        <select id="tagField"></select>
+      </label>
 
-  <label class="pb-field">
-    <span>タグスペース要素ID（任意）</span>
-    <input id="tagSpaceId" type="text" placeholder="pb_tags" />
-  </label>
+      <label class="pb-field">
+        <span>AI形状タグフィールドコード</span>
+        <select id="shapeTagField"></select>
+      </label>
 
-  <label class="pb-field">
-    <span>加工方法フィールドコード</span>
-    <select id="processField"></select>
-  </label>
+      <label class="pb-field">
+        <span>タグスペース要素ID</span>
+        <input id="tagSpaceId" type="text" placeholder="pb_tags" />
+      </label>
 
-  <label class="pb-field">
-    <span>加工方法 選択肢（カンマ区切り）</span>
-    <input id="processOptions" type="text" placeholder="旋削,フライス,板金,研磨,溶接" />
-  </label>
+      <label class="pb-field">
+        <span>加工方法 選択肢<em class="pb-hint">カンマ区切り</em></span>
+        <input id="processOptions" type="text" placeholder="旋削,フライス,板金,研磨,溶接" />
+      </label>
+    </div>
+  </div>
+
+  <div class="pb-card">
+    <div class="pb-card-head">
+      <h2>一覧画面</h2>
+      <p>一覧画面のヘッダーに表示するボタンを制御します。</p>
+    </div>
+    <div class="pb-card-body">
+      <label class="pb-toggle">
+        <input id="showBulkButton" type="checkbox" />
+        <span class="pb-toggle-track"><span class="pb-toggle-thumb"></span></span>
+        <span class="pb-toggle-text">
+          <span class="pb-toggle-title">「一括図面登録」ボタンを表示</span>
+          <span class="pb-toggle-desc">オフにすると一覧画面のヘッダーから一括登録ボタンを隠します。</span>
+        </span>
+      </label>
+    </div>
+  </div>
 
   <div class="pb-actions">
-    <button id="save" type="button">保存</button>
-    <button id="cancel" type="button">キャンセル</button>
+    <button id="cancel" type="button" class="pb-btn pb-btn-ghost">キャンセル</button>
+    <button id="save" type="button" class="pb-btn pb-btn-primary">保存する</button>
   </div>
 </section>

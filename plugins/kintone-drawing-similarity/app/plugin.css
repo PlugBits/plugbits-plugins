@@ -1,18 +1,77 @@
-.pb-similarity-button {
-  min-height: 36px;
+/* --- Header action buttons (SaaS-style) --- */
+.pb-btn-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-left: 8px;
-  border: 1px solid #1769aa;
-  border-radius: 6px;
-  background: #1769aa;
+  vertical-align: middle;
+}
+
+.pb-similarity-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #2563eb;
   color: #ffffff;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  font-weight: 700;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
+}
+
+.pb-similarity-button:hover {
+  background: #1d4ed8;
+}
+
+.pb-similarity-button:active {
+  transform: translateY(1px);
+}
+
+.pb-similarity-button:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35);
 }
 
 .pb-similarity-button.secondary {
-  border-color: #728191;
   background: #ffffff;
-  color: #1f2933;
+  border-color: #cbd5e1;
+  color: #1e293b;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.05);
+}
+
+.pb-similarity-button.secondary:hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+
+.pb-similarity-button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: #475569;
+  box-shadow: none;
+}
+
+.pb-similarity-button.ghost:hover {
+  background: #f1f5f9;
+  color: #1e293b;
+}
+
+.pb-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.pb-btn-icon svg {
+  display: block;
 }
 
 /* --- Tag UI --- */

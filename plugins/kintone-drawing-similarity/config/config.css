@@ -1,65 +1,309 @@
 .pb-config {
   box-sizing: border-box;
-  max-width: 720px;
-  padding: 24px;
-  color: #1f2933;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 24px 24px 96px;
+  color: #0f172a;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
 }
 
-.pb-config h1 {
-  margin: 0 0 24px;
+.pb-config *,
+.pb-config *::before,
+.pb-config *::after {
+  box-sizing: border-box;
+}
+
+/* --- Header --- */
+.pb-config-header {
+  margin-bottom: 20px;
+}
+
+.pb-config-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pb-config-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #2563eb, #4f46e5);
+  color: #ffffff;
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.28);
+}
+
+.pb-config-header h1 {
+  margin: 0;
   font-size: 20px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.pb-config-sub {
+  margin: 2px 0 0;
+  color: #64748b;
+  font-size: 13px;
+}
+
+/* --- Cards --- */
+.pb-card {
+  margin-bottom: 16px;
+  border: 1px solid #e6e9ef;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 8px 24px rgba(15, 23, 42, 0.03);
+  overflow: hidden;
+}
+
+.pb-card-head {
+  padding: 16px 20px;
+  border-bottom: 1px solid #eef1f5;
+  background: #fbfcfe;
+}
+
+.pb-card-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
   font-weight: 700;
 }
 
+.pb-card-head p {
+  margin: 4px 0 0;
+  color: #64748b;
+  font-size: 12.5px;
+}
+
+.pb-card-body {
+  padding: 20px;
+}
+
+.pb-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px 20px;
+}
+
+@media (max-width: 640px) {
+  .pb-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* --- Badges --- */
+.pb-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eef2f7;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.pb-badge-req {
+  background: #eff4ff;
+  color: #2563eb;
+}
+
+/* --- Fields --- */
 .pb-field {
   display: grid;
-  gap: 8px;
-  margin-bottom: 18px;
+  gap: 6px;
+  margin: 0 0 16px;
+}
+
+.pb-grid .pb-field {
+  margin: 0;
 }
 
 .pb-field span {
-  font-size: 13px;
-  font-weight: 700;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: #334155;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.pb-hint {
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 500;
+  font-style: normal;
 }
 
 .pb-field input,
 .pb-field select {
-  box-sizing: border-box;
   width: 100%;
   min-height: 40px;
-  border: 1px solid #cbd5df;
-  border-radius: 6px;
-  padding: 8px 10px;
-  font-size: 14px;
+  padding: 8px 12px;
+  border: 1px solid #d7dee8;
+  border-radius: 9px;
   background: #ffffff;
-  color: #1f2933;
+  color: #0f172a;
+  font-size: 14px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  appearance: none;
+}
+
+.pb-field select {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  padding-right: 36px;
+}
+
+.pb-field input:hover,
+.pb-field select:hover {
+  border-color: #b6c2d4;
+}
+
+.pb-field input:focus,
+.pb-field select:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
 .pb-field input[readonly] {
-  background: #f1f4f7;
-  color: #5b6b7c;
+  background: #f4f6f9;
+  color: #64748b;
+  cursor: default;
 }
 
-.pb-actions {
+.pb-field input[readonly]:hover {
+  border-color: #d7dee8;
+}
+
+/* --- Toggle switch --- */
+.pb-toggle {
   display: flex;
-  gap: 10px;
-  margin-top: 24px;
+  align-items: flex-start;
+  gap: 12px;
+  cursor: pointer;
 }
 
-.pb-actions button {
+.pb-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.pb-toggle-track {
+  position: relative;
+  flex: 0 0 auto;
+  width: 40px;
+  height: 24px;
+  margin-top: 1px;
+  border-radius: 999px;
+  background: #cbd5e1;
+  transition: background 0.18s ease;
+}
+
+.pb-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #ffffff;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.28);
+  transition: transform 0.18s ease;
+}
+
+.pb-toggle input:checked + .pb-toggle-track {
+  background: #2563eb;
+}
+
+.pb-toggle input:checked + .pb-toggle-track .pb-toggle-thumb {
+  transform: translateX(16px);
+}
+
+.pb-toggle input:focus-visible + .pb-toggle-track {
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.3);
+}
+
+.pb-toggle-text {
+  display: grid;
+  gap: 2px;
+}
+
+.pb-toggle-title {
+  color: #0f172a;
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.pb-toggle-desc {
+  color: #64748b;
+  font-size: 12px;
+}
+
+/* --- Action bar (sticky) --- */
+.pb-actions {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 20px -24px 0;
+  padding: 14px 24px;
+  border-top: 1px solid #e6e9ef;
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(6px);
+}
+
+.pb-btn {
   min-width: 96px;
   min-height: 40px;
-  border: 1px solid #99a8b7;
-  border-radius: 6px;
-  background: #ffffff;
-  color: #1f2933;
+  padding: 0 18px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
-  font-weight: 700;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, transform 0.05s ease;
 }
 
-.pb-actions button:first-child {
-  border-color: #1769aa;
-  background: #1769aa;
+.pb-btn:active {
+  transform: translateY(1px);
+}
+
+.pb-btn-primary {
+  background: #2563eb;
   color: #ffffff;
+  box-shadow: 0 1px 2px rgba(37, 99, 235, 0.35);
+}
+
+.pb-btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.pb-btn-primary:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.35);
+}
+
+.pb-btn-ghost {
+  background: #ffffff;
+  border-color: #d7dee8;
+  color: #334155;
+}
+
+.pb-btn-ghost:hover {
+  background: #f8fafc;
+  border-color: #b6c2d4;
 }
