@@ -1818,6 +1818,23 @@
       }
       kintoneRecordChanged = true;
 
+      // PUT でファイルを添付すると一時 fileKey は消費されるため、/index には
+      // レコードを読み直して得た永続 fileKey を渡す（消費済みキーだと 404 になる）。
+      let indexFileKey = fileKey;
+      let indexFileName = file ? file.name : '';
+      if (fileKey && pdfFileField && recordId) {
+        try {
+          const updated = await kintone.api(kintone.api.url('/k/v1/record', true), 'GET', {
+            app: appId, id: recordId
+          });
+          const files = updated.record[pdfFileField] && updated.record[pdfFileField].value;
+          if (files && files.length > 0) {
+            indexFileKey = files[0].fileKey || indexFileKey;
+            indexFileName = files[0].name || indexFileName;
+          }
+        } catch (_) { /* 読み直しに失敗した場合は元の fileKey を使う */ }
+      }
+
       showRegisteringState('ベクトルインデックスを登録中...');
       try {
         const indexRes = await fetch(apiBaseUrl + '/index', {
@@ -1833,8 +1850,8 @@
             dimension,
             tags: tags.join(','),
             shapeTags: shapeTags.join(','),
-            fileKey,
-            fileName: file.name,
+            fileKey: indexFileKey,
+            fileName: indexFileName,
             limit: 10
           })
         });
