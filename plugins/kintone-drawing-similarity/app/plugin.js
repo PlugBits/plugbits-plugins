@@ -1419,7 +1419,7 @@
       return {
         element: group,
         getValues: () => ({
-          tags: [...new Set(items.map((it) => it.value))],
+          tags: [...new Set(items.filter((it) => it.origin === 'user').map((it) => it.value))],
           shapeTags: items.filter((it) => it.origin === 'ai').map((it) => it.value)
         })
       };
