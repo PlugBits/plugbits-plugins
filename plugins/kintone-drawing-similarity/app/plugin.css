@@ -141,51 +141,54 @@
 .pb-tag-input {
   width: 100%;
   box-sizing: border-box;
-  padding: 4px 8px;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  padding: 6px 10px;
+  border: 1px solid #d7dee8;
+  border-radius: 8px;
   background: #ffffff;
-  color: #1f2933;
+  color: #0f172a;
   font-size: 13px;
   outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
 
 .pb-tag-input:focus {
-  border-color: #1769aa;
-  box-shadow: 0 0 0 2px rgba(23, 105, 170, 0.15);
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
 }
 
 .pb-tag-dropdown {
   position: absolute;
-  top: calc(100% + 2px);
+  top: calc(100% + 4px);
   left: 0;
   right: 0;
   z-index: 1000;
   margin: 0;
-  padding: 4px 0;
-  border: 1px solid #d1d5db;
-  border-radius: 6px;
+  padding: 4px;
+  border: 1px solid #e6e9ef;
+  border-radius: 10px;
   background: #ffffff;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.14);
   list-style: none;
   max-height: 200px;
   overflow-y: auto;
 }
 
 .pb-tag-dropdown-item {
-  padding: 6px 12px;
-  color: #1f2933;
+  padding: 7px 10px;
+  color: #334155;
   font-size: 13px;
   cursor: pointer;
+  border-radius: 7px;
 }
 
 .pb-tag-dropdown-item:hover,
 .pb-tag-dropdown-item.active {
-  background: #f0f7ff;
+  background: #eff4ff;
+  color: #1d4ed8;
 }
 
 .pb-tag-dropdown-item.pb-tag-new {
-  color: #1769aa;
+  color: #2563eb;
   font-style: italic;
 }
 
@@ -206,11 +209,11 @@
   width: 480px;
   max-width: calc(100vw - 32px);
   padding: 24px;
-  border-radius: 12px;
+  border-radius: 16px;
   background: #ffffff;
-  color: #1f2933;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+  color: #0f172a;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.22), 0 4px 12px rgba(15, 23, 42, 0.1);
 }
 
 .pb-bulk-title {
@@ -222,7 +225,7 @@
 .pb-bulk-phase {
   min-height: 20px;
   margin-bottom: 12px;
-  color: #374151;
+  color: #334155;
   font-size: 13px;
 }
 
@@ -230,7 +233,7 @@
   height: 8px;
   margin-bottom: 16px;
   border-radius: 4px;
-  background: #e5e7eb;
+  background: #eef1f5;
   overflow: hidden;
 }
 
@@ -238,7 +241,7 @@
   width: 0%;
   height: 100%;
   border-radius: 4px;
-  background: #1769aa;
+  background: linear-gradient(90deg, #2563eb, #4f46e5);
   transition: width 0.3s ease;
 }
 

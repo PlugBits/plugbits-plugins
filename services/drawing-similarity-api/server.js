@@ -134,19 +134,20 @@ const sendJson = (response, status, payload) => {
   response.writeHead(status, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
     'Content-Type': 'application/json; charset=utf-8'
   });
   response.end(JSON.stringify(payload));
 };
 
-const sendBinary = (response, status, contentType, buffer) => {
+const sendBinary = (response, status, contentType, buffer, extraHeaders = {}) => {
   response.writeHead(status, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
     'Content-Type': contentType,
-    'Cache-Control': 'no-store'
+    'Cache-Control': 'no-store',
+    ...extraHeaders
   });
   response.end(buffer);
 };
@@ -2284,7 +2285,11 @@ const server = createServer(async (request, response) => {
     try {
       const pdfBuffer = await fetchKintoneFile(fileKey);
       const thumbBuffer = await convertPdfFirstPageToThumbnailPng(pdfBuffer);
-      sendBinary(response, 200, 'image/png', thumbBuffer);
+      // kintone の fileKey は内容に対して不変なのでブラウザに長期キャッシュさせる。
+      // 再検索・再表示のたびに PDF レンダリングが走るのを防ぐ。
+      sendBinary(response, 200, 'image/png', thumbBuffer, {
+        'Cache-Control': 'public, max-age=86400, immutable'
+      });
     } catch (error) {
       sendJson(response, 502, { error: error.message });
     }

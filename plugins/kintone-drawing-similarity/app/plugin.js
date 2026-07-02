@@ -79,6 +79,142 @@
     return btn;
   };
 
+  // --- エラーメッセージの日本語化 ---
+  const describeApiError = (status, fallback) => {
+    if (status === 401) return 'APIキーが正しくありません。プラグイン設定のAPI Keyを確認してください。';
+    if (status === 403) return 'アクセスが拒否されました。プラグイン設定を確認してください。';
+    if (status === 404) return 'APIが見つかりません。プラグイン設定のAPI Base URLを確認してください。';
+    if (status === 0) return 'サーバーに接続できませんでした。ネットワークまたはAPI Base URLを確認してください。';
+    if (status >= 500) return 'サーバーでエラーが発生しました。サーバー起動中の可能性があります。少し待ってから再試行してください。' + (fallback ? '\n詳細: ' + fallback : '');
+    return fallback || ('エラーが発生しました (HTTP ' + status + ')');
+  };
+
+  // --- 経過時間に応じて進行メッセージを切り替える ---
+  // phases: [{ at: 経過秒, text: 表示文言 }, ...]（at 昇順）
+  const startProgressiveStatus = (update, phases) => {
+    const startedAt = Date.now();
+    update(phases[0].text);
+    const timer = setInterval(() => {
+      const elapsed = (Date.now() - startedAt) / 1000;
+      let current = phases[0].text;
+      for (const phase of phases) {
+        if (elapsed >= phase.at) current = phase.text;
+      }
+      update(current);
+    }, 1000);
+    return () => clearInterval(timer);
+  };
+
+  const SEARCH_PHASES = [
+    { at: 0, text: '類似図面を検索しています...' },
+    { at: 8, text: '検索処理を実行中です。しばらくお待ちください...' },
+    { at: 20, text: 'サーバーを起動しています。初回は1分ほどかかることがあります...' },
+    { at: 45, text: 'もう少しお待ちください...' }
+  ];
+
+  // --- モーダルシェル（Shadow DOM / Esc・フォーカス・aria 対応） ---
+  // options.onClose: モーダルを閉じた後に呼ばれるフック
+  const createModalShell = (options = {}) => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const shadow = host.attachShadow({ mode: 'closed' });
+
+    const style = document.createElement('style');
+    style.textContent = REGISTER_CSS;
+
+    const overlay = document.createElement('div');
+    overlay.className = 'overlay';
+
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.tabIndex = -1;
+
+    const xBtn = document.createElement('button');
+    xBtn.className = 'btn-close';
+    xBtn.type = 'button';
+    xBtn.setAttribute('aria-label', '閉じる');
+    xBtn.textContent = '×';
+
+    const content = document.createElement('div');
+    content.className = 'modal-content';
+
+    modal.append(xBtn, content);
+    overlay.appendChild(modal);
+    shadow.append(style, overlay);
+
+    const previousFocus = document.activeElement;
+    const onKeydown = (e) => {
+      if (e.key === 'Escape') closeModal();
+    };
+    const closeModal = () => {
+      document.removeEventListener('keydown', onKeydown, true);
+      host.remove();
+      if (previousFocus && typeof previousFocus.focus === 'function') {
+        try { previousFocus.focus(); } catch (_) {}
+      }
+      if (options.onClose) options.onClose();
+    };
+    document.addEventListener('keydown', onKeydown, true);
+    xBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+    setTimeout(() => modal.focus(), 0);
+
+    return { host, shadow, overlay, modal, content, closeModal };
+  };
+
+  // --- 一致理由バッジ（サーバーの reasons を日本語ラベルに変換） ---
+  const REASON_LABELS = {
+    'drawingNo match': '図番一致',
+    'productName match': '品名一致',
+    'material match': '材質一致',
+    'customer match': '客先一致',
+    'revision match': '版数一致',
+    'shape category match': '形状分類一致',
+    'dimension match': '寸法一致',
+    'dimension close': '寸法近似',
+    'dimension roughly close': '寸法概ね近い',
+    'profile similar': '外形近似',
+    'outline similar': '輪郭近似',
+    'edge similar': 'エッジ近似'
+  };
+
+  const buildReasonBadges = (reasons) => {
+    if (!Array.isArray(reasons) || !reasons.length) return null;
+    const labels = [];
+    for (const reason of reasons) {
+      if (REASON_LABELS[reason]) {
+        labels.push(REASON_LABELS[reason]);
+      } else if (reason.startsWith('tag:')) {
+        labels.push('タグ一致: ' + reason.slice(4));
+      } else if (reason.startsWith('shapeTag:')) {
+        labels.push('AI形状タグ一致');
+      }
+      // 'ocr text available' 等の内部情報はバッジにしない
+    }
+    if (!labels.length) return null;
+    const wrap = document.createElement('div');
+    wrap.className = 'sim-reasons';
+    [...new Set(labels)].slice(0, 6).forEach((label) => {
+      const badge = document.createElement('span');
+      badge.className = 'sim-reason';
+      badge.textContent = label;
+      wrap.appendChild(badge);
+    });
+    return wrap;
+  };
+
+  // --- スコア帯の色分けクラス ---
+  const scoreBandClass = (score) => {
+    const value = Number(score) || 0;
+    if (value >= 0.8) return 'band-high';
+    if (value >= 0.6) return 'band-mid';
+    return 'band-low';
+  };
+
+  const isDebugEnabled = (config) => config && config.showDebugInfo === 'true';
+
   let _tagsCache = null;
   const fetchTags = async (apiBaseUrl, tenantId, appId, apiKey) => {
     if (_tagsCache) {
@@ -282,15 +418,32 @@
       thumbBox.textContent = '画像なし';
       return;
     }
+    // 読み込み中はシマー（スケルトン）を表示し、失敗時は再取得ボタンを出す。
     thumbBox.textContent = '';
+    const skeleton = document.createElement('div');
+    skeleton.className = 'sim-skeleton';
+    thumbBox.appendChild(skeleton);
+
     const img = document.createElement('img');
     img.className = 'sim-thumb-img';
     img.alt = '';
-    img.src = apiBaseUrl + '/thumbnail?fileKey=' + encodeURIComponent(fileKey);
-    img.addEventListener('error', () => {
-      thumbBox.replaceChild(document.createTextNode('画像なし'), img);
+    img.addEventListener('load', () => {
+      thumbBox.textContent = '';
+      thumbBox.appendChild(img);
     }, { once: true });
-    thumbBox.appendChild(img);
+    img.addEventListener('error', () => {
+      thumbBox.textContent = '';
+      const retry = document.createElement('button');
+      retry.type = 'button';
+      retry.className = 'sim-thumb-retry';
+      retry.textContent = '再取得';
+      retry.addEventListener('click', (e) => {
+        e.stopPropagation();
+        loadThumbnail(thumbBox, apiBaseUrl, fileKey);
+      });
+      thumbBox.appendChild(retry);
+    }, { once: true });
+    img.src = apiBaseUrl + '/thumbnail?fileKey=' + encodeURIComponent(fileKey);
   };
 
   const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad) => {
@@ -771,134 +924,240 @@
   // === 図面登録（Shadow DOM モーダル） ===
 
   const REGISTER_CSS = [
+    // ---- design tokens ----
+    ':host { --pb-primary: #2563eb; --pb-primary-hover: #1d4ed8; --pb-primary-soft: #eff4ff;',
+    '  --pb-ink: #0f172a; --pb-ink-2: #334155; --pb-muted: #64748b; --pb-faint: #94a3b8;',
+    '  --pb-line: #e6e9ef; --pb-line-2: #d7dee8; --pb-bg: #f8fafc;',
+    '  --pb-green: #059669; --pb-green-soft: #ecfdf5; --pb-amber: #b45309; --pb-amber-soft: #fffbeb;',
+    '  --pb-red: #dc2626; --pb-red-soft: #fef2f2; --pb-violet: #6d28d9; --pb-violet-soft: #f5f3ff;',
+    '  --pb-radius: 12px; --pb-radius-sm: 9px;',
+    '  --pb-shadow: 0 20px 50px rgba(15,23,42,.22), 0 4px 12px rgba(15,23,42,.10);',
+    '  --pb-ring: 0 0 0 3px rgba(37,99,235,.18); }',
     '* { box-sizing: border-box; margin: 0; }',
-    '.overlay { position: fixed; top: 0; right: 0; bottom: 0; left: 0;',
-    '  background: rgba(0,0,0,.55); display: flex; align-items: center;',
-    '  justify-content: center; z-index: 9999; }',
-    '.modal { background: #fff; border-radius: 8px; padding: 24px;',
-    '  width: 580px; max-width: calc(100vw - 32px); max-height: 90vh;',
-    '  overflow-y: auto; position: relative; }',
-    '.modal.wide { width: calc(100vw - 32px); height: calc(100vh - 32px); padding: 0;',
-    '  overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 32px); }',
-    '.modal.wide .btn-close { top: 10px; right: 14px; }',
-    '.modal-header { padding: 14px 20px 14px 24px; border-bottom: 1px solid #e5e7eb;',
-    '  display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }',
+    '@keyframes pb-fade-in { from { opacity: 0; } to { opacity: 1; } }',
+    '@keyframes pb-pop-in { from { opacity: 0; transform: translateY(10px) scale(.985); }',
+    '  to { opacity: 1; transform: none; } }',
+    '@keyframes pb-spin { to { transform: rotate(360deg); } }',
+    '@keyframes pb-shimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }',
+    // ---- modal shell ----
+    '.overlay { position: fixed; inset: 0; background: rgba(15,23,42,.5);',
+    '  backdrop-filter: blur(3px); display: flex; align-items: center; justify-content: center;',
+    '  z-index: 9999; animation: pb-fade-in .16s ease-out;',
+    '  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;',
+    '  color: var(--pb-ink); }',
+    '.modal { background: #fff; border-radius: 16px; padding: 24px;',
+    '  width: 620px; max-width: calc(100vw - 32px); max-height: 90vh;',
+    '  overflow-y: auto; position: relative; box-shadow: var(--pb-shadow);',
+    '  animation: pb-pop-in .18s cubic-bezier(.16,1,.3,1); }',
+    '.modal.wide { width: calc(100vw - 40px); height: calc(100vh - 40px); padding: 0;',
+    '  overflow: hidden; display: flex; flex-direction: column; max-height: calc(100vh - 40px); }',
+    '.modal.wide .btn-close { top: 14px; right: 16px; }',
+    '.modal-header { padding: 16px 56px 16px 24px; border-bottom: 1px solid var(--pb-line);',
+    '  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-shrink: 0; }',
     '.modal-header h2 { margin: 0; }',
+    '.modal-sub { margin-top: 2px; color: var(--pb-muted); font-size: 12px; font-weight: 400; }',
+    '.modal-header-actions { display: flex; gap: 8px; flex-shrink: 0; }',
     '.form-layout { display: flex; flex: 1; overflow: hidden; }',
     '.preview-panel { flex: 0 0 58%; display: flex; flex-direction: column;',
-    '  border-right: 1px solid #e5e7eb; background: #f5f6f7; min-height: 0; }',
-    '.preview-label { padding: 6px 12px; font-size: 11px; color: #6b7280;',
-    '  background: #fff; border-bottom: 1px solid #e5e7eb; flex-shrink: 0; }',
+    '  border-right: 1px solid var(--pb-line); background: var(--pb-bg); min-height: 0; }',
+    '.preview-label { padding: 8px 14px; font-size: 11px; color: var(--pb-muted); font-weight: 600;',
+    '  background: #fff; border-bottom: 1px solid var(--pb-line); flex-shrink: 0;',
+    '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
     '.preview-embed { flex: 1; width: 100%; border: none; display: block; min-height: 0; }',
     '.preview-placeholder { flex: 1; display: flex; align-items: center; justify-content: center;',
-    '  color: #9ca3af; font-size: 13px; }',
-    '.form-panel { flex: 0 0 42%; overflow-y: auto; padding: 20px 24px 24px; }',
+    '  color: var(--pb-faint); font-size: 13px; }',
+    '.form-panel { flex: 0 0 42%; overflow-y: auto; padding: 20px 24px 28px; }',
     '.modal.wide .modal-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }',
-    '.modal-content { }',
-    'h2 { font-size: 17px; font-weight: 600; color: #1a1a1a; margin-bottom: 20px; }',
-    '.btn-close { position: absolute; top: 10px; right: 14px;',
-    '  background: none; border: none; font-size: 22px; cursor: pointer;',
-    '  color: #999; line-height: 1; padding: 2px 6px; }',
-    '.btn-close:hover { color: #333; }',
-    '.dropzone { border: 2px dashed #c8c8c8; border-radius: 8px; padding: 48px 24px;',
-    '  text-align: center; cursor: pointer; transition: border-color .2s, background .2s; }',
-    '.dropzone.drag-over { border-color: #3b82f6; background: #eff6ff; }',
-    '.dropzone .drop-icon { font-size: 36px; color: #9ca3af; margin-bottom: 12px; }',
-    '.dropzone .drop-main { font-size: 15px; color: #374151; font-weight: 500; margin-bottom: 6px; }',
-    '.dropzone .drop-sub { font-size: 13px; color: #6b7280; }',
+    'h2 { font-size: 17px; font-weight: 700; color: var(--pb-ink); letter-spacing: .01em; margin-bottom: 18px; }',
+    '.modal-header h2, .modal.wide h2 { margin-bottom: 0; }',
+    '.btn-close { position: absolute; top: 14px; right: 16px; width: 32px; height: 32px;',
+    '  display: inline-flex; align-items: center; justify-content: center;',
+    '  background: transparent; border: none; border-radius: 8px; font-size: 20px; cursor: pointer;',
+    '  color: var(--pb-faint); line-height: 1; transition: background .15s, color .15s; z-index: 5; }',
+    '.btn-close:hover { background: #f1f5f9; color: var(--pb-ink-2); }',
+    // ---- dropzone ----
+    '.dropzone { border: 2px dashed var(--pb-line-2); border-radius: var(--pb-radius);',
+    '  padding: 52px 24px 44px; text-align: center; cursor: pointer; background: var(--pb-bg);',
+    '  transition: border-color .18s, background .18s, transform .12s; }',
+    '.dropzone:hover { border-color: var(--pb-faint); }',
+    '.dropzone.drag-over { border-color: var(--pb-primary); background: var(--pb-primary-soft);',
+    '  transform: scale(1.005); }',
+    '.dropzone .drop-icon { width: 52px; height: 52px; margin: 0 auto 14px; border-radius: 14px;',
+    '  display: flex; align-items: center; justify-content: center; font-size: 24px;',
+    '  background: #fff; border: 1px solid var(--pb-line); box-shadow: 0 2px 6px rgba(15,23,42,.06); }',
+    '.dropzone .drop-main { font-size: 15px; color: var(--pb-ink-2); font-weight: 600; margin-bottom: 6px; }',
+    '.dropzone .drop-sub { font-size: 12.5px; color: var(--pb-muted); }',
+    '.drop-note { margin-top: 14px; font-size: 11.5px; color: var(--pb-faint); }',
     '.file-input { display: none; }',
-    '.spinner-wrap { text-align: center; padding: 40px 0; color: #6b7280; font-size: 14px; }',
-    '.section-label { font-size: 11px; color: #6b7280; font-weight: 600;',
-    '  text-transform: uppercase; letter-spacing: .05em; margin-bottom: 8px; }',
+    // ---- spinner / progress ----
+    '.pb-spinner { width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto;',
+    '  border: 3px solid rgba(37,99,235,.18); border-top-color: var(--pb-primary);',
+    '  animation: pb-spin .7s linear infinite; }',
+    '.spinner-wrap { display: flex; flex-direction: column; align-items: center; gap: 14px;',
+    '  text-align: center; padding: 44px 0 36px; color: var(--pb-muted); font-size: 13.5px; }',
+    '.status-line { display: flex; align-items: center; gap: 10px; color: var(--pb-muted); font-size: 13px; }',
+    '.pb-steps { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; text-align: left; }',
+    '.pb-step { display: flex; align-items: center; gap: 10px; font-size: 13px; color: var(--pb-faint); }',
+    '.pb-step-dot { width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto;',
+    '  display: inline-flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700;',
+    '  background: #f1f5f9; color: var(--pb-faint); border: 1px solid var(--pb-line); transition: all .2s; }',
+    '.pb-step.active { color: var(--pb-ink-2); font-weight: 600; }',
+    '.pb-step.active .pb-step-dot { background: var(--pb-primary-soft); color: var(--pb-primary);',
+    '  border-color: var(--pb-primary); }',
+    '.pb-step.done { color: var(--pb-muted); }',
+    '.pb-step.done .pb-step-dot { background: var(--pb-green-soft); color: var(--pb-green);',
+    '  border-color: transparent; }',
+    // ---- form ----
+    '.section-label { font-size: 11px; color: var(--pb-muted); font-weight: 700;',
+    '  text-transform: uppercase; letter-spacing: .06em; margin-bottom: 8px; }',
     '.field-group { margin-bottom: 16px; }',
-    '.field-label { display: block; font-size: 12px; color: #374151; font-weight: 500; margin-bottom: 5px; }',
-    '.field-input { width: 100%; padding: 8px 10px; border: 1px solid #d1d5db;',
-    '  border-radius: 5px; font-size: 14px; color: #111; }',
-    '.field-input:focus { outline: none; border-color: #3b82f6; }',
-    '.field-input.error { border-color: #dc2626; }',
+    '.field-label { display: block; font-size: 12px; color: var(--pb-ink-2); font-weight: 600; margin-bottom: 6px; }',
+    '.field-input { width: 100%; min-height: 38px; padding: 8px 12px; border: 1px solid var(--pb-line-2);',
+    '  border-radius: var(--pb-radius-sm); font-size: 14px; color: var(--pb-ink); background: #fff;',
+    '  transition: border-color .15s, box-shadow .15s; }',
+    '.field-input:hover { border-color: var(--pb-faint); }',
+    '.field-input:focus { outline: none; border-color: var(--pb-primary); box-shadow: var(--pb-ring); }',
+    '.field-input.error { border-color: var(--pb-red); box-shadow: 0 0 0 3px rgba(220,38,38,.12); }',
+    '.field-note { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11.5px; border-radius: 6px; padding: 5px 8px; }',
+    '.field-note.info { background: var(--pb-primary-soft); color: var(--pb-primary); }',
+    '.field-note.warn { background: var(--pb-amber-soft); color: var(--pb-amber); }',
+    // ---- chips ----
     '.chip-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }',
-    '.chip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px;',
-    '  border-radius: 9999px; border: 1px solid #d1d5db; background: #f9fafb;',
-    '  font-size: 13px; cursor: pointer; user-select: none;',
-    '  transition: border-color .15s, background .15s; }',
+    '.chip { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px;',
+    '  border-radius: 9999px; border: 1px solid var(--pb-line-2); background: #fff;',
+    '  font-size: 13px; cursor: pointer; user-select: none; color: var(--pb-ink-2);',
+    '  transition: border-color .15s, background .15s, color .15s; }',
+    '.chip:hover { border-color: var(--pb-faint); }',
     '.chip input[type=checkbox] { display: none; }',
-    '.chip.selected { background: #eff6ff; border-color: #3b82f6; color: #1d4ed8; }',
+    '.chip.selected { background: var(--pb-primary-soft); border-color: var(--pb-primary); color: var(--pb-primary-hover); font-weight: 600; }',
     '.ac-chips { display: flex; flex-wrap: wrap; gap: 6px; min-height: 26px; margin-top: 6px; }',
-    '.ac-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px;',
-    '  background: #eff6ff; border: 1px solid #3b82f6; color: #1d4ed8;',
-    '  border-radius: 9999px; font-size: 13px; }',
-    '.ac-chip-del { background: none; border: none; cursor: pointer; color: #93c5fd;',
+    '.ac-chip { display: inline-flex; align-items: center; gap: 4px; padding: 4px 11px;',
+    '  background: var(--pb-primary-soft); border: 1px solid transparent; color: var(--pb-primary-hover);',
+    '  border-radius: 9999px; font-size: 12.5px; font-weight: 600; }',
+    '.ac-chip-del { background: none; border: none; cursor: pointer; color: rgba(29,78,216,.45);',
     '  font-size: 14px; line-height: 1; padding: 0 0 0 4px; }',
-    '.ac-chip-del:hover { color: #1d4ed8; }',
-    '.ac-chip-ai { background: #ede9fe; border-color: #8b5cf6; color: #5b21b6; }',
-    '.ac-chip-ai .ac-chip-del { color: #c4b5fd; }',
-    '.ac-chip-ai .ac-chip-del:hover { color: #5b21b6; }',
+    '.ac-chip-del:hover { color: var(--pb-primary-hover); }',
+    '.ac-chip-ai { background: var(--pb-violet-soft); color: var(--pb-violet); }',
+    '.ac-chip-ai .ac-chip-del { color: rgba(109,40,217,.4); }',
+    '.ac-chip-ai .ac-chip-del:hover { color: var(--pb-violet); }',
     '.ac-input-row { position: relative; margin-top: 6px; }',
-    '.ac-dropdown { position: absolute; top: 100%; left: 0; right: 0; background: #fff;',
-    '  border: 1px solid #d1d5db; border-top: none; border-radius: 0 0 5px 5px;',
-    '  max-height: 200px; overflow-y: auto; z-index: 10; list-style: none; padding: 0; margin: 0;',
-    '  box-shadow: 0 4px 8px rgba(0,0,0,.1); }',
-    '.ac-item { padding: 8px 12px; font-size: 13px; cursor: pointer; color: #374151; }',
-    '.ac-item:hover, .ac-item.active { background: #eff6ff; color: #1d4ed8; }',
-    '.ac-item.new { color: #059669; font-style: italic; }',
-    '.form-actions { display: flex; gap: 10px; margin-top: 24px; padding-top: 20px;',
-    '  border-top: 1px solid #f0f0f0; }',
-    '.btn-primary { flex: 1; padding: 10px; background: #3b82f6; color: #fff;',
-    '  border: none; border-radius: 5px; font-size: 14px; cursor: pointer; font-weight: 500; }',
+    '.ac-dropdown { position: absolute; top: calc(100% + 4px); left: 0; right: 0; background: #fff;',
+    '  border: 1px solid var(--pb-line); border-radius: 10px;',
+    '  max-height: 200px; overflow-y: auto; z-index: 10; list-style: none; padding: 4px; margin: 0;',
+    '  box-shadow: 0 10px 30px rgba(15,23,42,.14); }',
+    '.ac-item { padding: 8px 10px; font-size: 13px; cursor: pointer; color: var(--pb-ink-2); border-radius: 7px; }',
+    '.ac-item:hover, .ac-item.active { background: var(--pb-primary-soft); color: var(--pb-primary-hover); }',
+    '.ac-item.new { color: var(--pb-green); font-style: italic; }',
+    // ---- actions / buttons ----
+    '.form-actions { display: flex; gap: 10px; margin-top: 24px; padding-top: 18px;',
+    '  border-top: 1px solid var(--pb-line); }',
+    '.btn-primary { flex: 1; min-height: 42px; padding: 10px 16px; background: var(--pb-primary); color: #fff;',
+    '  border: none; border-radius: var(--pb-radius-sm); font-size: 14px; cursor: pointer; font-weight: 600;',
+    '  box-shadow: 0 1px 2px rgba(37,99,235,.35); transition: background .15s, transform .05s; }',
     '.btn-primary:disabled { opacity: .5; cursor: not-allowed; }',
-    '.btn-primary:not(:disabled):hover { background: #2563eb; }',
-    '.btn-secondary { padding: 10px 16px; background: #f9fafb; color: #374151;',
-    '  border: 1px solid #d1d5db; border-radius: 5px; font-size: 14px; cursor: pointer; }',
-    '.btn-secondary:hover { background: #f3f4f6; }',
-    '.result-wrap { text-align: center; padding: 32px 0; }',
-    '.result-icon { font-size: 40px; margin-bottom: 12px; }',
-    '.result-msg { font-size: 15px; margin-bottom: 8px; color: #1a1a1a; }',
-    '.result-detail { font-size: 12px; color: #6b7280; white-space: pre-wrap; }',
-    '.result-ok .result-icon { color: #059669; }',
-    '.result-error .result-icon { color: #dc2626; }',
-    '.sim-status { padding-bottom: 12px; color: #6b7280; font-size: 13px; }',
-    '.sim-confidence { display: flex; align-items: center; gap: 10px; padding-bottom: 12px; color: #374151; font-size: 12px; }',
+    '.btn-primary:not(:disabled):hover { background: var(--pb-primary-hover); }',
+    '.btn-primary:not(:disabled):active { transform: translateY(1px); }',
+    '.btn-primary:focus-visible { outline: none; box-shadow: var(--pb-ring); }',
+    '.btn-secondary { min-height: 42px; padding: 10px 16px; background: #fff; color: var(--pb-ink-2);',
+    '  border: 1px solid var(--pb-line-2); border-radius: var(--pb-radius-sm); font-size: 14px; cursor: pointer;',
+    '  font-weight: 600; transition: background .15s, border-color .15s; }',
+    '.btn-secondary:hover { background: var(--pb-bg); border-color: var(--pb-faint); }',
+    '.btn-mini { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 12px;',
+    '  background: #fff; color: var(--pb-ink-2); border: 1px solid var(--pb-line-2);',
+    '  border-radius: 8px; font-size: 12.5px; font-weight: 600; cursor: pointer;',
+    '  transition: background .15s, border-color .15s; }',
+    '.btn-mini:hover { background: var(--pb-bg); border-color: var(--pb-faint); }',
+    '.btn-mini.accent { background: var(--pb-primary); border-color: var(--pb-primary); color: #fff; }',
+    '.btn-mini.accent:hover { background: var(--pb-primary-hover); }',
+    // ---- result (done state) ----
+    '.result-wrap { text-align: center; padding: 30px 0 8px; }',
+    '.result-icon { width: 56px; height: 56px; margin: 0 auto 14px; border-radius: 50%;',
+    '  display: flex; align-items: center; justify-content: center; font-size: 26px; font-weight: 700; }',
+    '.result-ok .result-icon { background: var(--pb-green-soft); color: var(--pb-green); }',
+    '.result-error .result-icon { background: var(--pb-red-soft); color: var(--pb-red); }',
+    '.result-msg { font-size: 15px; margin-bottom: 8px; color: var(--pb-ink); font-weight: 600; white-space: pre-wrap; }',
+    '.result-detail { font-size: 12px; color: var(--pb-muted); white-space: pre-wrap; }',
+    // ---- similar results ----
+    '.sim-status { display: flex; align-items: center; gap: 10px; padding-bottom: 12px;',
+    '  color: var(--pb-muted); font-size: 13px; }',
+    '.sim-confidence { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding-bottom: 12px;',
+    '  color: var(--pb-ink-2); font-size: 12px; }',
     '.sim-confidence[hidden] { display: none; }',
-    '.sim-confidence-level { display: inline-flex; align-items: center; min-height: 22px; padding: 0 8px;',
-    '  border-radius: 9999px; font-weight: 700; }',
-    '.sim-confidence-level.level-high { background: #dcfce7; color: #166534; }',
-    '.sim-confidence-level.level-medium { background: #fef3c7; color: #92400e; }',
-    '.sim-confidence-level.level-low { background: #fee2e2; color: #991b1b; }',
-    '.sim-confidence-scores { color: #6b7280; }',
+    '.sim-confidence-level { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 0 10px;',
+    '  border-radius: 9999px; font-weight: 700; font-size: 11.5px; }',
+    '.sim-confidence-level.level-high { background: var(--pb-green-soft); color: #166534; }',
+    '.sim-confidence-level.level-medium { background: var(--pb-amber-soft); color: #92400e; }',
+    '.sim-confidence-level.level-low { background: #f1f5f9; color: var(--pb-muted); }',
+    '.sim-confidence-scores { color: var(--pb-faint);',
+    '  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }',
+    '.sim-note { display: flex; gap: 8px; align-items: flex-start; margin-bottom: 12px; padding: 9px 12px;',
+    '  border-radius: 9px; background: var(--pb-amber-soft); color: var(--pb-amber); font-size: 12px; line-height: 1.5; }',
+    '.sim-empty { text-align: center; padding: 42px 16px; }',
+    '.sim-empty-icon { width: 52px; height: 52px; margin: 0 auto 12px; border-radius: 14px;',
+    '  display: flex; align-items: center; justify-content: center; font-size: 24px;',
+    '  background: var(--pb-bg); border: 1px solid var(--pb-line); color: var(--pb-faint); }',
+    '.sim-empty-text { font-size: 14px; font-weight: 600; color: var(--pb-ink-2); margin-bottom: 6px; }',
+    '.sim-empty-sub { font-size: 12.5px; color: var(--pb-muted); line-height: 1.6; }',
     '.sim-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }',
-    '.sim-item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 10px;',
-    '  border: 1px solid #e5e7eb; border-radius: 6px; }',
+    '.sim-item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 12px;',
+    '  border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: #fff;',
+    '  transition: border-color .15s, box-shadow .15s; }',
+    '.sim-item:hover { border-color: var(--pb-line-2); box-shadow: 0 4px 14px rgba(15,23,42,.07); }',
     '.sim-thumb { display: flex; align-items: center; justify-content: center; box-sizing: border-box;',
-    '  width: 64px; height: 64px; border: 1px solid #e5e7eb; border-radius: 4px; background: #f9fafb;',
-    '  color: #9ca3af; font-size: 10px; text-align: center; overflow: hidden; }',
+    '  width: 68px; height: 68px; border: 1px solid var(--pb-line); border-radius: 8px; background: var(--pb-bg);',
+    '  color: var(--pb-faint); font-size: 10px; text-align: center; overflow: hidden; }',
     '.sim-thumb-img { max-width: 100%; max-height: 100%; object-fit: contain; }',
-    '.sim-thumb-load { border: none; background: transparent; color: #3b82f6; font-size: 10px;',
-    '  cursor: pointer; padding: 4px; }',
-    '.sim-link { color: #1d4ed8; font-weight: 700; text-decoration: none; }',
-    '.sim-meta { margin-top: 4px; color: #6b7280; font-size: 12px; }',
-    '.sim-detail { margin-top: 4px; color: #374151;',
-    '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 12px; }',
-    '.sim-scorebox { display: grid; min-width: 64px; justify-items: end; gap: 3px; }',
-    '.sim-vectorraw { color: #111827;',
+    '.sim-thumb-load { border: none; background: transparent; color: var(--pb-primary); font-size: 10px;',
+    '  cursor: pointer; padding: 4px; font-weight: 600; }',
+    '.sim-skeleton { width: 100%; height: 100%; border-radius: inherit;',
+    '  background: linear-gradient(90deg, #eef1f5 25%, #f7f9fb 50%, #eef1f5 75%);',
+    '  background-size: 200% 100%; animation: pb-shimmer 1.3s ease-in-out infinite; }',
+    '.sim-thumb-retry { border: none; background: transparent; color: var(--pb-muted); font-size: 10px;',
+    '  cursor: pointer; padding: 4px; text-decoration: underline; }',
+    '.sim-link { color: var(--pb-primary-hover); font-weight: 700; text-decoration: none; font-size: 13.5px; }',
+    '.sim-link:hover { text-decoration: underline; }',
+    '.sim-meta { margin-top: 3px; color: var(--pb-muted); font-size: 12px; }',
+    '.sim-detail { margin-top: 4px; color: var(--pb-faint);',
+    '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 11px; }',
+    '.sim-scorebox { display: grid; min-width: 60px; justify-items: end; align-content: start; gap: 4px; }',
+    '.sim-vectorraw { color: var(--pb-faint);',
     '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;',
-    '  font-size: 14px; font-weight: 800; }',
-    '.sim-score { color: #1a1a1a; font-size: 13px; font-weight: 700; }',
+    '  font-size: 11px; font-weight: 600; }',
+    '.sim-score { display: inline-flex; align-items: center; min-height: 24px; padding: 0 10px;',
+    '  border-radius: 9999px; font-size: 12.5px; font-weight: 700; background: #f1f5f9; color: var(--pb-ink-2); }',
+    '.sim-score.band-high { background: var(--pb-green-soft); color: #166534; }',
+    '.sim-score.band-mid { background: var(--pb-amber-soft); color: #92400e; }',
+    '.sim-reasons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }',
+    '.sim-reason { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;',
+    '  background: var(--pb-primary-soft); color: var(--pb-primary-hover); font-size: 10.5px; font-weight: 600; }',
+    // ---- hero cards ----
     '.sim-hero-grid { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }',
-    '.sim-hero-card { display: flex; flex-direction: column; }',
-    '.sim-hero-thumb { position: relative; width: 100%; height: 280px; display: flex;',
-    '  align-items: center; justify-content: center; box-sizing: border-box; border: 1px solid #e5e7eb;',
-    '  border-radius: 8px; background: #f9fafb; color: #9ca3af; font-size: 13px; text-align: center;',
-    '  overflow: hidden; }',
+    '.sim-hero-card { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--pb-line);',
+    '  border-radius: 14px; background: #fff; transition: border-color .15s, box-shadow .15s; }',
+    '.sim-hero-card:hover { border-color: var(--pb-line-2); box-shadow: 0 6px 20px rgba(15,23,42,.08); }',
+    '.sim-hero-thumb { position: relative; width: 100%; height: 250px; display: flex;',
+    '  align-items: center; justify-content: center; box-sizing: border-box;',
+    '  border: 1px solid var(--pb-line); border-radius: 10px; background: var(--pb-bg);',
+    '  color: var(--pb-faint); font-size: 13px; text-align: center; overflow: hidden; }',
     '.sim-hero-thumb .sim-thumb-img { width: 100%; height: 100%; object-fit: contain; }',
-    '.sim-hero-score { position: absolute; top: 8px; right: 8px; padding: 3px 9px; border-radius: 9999px;',
-    '  background: rgba(17,24,39,.78); color: #fff; font-size: 12px; font-weight: 700; }',
-    '.sim-hero-link { display: block; margin-top: 8px; color: #1d4ed8; font-weight: 700; font-size: 14px;',
-    '  text-decoration: none; }',
-    '.sim-hero-meta { margin-top: 2px; color: #6b7280; font-size: 12px; }',
-    '.sim-shape-comment { margin-top: 4px; color: #6d28d9; font-size: 11px; font-style: italic; }',
-    '.sim-shape-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }',
-    '.sim-shape-tag { display: inline-flex; align-items: center; padding: 1px 7px; border-radius: 999px;',
-    '  background: #ede9fe; color: #5b21b6; font-size: 10px; font-weight: 600; }'
+    '.sim-hero-score { position: absolute; top: 10px; right: 10px; padding: 4px 11px; border-radius: 9999px;',
+    '  background: rgba(15,23,42,.82); color: #fff; font-size: 12px; font-weight: 700;',
+    '  backdrop-filter: blur(2px); }',
+    '.sim-hero-score.band-high { background: rgba(5,150,105,.92); }',
+    '.sim-hero-score.band-mid { background: rgba(180,83,9,.92); }',
+    '.sim-hero-link { display: inline-block; margin-top: 10px; color: var(--pb-primary-hover);',
+    '  font-weight: 700; font-size: 14px; text-decoration: none; }',
+    '.sim-hero-link:hover { text-decoration: underline; }',
+    '.sim-hero-meta { margin-top: 2px; color: var(--pb-muted); font-size: 12px; }',
+    '.sim-shape-comment { margin-top: 4px; color: var(--pb-violet); font-size: 11px; font-style: italic; }',
+    '.sim-shape-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }',
+    '.sim-shape-tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;',
+    '  background: var(--pb-violet-soft); color: var(--pb-violet); font-size: 10.5px; font-weight: 600; }',
+    // ---- debug (collapsed) ----
+    '.sim-debug { margin-top: 10px; font-size: 11px; color: var(--pb-faint); }',
+    '.sim-debug summary { cursor: pointer; user-select: none; }',
+    '.sim-debug pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--pb-bg);',
+    '  overflow-x: auto; font-size: 10.5px; line-height: 1.5; }'
   ].join('\n');
 
   const parseOptionsList = (str) =>
@@ -1007,43 +1266,22 @@
     const pdfFileField = config.pdfFileField || '';
     const processOptions = parseOptionsList(config.processOptions);
 
-    const host = document.createElement('div');
-    host.id = 'pb-register-host';
-    document.body.appendChild(host);
-    const shadow = host.attachShadow({ mode: 'closed' });
-
-    const style = document.createElement('style');
-    style.textContent = REGISTER_CSS;
-
-    const overlay = document.createElement('div');
-    overlay.className = 'overlay';
-
-    const modal = document.createElement('div');
-    modal.className = 'modal';
-
-    const xBtn = document.createElement('button');
-    xBtn.className = 'btn-close';
-    xBtn.type = 'button';
-    xBtn.textContent = '×';
-
-    const content = document.createElement('div');
-    content.className = 'modal-content';
-
-    modal.append(xBtn, content);
-    overlay.appendChild(modal);
-    shadow.append(style, overlay);
-
     let kintoneRecordChanged = false;
-    const closeModal = () => {
-      host.remove();
-      if (kintoneRecordChanged) {
-        window.location.reload();
+    const shell = createModalShell({
+      onClose: () => {
+        if (kintoneRecordChanged) {
+          window.location.reload();
+        }
       }
-    };
-    xBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+    });
+    shell.host.id = 'pb-register-host';
+    const { modal, content, closeModal } = shell;
 
-    const clear = () => { content.textContent = ''; };
+    let cancelStateTimer = null;
+    const clear = () => {
+      if (cancelStateTimer) { cancelStateTimer(); cancelStateTimer = null; }
+      content.textContent = '';
+    };
 
     // --- State: Drop ---
     const showDropState = () => {
@@ -1053,43 +1291,11 @@
       const title = document.createElement('h2');
       title.textContent = '図面を登録';
 
-      const dropWrap = document.createElement('div');
-      dropWrap.className = 'dropzone';
-      const icon = document.createElement('div');
-      icon.className = 'drop-icon';
-      icon.textContent = '📄';
-      const main = document.createElement('div');
-      main.className = 'drop-main';
-      main.textContent = 'PDFをここにドロップ';
-      const sub = document.createElement('div');
-      sub.className = 'drop-sub';
-      sub.textContent = 'またはクリックしてファイルを選択';
-      const fileInput = document.createElement('input');
-      fileInput.type = 'file';
-      fileInput.accept = '.pdf,application/pdf';
-      fileInput.className = 'file-input';
-      dropWrap.append(icon, main, sub, fileInput);
-
-      dropWrap.addEventListener('click', (e) => {
-        if (e.target !== fileInput) fileInput.click();
-      });
-      dropWrap.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropWrap.classList.add('drag-over');
-      });
-      dropWrap.addEventListener('dragleave', () => dropWrap.classList.remove('drag-over'));
-      dropWrap.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropWrap.classList.remove('drag-over');
-        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-        if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
-          handleFile(file);
-        } else {
-          window.alert('PDFファイルをドロップしてください。');
-        }
-      });
-      fileInput.addEventListener('change', () => {
-        if (fileInput.files && fileInput.files[0]) handleFile(fileInput.files[0]);
+      const dropWrap = buildDropzone({
+        main: 'PDFをここにドロップ',
+        sub: 'またはクリックしてファイルを選択',
+        note: '※ OCRで図番・品名などを自動読み取りします',
+        onFile: (file) => handleFile(file)
       });
 
       content.append(title, dropWrap);
@@ -1131,10 +1337,19 @@
 
       const formPanel = document.createElement('div');
       formPanel.className = 'form-panel';
-      const spinner = document.createElement('div');
-      spinner.className = 'spinner-wrap';
-      spinner.textContent = '図面を解析しています...';
-      formPanel.appendChild(spinner);
+      const spinnerWrap = document.createElement('div');
+      spinnerWrap.className = 'spinner-wrap';
+      const spinnerEl = document.createElement('div');
+      spinnerEl.className = 'pb-spinner';
+      const spinnerText = document.createElement('div');
+      spinnerWrap.append(spinnerEl, spinnerText);
+      formPanel.appendChild(spinnerWrap);
+      cancelStateTimer = startProgressiveStatus((msg) => { spinnerText.textContent = msg; }, [
+        { at: 0, text: '図面をOCR解析しています...' },
+        { at: 10, text: '図番・品名などを読み取っています...' },
+        { at: 25, text: 'サーバー起動中の可能性があります。初回は1分ほどかかることがあります...' },
+        { at: 50, text: 'もう少しお待ちください...' }
+      ]);
 
       layout.append(previewPanel, formPanel);
       content.append(header, layout);
@@ -1562,6 +1777,31 @@
       drawingNoInput = drawingNoAc.input;
       drawingNoInput.placeholder = '図番を入力（既存から選択も可）';
       drawingNoGroup.append(drawingNoLabel, drawingNoAc.element);
+
+      // 既存図番と重複する場合は「更新になる」ことを事前に知らせる（無警告上書きの防止）
+      const dupeNote = document.createElement('div');
+      dupeNote.className = 'field-note warn';
+      dupeNote.hidden = true;
+      drawingNoGroup.appendChild(dupeNote);
+      if (!(existingContext && existingContext.recordId)) {
+        let dupeCheckSeq = 0;
+        const checkDupe = async () => {
+          const value = drawingNoInput.value.trim();
+          const seq = ++dupeCheckSeq;
+          if (!value || !drawingNoField) { dupeNote.hidden = true; return; }
+          try {
+            const existing = await findRecordByDrawingNo(value, drawingNoField, appId);
+            if (seq !== dupeCheckSeq) return;
+            if (existing) {
+              dupeNote.textContent = '⚠ 図番「' + value + '」は登録済みです。保存すると既存レコードを更新します。';
+              dupeNote.hidden = false;
+            } else {
+              dupeNote.hidden = true;
+            }
+          } catch (_) { /* チェック失敗時は表示しない */ }
+        };
+        drawingNoInput.addEventListener('blur', () => { setTimeout(checkDupe, 200); });
+      }
       formPanel.appendChild(drawingNoGroup);
 
       // 品名
@@ -1673,20 +1913,46 @@
       content.append(header, layout);
     };
 
-    // --- State: Registering ---
-    const showRegisteringState = (step) => {
+    // --- State: Registering（ステップインジケータ付き） ---
+    const REGISTER_STEPS = ['PDFをアップロード', 'kintoneレコードを保存', '検索インデックスを登録'];
+    const showRegisteringState = (activeStep, messageOverride) => {
       clear();
       modal.classList.remove('wide');
       const title = document.createElement('h2');
-      title.textContent = '登録中...';
-      const spinner = document.createElement('div');
-      spinner.className = 'spinner-wrap';
-      spinner.textContent = step || 'kintoneに保存しています...';
-      content.append(title, spinner);
+      title.textContent = '登録しています...';
+      const wrap = document.createElement('div');
+      wrap.className = 'spinner-wrap';
+      const spinnerEl = document.createElement('div');
+      spinnerEl.className = 'pb-spinner';
+      wrap.appendChild(spinnerEl);
+
+      if (typeof activeStep === 'number') {
+        const steps = document.createElement('div');
+        steps.className = 'pb-steps';
+        REGISTER_STEPS.forEach((label, index) => {
+          const step = document.createElement('div');
+          step.className = 'pb-step' + (index < activeStep ? ' done' : index === activeStep ? ' active' : '');
+          const dot = document.createElement('span');
+          dot.className = 'pb-step-dot';
+          dot.textContent = index < activeStep ? '✓' : String(index + 1);
+          const text = document.createElement('span');
+          text.textContent = label;
+          step.append(dot, text);
+          steps.appendChild(step);
+        });
+        wrap.appendChild(steps);
+      }
+      if (messageOverride) {
+        const msg = document.createElement('div');
+        msg.textContent = messageOverride;
+        wrap.appendChild(msg);
+      }
+      content.append(title, wrap);
     };
 
     // --- State: Done ---
-    const showDoneState = (success, message, detail) => {
+    // indexPromise を渡すと「検索インデックス登録」の進行/結果をライブ表示する
+    const showDoneState = (success, message, detail, indexPromise) => {
       clear();
       modal.classList.remove('wide');
       const title = document.createElement('h2');
@@ -1705,6 +1971,27 @@
         det.className = 'result-detail';
         det.textContent = detail;
         resultWrap.appendChild(det);
+      }
+      if (indexPromise) {
+        const indexStatus = document.createElement('div');
+        indexStatus.className = 'status-line';
+        indexStatus.style.cssText = 'justify-content:center; margin-top:14px;';
+        const spinnerEl = document.createElement('div');
+        spinnerEl.className = 'pb-spinner';
+        spinnerEl.style.cssText = 'width:16px; height:16px; border-width:2px;';
+        const statusText = document.createElement('span');
+        statusText.textContent = '検索インデックスを登録中...（閉じても処理は続きます）';
+        indexStatus.append(spinnerEl, statusText);
+        resultWrap.appendChild(indexStatus);
+        indexPromise.then((data) => {
+          spinnerEl.remove();
+          statusText.textContent = '✓ 検索インデックスの登録が完了しました' +
+            (data && data.vector ? '（' + data.vector.provider + ' ' + data.vector.size + 'd）' : '');
+        }).catch((error) => {
+          spinnerEl.remove();
+          indexStatus.style.color = '#b45309';
+          statusText.textContent = '⚠ 検索インデックス登録に失敗しました。「図面を登録/更新」から再登録してください。（' + error.message + '）';
+        });
       }
       const actions = document.createElement('div');
       actions.className = 'form-actions';
@@ -1759,7 +2046,7 @@
       if (reuseFileKey) {
         fileKey = reuseFileKey;
       } else {
-        showRegisteringState('ファイルをアップロード中...');
+        showRegisteringState(0);
         try {
           fileKey = await uploadFileToKintone(file);
         } catch (error) {
@@ -1767,7 +2054,7 @@
         }
       }
 
-      showRegisteringState('kintoneレコードを保存中...');
+      showRegisteringState(1);
       const recordFields = {};
       if (productNameField) recordFields[productNameField] = { value: productName };
       if (materialField) recordFields[materialField] = { value: material };
@@ -1808,7 +2095,7 @@
               fileName: file ? file.name : ''
             };
             sessionStorage.setItem('pb_pending_registration', JSON.stringify(pending));
-            showRegisteringState('編集画面へ移動します...');
+            showRegisteringState(undefined, '新規図面のため、kintoneの編集画面へ移動します...');
             setTimeout(() => { window.location.href = '/k/' + appId + '/edit'; }, 800);
             return;
           }
@@ -1835,50 +2122,42 @@
         } catch (_) { /* 読み直しに失敗した場合は元の fileKey を使う */ }
       }
 
-      showRegisteringState('ベクトルインデックスを登録中...');
-      try {
-        const indexRes = await fetch(apiBaseUrl + '/index', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-          body: JSON.stringify({
-            appId: String(appId),
-            recordId: String(recordId),
-            tenantId,
-            drawingNo,
-            productName,
-            material,
-            dimension,
-            tags: tags.join(','),
-            shapeTags: shapeTags.join(','),
-            fileKey: indexFileKey,
-            fileName: indexFileName,
-            limit: 10
-          })
-        });
-        const data = await indexRes.json();
+      // 検索インデックス登録は時間がかかる（コールドスタート時は1分弱）ので
+      // モーダルをブロックせずバックグラウンドで実行し、完了画面上で状態を反映する。
+      const indexPromise = fetch(apiBaseUrl + '/index', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+        body: JSON.stringify({
+          appId: String(appId),
+          recordId: String(recordId),
+          tenantId,
+          drawingNo,
+          productName,
+          material,
+          dimension,
+          tags: tags.join(','),
+          shapeTags: shapeTags.join(','),
+          fileKey: indexFileKey,
+          fileName: indexFileName,
+          limit: 10
+        })
+      }).then(async (indexRes) => {
+        const data = await indexRes.json().catch(() => ({}));
         if (!indexRes.ok) {
-          showDoneState(false,
-            'kintoneには保存しましたが、検索インデックス登録に失敗しました。\n再度「図面を登録/更新」ボタンで再登録してください。',
-            'record ' + recordId + ' / ' + (data.error || 'HTTP ' + indexRes.status)
-          );
-          return;
+          throw new Error(data.error || 'HTTP ' + indexRes.status);
         }
-        const detail = [
-          'record ' + recordId,
-          data.qdrant && data.qdrant.collection ? data.qdrant.collection : '',
-          data.vector ? data.vector.provider + ' ' + data.vector.size + 'd' : ''
-        ].filter(Boolean).join(' / ');
-        showDoneState(true, '図番 ' + drawingNo + ' を登録しました。', detail);
-      } catch (error) {
-        showDoneState(false,
-          'kintoneには保存しましたが、検索インデックス登録に失敗しました。\n再度「図面を登録/更新」ボタンで再登録してください。',
-          'record ' + recordId + ' / ' + error.message
-        );
-      }
+        return data;
+      });
+
+      showDoneState(true, '図番 ' + drawingNo + ' を保存しました。', 'record ' + recordId, indexPromise);
     };
 
     if (existingContext && existingContext.fileMeta) {
       showExistingState(existingContext.fileMeta);
+    } else if (existingContext && existingContext.initialFile) {
+      // アップロード検索から「この図面を登録」で遷移してきた場合は、
+      // 手元のファイルをそのまま解析フローに乗せる（再アップロード不要）。
+      handleFile(existingContext.initialFile);
     } else {
       showDropState();
     }
@@ -1886,7 +2165,7 @@
 
   // === 類似図面検索（Shadow DOM モーダル、左に自分の図面・右に候補） ===
 
-  const renderSimilarConfidence = (confidenceEl, confidence) => {
+  const renderSimilarConfidence = (confidenceEl, confidence, debug) => {
     if (!confidence) {
       confidenceEl.hidden = true;
       confidenceEl.textContent = '';
@@ -1898,15 +2177,18 @@
 
     const level = document.createElement('span');
     level.className = 'sim-confidence-level level-' + String(confidence.level || 'low');
-    level.textContent = '信頼度 ' + confidenceLabel(confidence.level);
+    level.textContent = '検索の確度: ' + confidenceLabel(confidence.level);
+    confidenceEl.appendChild(level);
 
-    const scores = document.createElement('span');
-    scores.className = 'sim-confidence-scores';
-    scores.textContent = 'Top ' + formatVectorRaw(confidence.topScore) +
-      ' / 2位 ' + formatVectorRaw(confidence.secondScore) +
-      ' / 差 ' + formatVectorRaw(confidence.margin);
-
-    confidenceEl.append(level, scores);
+    // 生スコア（Top/2位/差）は開発者向け。デバッグ表示が有効なときだけ出す。
+    if (debug) {
+      const scores = document.createElement('span');
+      scores.className = 'sim-confidence-scores';
+      scores.textContent = 'Top ' + formatVectorRaw(confidence.topScore) +
+        ' / 2位 ' + formatVectorRaw(confidence.secondScore) +
+        ' / 差 ' + formatVectorRaw(confidence.margin);
+      confidenceEl.appendChild(scores);
+    }
   };
 
   const buildShapeTagsEl = (tags) => {
@@ -1925,7 +2207,7 @@
   };
 
   // 上位3件はサムネイルを主役にした大きいカードで見せ、残りは品番中心の補助リストにする。
-  const buildHeroCard = (item, apiBaseUrl) => {
+  const buildHeroCard = (item, apiBaseUrl, debug) => {
     const card = document.createElement('div');
     card.className = 'sim-hero-card';
 
@@ -1934,7 +2216,7 @@
     loadThumbnail(thumbBox, apiBaseUrl, item.fileKey);
 
     const scoreBadge = document.createElement('div');
-    scoreBadge.className = 'sim-hero-score';
+    scoreBadge.className = 'sim-hero-score ' + scoreBandClass(item.score);
     scoreBadge.textContent = formatPercent(item.score);
     thumbBox.appendChild(scoreBadge);
 
@@ -1951,15 +2233,18 @@
 
     card.append(thumbBox, link, meta);
 
+    const reasonsEl = buildReasonBadges(item.reasons);
+    if (reasonsEl) card.appendChild(reasonsEl);
+
     const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
-    if (shapeTagsEl) {
-      card.appendChild(shapeTagsEl);
-    }
+    if (shapeTagsEl) card.appendChild(shapeTagsEl);
+
+    if (debug) card.appendChild(buildDebugDetails(item));
 
     return card;
   };
 
-  const buildResultRow = (item, apiBaseUrl) => {
+  const buildResultRow = (item, apiBaseUrl, debug) => {
     const li = document.createElement('li');
     li.className = 'sim-item';
 
@@ -1977,48 +2262,101 @@
     meta.className = 'sim-meta';
     meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
 
-    const rawScore = item.vectorRaw || (item.scoreBreakdown && item.scoreBreakdown.vectorRaw);
-    const detail = document.createElement('div');
-    detail.className = 'sim-detail';
-    const rotationText = item.embeddingRotation === null || item.embeddingRotation === undefined
-      ? ''
-      : ' / rot ' + item.embeddingRotation;
-    detail.textContent = 'vectorRaw ' + formatVectorRaw(rawScore) + rotationText;
+    body.append(link, meta);
+
+    const reasonsEl = buildReasonBadges(item.reasons);
+    if (reasonsEl) body.appendChild(reasonsEl);
+
+    const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
+    if (shapeTagsEl) body.appendChild(shapeTagsEl);
 
     const scoreBox = document.createElement('div');
     scoreBox.className = 'sim-scorebox';
 
-    const vector = document.createElement('div');
-    vector.className = 'sim-vectorraw';
-    vector.textContent = formatVectorRaw(rawScore);
-
     const score = document.createElement('div');
-    score.className = 'sim-score';
+    score.className = 'sim-score ' + scoreBandClass(item.score);
     score.textContent = formatPercent(item.score);
+    scoreBox.appendChild(score);
 
-    body.append(link, meta, detail);
-
-    const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
-    if (shapeTagsEl) {
-      body.appendChild(shapeTagsEl);
+    // vectorRaw / rotation は開発者向け情報。デバッグ表示のときだけ出す。
+    if (debug) {
+      const rawScore = item.vectorRaw || (item.scoreBreakdown && item.scoreBreakdown.vectorRaw);
+      const rotationText = item.embeddingRotation === null || item.embeddingRotation === undefined
+        ? ''
+        : ' / rot ' + item.embeddingRotation;
+      const detail = document.createElement('div');
+      detail.className = 'sim-detail';
+      detail.textContent = 'vectorRaw ' + formatVectorRaw(rawScore) + rotationText;
+      body.appendChild(detail);
     }
 
-    scoreBox.append(vector, score);
     li.append(thumbBox, body, scoreBox);
     return li;
   };
 
-  const renderSimilarList = (listEl, statusEl, confidenceEl, data, apiBaseUrl) => {
+  // デバッグ表示: スコア内訳を折りたたみで出す
+  const buildDebugDetails = (item) => {
+    const details = document.createElement('details');
+    details.className = 'sim-debug';
+    const summary = document.createElement('summary');
+    summary.textContent = 'スコア内訳';
+    const pre = document.createElement('pre');
+    pre.textContent = JSON.stringify({
+      score: item.score,
+      breakdown: item.scoreBreakdown,
+      rotation: item.embeddingRotation,
+      reasons: item.reasons
+    }, null, 2);
+    details.append(summary, pre);
+    return details;
+  };
+
+  const buildEmptyState = (subText, actionButtons) => {
+    const empty = document.createElement('div');
+    empty.className = 'sim-empty';
+    const icon = document.createElement('div');
+    icon.className = 'sim-empty-icon';
+    icon.textContent = '🔍';
+    const text = document.createElement('div');
+    text.className = 'sim-empty-text';
+    text.textContent = '類似図面は見つかりませんでした';
+    const sub = document.createElement('div');
+    sub.className = 'sim-empty-sub';
+    sub.textContent = subText ||
+      '検索対象はこのアプリでインデックス登録済みの図面です。' +
+      '登録がまだの図面は「図面登録」から追加すると検索できるようになります。';
+    empty.append(icon, text, sub);
+    if (actionButtons && actionButtons.length) {
+      const actions = document.createElement('div');
+      actions.style.cssText = 'display:flex; justify-content:center; gap:8px; margin-top:14px;';
+      actionButtons.forEach((btn) => actions.appendChild(btn));
+      empty.appendChild(actions);
+    }
+    return empty;
+  };
+
+  // options: { debug: 内訳等の開発者向け表示, emptyActions: 0件時に出すボタン配列 }
+  const renderSimilarList = (listEl, statusEl, confidenceEl, data, apiBaseUrl, options = {}) => {
     const results = Array.isArray(data && data.results) ? data.results : [];
     listEl.textContent = '';
-    renderSimilarConfidence(confidenceEl, data ? data.matchConfidence : null);
+    renderSimilarConfidence(confidenceEl, results.length ? (data ? data.matchConfidence : null) : null, options.debug);
 
     if (!results.length) {
-      statusEl.textContent = '類似図面は見つかりませんでした。';
+      statusEl.textContent = '';
+      listEl.appendChild(buildEmptyState(null, options.emptyActions));
       return;
     }
 
-    statusEl.textContent = results.length + '件の候補を表示しています。';
+    statusEl.textContent = results.length + '件の候補が見つかりました。';
+
+    // 確度が低いときは注意書きを添える
+    const level = data && data.matchConfidence && data.matchConfidence.level;
+    if (level === 'low') {
+      const note = document.createElement('div');
+      note.className = 'sim-note';
+      note.textContent = '⚠ 有力な候補を絞り込めていません。以下は参考程度にご覧ください。';
+      listEl.appendChild(note);
+    }
 
     const heroResults = results.slice(0, THUMBNAIL_AUTO_COUNT);
     const restResults = results.slice(THUMBNAIL_AUTO_COUNT);
@@ -2026,56 +2364,94 @@
     if (heroResults.length) {
       const heroGrid = document.createElement('div');
       heroGrid.className = 'sim-hero-grid';
-      heroResults.forEach((item) => heroGrid.appendChild(buildHeroCard(item, apiBaseUrl)));
+      heroResults.forEach((item) => heroGrid.appendChild(buildHeroCard(item, apiBaseUrl, options.debug)));
       listEl.appendChild(heroGrid);
     }
 
     if (restResults.length) {
       const restList = document.createElement('ul');
       restList.className = 'sim-list';
-      restResults.forEach((item) => restList.appendChild(buildResultRow(item, apiBaseUrl)));
+      restResults.forEach((item) => restList.appendChild(buildResultRow(item, apiBaseUrl, options.debug)));
       listEl.appendChild(restList);
     }
   };
 
+  // 検索中ステータス（スピナー＋経過に応じた文言）を statusEl に表示する
+  const showSearchingStatus = (statusEl) => {
+    statusEl.innerHTML = '';
+    const spinner = document.createElement('div');
+    spinner.className = 'pb-spinner';
+    const text = document.createElement('span');
+    statusEl.append(spinner, text);
+    const stop = startProgressiveStatus((msg) => { text.textContent = msg; }, SEARCH_PHASES);
+    return () => { stop(); statusEl.innerHTML = ''; };
+  };
+
+  // 検索実行（進行表示・エラー日本語化・再試行を共通化）
+  const runSimilarSearch = ({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions }) => {
+    listEl.textContent = '';
+    confidenceEl.hidden = true;
+    const stopStatus = showSearchingStatus(statusEl);
+
+    fetch(apiBaseUrl + '/similar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+      body: JSON.stringify(payload)
+    })
+      .then(async (response) => {
+        if (!response.ok) {
+          let detail = '';
+          try { detail = (await response.json()).error || ''; } catch (_) {}
+          const error = new Error(describeApiError(response.status, detail));
+          error.handled = true;
+          throw error;
+        }
+        return response.json();
+      })
+      .then((data) => {
+        stopStatus();
+        if (onData) onData(data);
+        renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl, {
+          debug: isDebugEnabled(config),
+          emptyActions: emptyActions ? emptyActions() : undefined
+        });
+      })
+      .catch((error) => {
+        stopStatus();
+        const message = error.handled ? error.message : describeApiError(0, error.message);
+        listEl.textContent = '';
+        const errBox = document.createElement('div');
+        errBox.className = 'sim-note';
+        errBox.textContent = '⚠ ' + message;
+        const retryBtn = document.createElement('button');
+        retryBtn.type = 'button';
+        retryBtn.className = 'btn-secondary';
+        retryBtn.textContent = '再試行';
+        retryBtn.style.cssText = 'margin-top:4px;';
+        retryBtn.addEventListener('click', () => {
+          runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions });
+        });
+        listEl.append(errBox, retryBtn);
+      });
+  };
+
   const openSimilarModal = (config, apiBaseUrl, event) => {
     const fileMeta = getFirstFile(event.record, config.pdfFileField);
-
-    const host = document.createElement('div');
-    host.id = 'pb-similar-host';
-    document.body.appendChild(host);
-    const shadow = host.attachShadow({ mode: 'closed' });
-
-    const style = document.createElement('style');
-    style.textContent = REGISTER_CSS;
-
-    const overlay = document.createElement('div');
-    overlay.className = 'overlay';
-
-    const modal = document.createElement('div');
-    modal.className = 'modal wide';
-
-    const xBtn = document.createElement('button');
-    xBtn.className = 'btn-close';
-    xBtn.type = 'button';
-    xBtn.textContent = '×';
-
-    const content = document.createElement('div');
-    content.className = 'modal-content';
-
-    modal.append(xBtn, content);
-    overlay.appendChild(modal);
-    shadow.append(style, overlay);
-
-    const closeModal = () => host.remove();
-    xBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+    const shell = createModalShell();
+    shell.host.id = 'pb-similar-host';
+    shell.modal.classList.add('wide');
+    const content = shell.content;
 
     const header = document.createElement('div');
     header.className = 'modal-header';
+    const titleWrap = document.createElement('div');
     const title = document.createElement('h2');
     title.textContent = '類似図面検索';
-    header.appendChild(title);
+    const sub = document.createElement('div');
+    sub.className = 'modal-sub';
+    sub.textContent = 'この図面と形が近い登録済み図面を検索します';
+    titleWrap.append(title, sub);
+    header.appendChild(titleWrap);
 
     const layout = document.createElement('div');
     layout.className = 'form-layout';
@@ -2119,7 +2495,6 @@
 
     const statusEl = document.createElement('div');
     statusEl.className = 'sim-status';
-    statusEl.textContent = '検索しています...';
 
     const confidenceEl = document.createElement('div');
     confidenceEl.className = 'sim-confidence';
@@ -2132,61 +2507,84 @@
     layout.append(previewPanel, formPanel);
     content.append(header, layout);
 
-    fetch(apiBaseUrl + '/similar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-      body: JSON.stringify(buildRecordPayload(event, config))
-    })
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('API returned ' + response.status);
-        }
-        return response.json();
-      })
-      .then((data) => {
+    runSimilarSearch({
+      apiBaseUrl,
+      config,
+      payload: buildRecordPayload(event, config),
+      statusEl,
+      confidenceEl,
+      listEl,
+      onData: (data) => {
         const queryShapeTags = data && data.extracted && data.extracted.shapeTags;
         const queryShapeTagsChips = buildShapeTagsEl(queryShapeTags);
         if (queryShapeTagsChips) {
           queryShapeTagsEl.replaceWith(queryShapeTagsChips);
         }
-        renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl);
-      })
-      .catch((error) => {
-        statusEl.textContent = '類似図面検索に失敗しました: ' + error.message;
-      });
+      }
+    });
+  };
+
+  // 共通のドロップゾーンを組み立てる（onFile に選択された File を渡す）
+  const buildDropzone = ({ main, sub, note, onFile }) => {
+    const dropWrap = document.createElement('div');
+    dropWrap.className = 'dropzone';
+    const icon = document.createElement('div');
+    icon.className = 'drop-icon';
+    icon.textContent = '📄';
+    const mainEl = document.createElement('div');
+    mainEl.className = 'drop-main';
+    mainEl.textContent = main;
+    const subEl = document.createElement('div');
+    subEl.className = 'drop-sub';
+    subEl.textContent = sub;
+    const fileInput = document.createElement('input');
+    fileInput.type = 'file';
+    fileInput.accept = '.pdf,application/pdf';
+    fileInput.className = 'file-input';
+    dropWrap.append(icon, mainEl, subEl, fileInput);
+    if (note) {
+      const noteEl = document.createElement('div');
+      noteEl.className = 'drop-note';
+      noteEl.textContent = note;
+      dropWrap.appendChild(noteEl);
+    }
+
+    const acceptFiles = (files) => {
+      const file = files && files[0];
+      if (!file || !(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
+        window.alert('PDFファイルを選択してください。');
+        return;
+      }
+      if (files.length > 1) {
+        window.alert('複数のファイルが選択されました。1件目「' + file.name + '」のみ使用します。');
+      }
+      onFile(file);
+    };
+
+    dropWrap.addEventListener('click', (e) => {
+      if (e.target !== fileInput) fileInput.click();
+    });
+    dropWrap.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dropWrap.classList.add('drag-over');
+    });
+    dropWrap.addEventListener('dragleave', () => dropWrap.classList.remove('drag-over'));
+    dropWrap.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropWrap.classList.remove('drag-over');
+      acceptFiles(e.dataTransfer && e.dataTransfer.files);
+    });
+    fileInput.addEventListener('change', () => {
+      acceptFiles(fileInput.files);
+    });
+    return dropWrap;
   };
 
   // 一覧画面：kintone に登録せず、手元の PDF をアップロードしてその場で類似検索する。
   const openUploadSimilarModal = (config, apiBaseUrl) => {
-    const host = document.createElement('div');
-    host.id = 'pb-upload-similar-host';
-    document.body.appendChild(host);
-    const shadow = host.attachShadow({ mode: 'closed' });
-
-    const style = document.createElement('style');
-    style.textContent = REGISTER_CSS;
-
-    const overlay = document.createElement('div');
-    overlay.className = 'overlay';
-
-    const modal = document.createElement('div');
-    modal.className = 'modal';
-
-    const xBtn = document.createElement('button');
-    xBtn.className = 'btn-close';
-    xBtn.type = 'button';
-    xBtn.textContent = '×';
-
-    const content = document.createElement('div');
-    content.className = 'modal-content';
-
-    modal.append(xBtn, content);
-    overlay.appendChild(modal);
-    shadow.append(style, overlay);
-
-    const closeModal = () => host.remove();
-    xBtn.addEventListener('click', closeModal);
-    overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
+    const shell = createModalShell();
+    shell.host.id = 'pb-upload-similar-host';
+    const { modal, content, closeModal } = shell;
 
     const clear = () => { content.textContent = ''; };
 
@@ -2197,9 +2595,31 @@
 
       const header = document.createElement('div');
       header.className = 'modal-header';
+      const titleWrap = document.createElement('div');
       const title = document.createElement('h2');
       title.textContent = '類似図面検索（アップロード）';
-      header.appendChild(title);
+      const sub = document.createElement('div');
+      sub.className = 'modal-sub';
+      sub.textContent = 'このPDFはkintoneには登録されません';
+      titleWrap.append(title, sub);
+
+      const headerActions = document.createElement('div');
+      headerActions.className = 'modal-header-actions';
+      const reSearchBtn = document.createElement('button');
+      reSearchBtn.type = 'button';
+      reSearchBtn.className = 'btn-mini';
+      reSearchBtn.textContent = '別のPDFで検索';
+      reSearchBtn.addEventListener('click', showDropState);
+      const registerThisBtn = document.createElement('button');
+      registerThisBtn.type = 'button';
+      registerThisBtn.className = 'btn-mini accent';
+      registerThisBtn.textContent = 'この図面を登録';
+      registerThisBtn.addEventListener('click', () => {
+        closeModal();
+        openRegisterModal(config, apiBaseUrl, { initialFile: file });
+      });
+      headerActions.append(reSearchBtn, registerThisBtn);
+      header.append(titleWrap, headerActions);
 
       const layout = document.createElement('div');
       layout.className = 'form-layout';
@@ -2221,7 +2641,6 @@
       formPanel.className = 'form-panel';
       const statusEl = document.createElement('div');
       statusEl.className = 'sim-status';
-      statusEl.textContent = '検索しています...';
       const confidenceEl = document.createElement('div');
       confidenceEl.className = 'sim-confidence';
       confidenceEl.hidden = true;
@@ -2232,34 +2651,39 @@
       layout.append(previewPanel, formPanel);
       content.append(header, layout);
 
-      toBase64(file)
-        .then((pdfBase64) => fetch(apiBaseUrl + '/similar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-          body: JSON.stringify({
+      // 0件時は「この図面を登録」への導線をエンプティステートにも出す
+      const buildEmptyActions = () => {
+        const registerBtn = document.createElement('button');
+        registerBtn.type = 'button';
+        registerBtn.className = 'btn-primary';
+        registerBtn.style.cssText = 'flex:0 0 auto; min-width:180px;';
+        registerBtn.textContent = 'この図面を登録する';
+        registerBtn.addEventListener('click', () => {
+          closeModal();
+          openRegisterModal(config, apiBaseUrl, { initialFile: file });
+        });
+        return [registerBtn];
+      };
+
+      toBase64(file).then((pdfBase64) => {
+        runSimilarSearch({
+          apiBaseUrl,
+          config,
+          payload: {
             appId: kintone.app.getId(),
             tenantId: deriveTenantId(),
             pdf_base64: pdfBase64,
             fileName: file.name || '',
             limit: 10
-          })
-        }))
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error('API returned ' + response.status);
-          }
-          return response.json();
-        })
-        .then((data) => {
-          renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl);
-        })
-        .catch((error) => {
-          statusEl.textContent = '類似図面検索に失敗しました: ' + error.message;
+          },
+          statusEl,
+          confidenceEl,
+          listEl,
+          emptyActions: buildEmptyActions
         });
-    };
-
-    const handleFile = (file) => {
-      showResultsState(file);
+      }).catch((error) => {
+        statusEl.textContent = 'ファイルの読み込みに失敗しました: ' + error.message;
+      });
     };
 
     // --- State: ドロップ ---
@@ -2270,43 +2694,11 @@
       const title = document.createElement('h2');
       title.textContent = '手元の図面で類似検索';
 
-      const dropWrap = document.createElement('div');
-      dropWrap.className = 'dropzone';
-      const icon = document.createElement('div');
-      icon.className = 'drop-icon';
-      icon.textContent = '📄';
-      const main = document.createElement('div');
-      main.className = 'drop-main';
-      main.textContent = 'PDFをここにドロップ';
-      const sub = document.createElement('div');
-      sub.className = 'drop-sub';
-      sub.textContent = 'またはクリックしてファイルを選択（kintoneには登録されません）';
-      const fileInput = document.createElement('input');
-      fileInput.type = 'file';
-      fileInput.accept = '.pdf,application/pdf';
-      fileInput.className = 'file-input';
-      dropWrap.append(icon, main, sub, fileInput);
-
-      dropWrap.addEventListener('click', (e) => {
-        if (e.target !== fileInput) fileInput.click();
-      });
-      dropWrap.addEventListener('dragover', (e) => {
-        e.preventDefault();
-        dropWrap.classList.add('drag-over');
-      });
-      dropWrap.addEventListener('dragleave', () => dropWrap.classList.remove('drag-over'));
-      dropWrap.addEventListener('drop', (e) => {
-        e.preventDefault();
-        dropWrap.classList.remove('drag-over');
-        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-        if (file && (file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
-          handleFile(file);
-        } else {
-          window.alert('PDFファイルをドロップしてください。');
-        }
-      });
-      fileInput.addEventListener('change', () => {
-        if (fileInput.files && fileInput.files[0]) handleFile(fileInput.files[0]);
+      const dropWrap = buildDropzone({
+        main: 'PDFをここにドロップ',
+        sub: 'またはクリックしてファイルを選択（kintoneには登録されません）',
+        note: '※ PDFの1ページ目を使って検索します',
+        onFile: showResultsState
       });
 
       content.append(title, dropWrap);

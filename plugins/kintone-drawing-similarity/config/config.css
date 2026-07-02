@@ -186,6 +186,32 @@
   border-color: #d7dee8;
 }
 
+/* --- Connection test --- */
+.pb-test-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.pb-test-status {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.pb-test-status.pending {
+  color: #64748b;
+}
+
+.pb-test-status.ok {
+  color: #059669;
+}
+
+.pb-test-status.err {
+  color: #dc2626;
+}
+
 /* --- Toggle switch --- */
 .pb-toggle {
   display: flex;

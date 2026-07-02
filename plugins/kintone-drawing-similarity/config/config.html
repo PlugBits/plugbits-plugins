@@ -31,6 +31,11 @@
         <span>テナントID<em class="pb-hint">kintoneドメインから自動判定</em></span>
         <input id="tenantId" type="text" readonly />
       </label>
+
+      <div class="pb-test-row">
+        <button id="testConnection" type="button" class="pb-btn pb-btn-ghost">接続テスト</button>
+        <span id="testStatus" class="pb-test-status" hidden></span>
+      </div>
     </div>
   </div>
 
@@ -102,8 +107,8 @@
 
   <div class="pb-card">
     <div class="pb-card-head">
-      <h2>一覧画面</h2>
-      <p>一覧画面のヘッダーに表示するボタンを制御します。</p>
+      <h2>表示設定</h2>
+      <p>画面に表示するボタンや情報を制御します。</p>
     </div>
     <div class="pb-card-body">
       <label class="pb-toggle">
@@ -112,6 +117,15 @@
         <span class="pb-toggle-text">
           <span class="pb-toggle-title">「一括図面登録」ボタンを表示</span>
           <span class="pb-toggle-desc">オフにすると一覧画面のヘッダーから一括登録ボタンを隠します。</span>
+        </span>
+      </label>
+
+      <label class="pb-toggle" style="margin-top: 16px;">
+        <input id="showDebugInfo" type="checkbox" />
+        <span class="pb-toggle-track"><span class="pb-toggle-thumb"></span></span>
+        <span class="pb-toggle-text">
+          <span class="pb-toggle-title">デバッグ情報を表示</span>
+          <span class="pb-toggle-desc">検索結果にベクトルスコアの生値・回転・スコア内訳などの開発者向け情報を表示します。</span>
         </span>
       </label>
     </div>
