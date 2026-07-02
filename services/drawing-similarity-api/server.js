@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { createHash, createSign } from 'node:crypto';
+import { createHash, createHmac, createSign, timingSafeEqual } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -121,9 +121,24 @@ const formatEndpointError = (error) => {
   return parts.filter(Boolean).join(' ');
 };
 
+// pdf_base64 は base64 で約 4/3 に膨らむため、30MB 上限 ≒ 22MB 程度の PDF まで。
+// 上限なしだと巨大ボディで OOM・OCR課金の乱用が可能になる。
+const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 30 * 1024 * 1024);
+
 const readJson = async (request) => {
   const chunks = [];
+  let total = 0;
   for await (const chunk of request) {
+    total += chunk.length;
+    if (total > MAX_JSON_BODY_BYTES) {
+      // destroy() するとレスポンスを返す前に接続が切れるので、読むのを止めて
+      // 413 を throw する（残りのボディは捨てられる）。
+      const error = new Error(
+        'Request body too large (max ' + Math.round(MAX_JSON_BODY_BYTES / 1024 / 1024) + 'MB)'
+      );
+      error.status = 413;
+      throw error;
+    }
     chunks.push(chunk);
   }
   const text = Buffer.concat(chunks).toString('utf8');
@@ -138,6 +153,38 @@ const sendJson = (response, status, payload) => {
     'Content-Type': 'application/json; charset=utf-8'
   });
   response.end(JSON.stringify(payload));
+};
+
+// --- サムネイル用の短命トークン ---
+// <img> はカスタムヘッダー（X-API-Key）を送れないため、認証有効時の /thumbnail は
+// HMAC トークンをクエリで受ける。トークンは /similar のレスポンスに同梱され、
+// テナントフィルタ済みの検索結果からしか得られない＝実質テナントスコープになる。
+// 日単位バケットで署名するので URL が1日固定になり、ブラウザキャッシュも効く。
+const thumbTokenSecret = process.env.THUMB_TOKEN_SECRET ||
+  createHash('sha256').update('thumb:' + (process.env.KINTONE_API_TOKEN || 'no-secret')).digest('hex');
+
+const thumbDayBucket = (offsetDays = 0) => {
+  const date = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
+  return date.toISOString().slice(0, 10);
+};
+
+const mintThumbToken = (fileKey, offsetDays = 0) =>
+  createHmac('sha256', thumbTokenSecret)
+    .update(String(fileKey) + ':' + thumbDayBucket(offsetDays))
+    .digest('hex')
+    .slice(0, 32);
+
+const verifyThumbToken = (fileKey, token) => {
+  if (!fileKey || !token || typeof token !== 'string') return false;
+  const provided = Buffer.from(token);
+  // 当日と前日のトークンを許容（日付境界での失効を防ぐ）
+  for (const offset of [0, -1]) {
+    const expected = Buffer.from(mintThumbToken(fileKey, offset));
+    if (provided.length === expected.length && timingSafeEqual(provided, expected)) {
+      return true;
+    }
+  }
+  return false;
 };
 
 const sendBinary = (response, status, contentType, buffer, extraHeaders = {}) => {
@@ -704,6 +751,14 @@ const parseFirestoreFields = (fields) => {
   return out;
 };
 
+const fetchTenantDoc = async (docId, gcpToken) => {
+  const docUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/tenants/${encodeURIComponent(docId)}`;
+  const res = await fetch(docUrl, { headers: { Authorization: `Bearer ${gcpToken}` } });
+  if (!res.ok) return null;
+  const doc = await res.json();
+  return parseFirestoreFields(doc.fields);
+};
+
 const resolveTenant = async (apiKey) => {
   if (!apiKey) return null;
   const now = Date.now();
@@ -716,14 +771,16 @@ const resolveTenant = async (apiKey) => {
   }
   try {
     const token = await getGcpAccessToken();
-    const docUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/tenants/${encodeURIComponent(apiKey)}`;
-    const res = await fetch(docUrl, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) {
-      _tenantCache.set(apiKey, { tenant: null, expiresAt: now + TENANT_CACHE_MISS_TTL_MS });
-      return null;
+    // 推奨: ドキュメントID = SHA-256(APIキー)。Firestore 上にキーが平文で並ばない。
+    // 移行期間の後方互換として、見つからなければ旧形式（生キーがID）も引く。
+    const hashedId = createHash('sha256').update(apiKey).digest('hex');
+    let tenant = await fetchTenantDoc(hashedId, token);
+    if (!tenant) {
+      tenant = await fetchTenantDoc(apiKey, token);
+      if (tenant) {
+        console.warn('[auth] legacy plaintext-key tenant doc used — migrate to sha256 doc id: ' + hashedId);
+      }
     }
-    const doc = await res.json();
-    const tenant = parseFirestoreFields(doc.fields);
     if (!tenant || tenant.active === false) {
       _tenantCache.set(apiKey, { tenant: null, expiresAt: now + TENANT_CACHE_MISS_TTL_MS });
       return null;
@@ -1918,6 +1975,7 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
       return {
         recordId: payload.record_id || item.id,
         fileKey: payload.file_key || '',
+        thumbToken: payload.file_key ? mintThumbToken(payload.file_key) : '',
         drawingNo: payload.drawing_no || 'record ' + item.id,
         productName: payload.product_name || '',
         customer: payload.file_name || '',
@@ -2084,6 +2142,15 @@ const server = createServer(async (request, response) => {
   }
 
   if (request.method === 'GET' && url.pathname === '/health') {
+    // runtime 詳細（モデル・タイムアウト・コレクション名など）は内部情報なので、
+    // 認証有効時は有効な API キーを持つ相手にだけ返す。死活確認は誰でも可能。
+    if (TENANT_AUTH_ENABLED) {
+      const tenant = await resolveTenant(request.headers['x-api-key'] || '');
+      if (!tenant) {
+        sendJson(response, 200, { ok: true, service: 'drawing-similarity-api' });
+        return;
+      }
+    }
     sendJson(response, 200, {
       ok: true,
       service: 'drawing-similarity-api',
@@ -2092,7 +2159,9 @@ const server = createServer(async (request, response) => {
     return;
   }
 
-  if (TENANT_AUTH_ENABLED) {
+  // /thumbnail は <img> から呼ばれヘッダーを送れないため、ヘッダー認証の対象外。
+  // 代わりにハンドラ内で HMAC トークンを検証する。
+  if (TENANT_AUTH_ENABLED && url.pathname !== '/thumbnail') {
     const apiKey = request.headers['x-api-key'] || '';
     const tenant = await resolveTenant(apiKey);
     if (!tenant) {
@@ -2280,6 +2349,10 @@ const server = createServer(async (request, response) => {
     const fileKey = url.searchParams.get('fileKey') || '';
     if (!fileKey) {
       sendJson(response, 400, { error: 'fileKey is required' });
+      return;
+    }
+    if (TENANT_AUTH_ENABLED && !verifyThumbToken(fileKey, url.searchParams.get('token') || '')) {
+      sendJson(response, 401, { error: 'Invalid or missing thumbnail token' });
       return;
     }
     try {

@@ -413,7 +413,8 @@
 
   // 一覧では上位3件だけ自動でサムネイルを取得し、残りはボタンを押したときだけ取得する。
   // サムネイルはAPI側で都度レンダリングするだけでどこにも保存されない（kintoneが正本のまま）。
-  const loadThumbnail = (thumbBox, apiBaseUrl, fileKey) => {
+  // thumbToken: 認証有効時に /thumbnail が要求する HMAC トークン（/similar の結果に同梱）
+  const loadThumbnail = (thumbBox, apiBaseUrl, fileKey, thumbToken) => {
     if (!apiBaseUrl || !fileKey) {
       thumbBox.textContent = '画像なし';
       return;
@@ -439,19 +440,20 @@
       retry.textContent = '再取得';
       retry.addEventListener('click', (e) => {
         e.stopPropagation();
-        loadThumbnail(thumbBox, apiBaseUrl, fileKey);
+        loadThumbnail(thumbBox, apiBaseUrl, fileKey, thumbToken);
       });
       thumbBox.appendChild(retry);
     }, { once: true });
-    img.src = apiBaseUrl + '/thumbnail?fileKey=' + encodeURIComponent(fileKey);
+    img.src = apiBaseUrl + '/thumbnail?fileKey=' + encodeURIComponent(fileKey) +
+      (thumbToken ? '&token=' + encodeURIComponent(thumbToken) : '');
   };
 
-  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad) => {
+  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad, thumbToken) => {
     const thumbBox = document.createElement('div');
     thumbBox.className = 'sim-thumb';
 
     if (autoLoad) {
-      loadThumbnail(thumbBox, apiBaseUrl, fileKey);
+      loadThumbnail(thumbBox, apiBaseUrl, fileKey, thumbToken);
       return thumbBox;
     }
 
@@ -459,7 +461,7 @@
     loadBtn.type = 'button';
     loadBtn.className = 'sim-thumb-load';
     loadBtn.textContent = 'プレビュー取得';
-    loadBtn.addEventListener('click', () => loadThumbnail(thumbBox, apiBaseUrl, fileKey));
+    loadBtn.addEventListener('click', () => loadThumbnail(thumbBox, apiBaseUrl, fileKey, thumbToken));
     thumbBox.appendChild(loadBtn);
     return thumbBox;
   };
@@ -2213,7 +2215,7 @@
 
     const thumbBox = document.createElement('div');
     thumbBox.className = 'sim-hero-thumb';
-    loadThumbnail(thumbBox, apiBaseUrl, item.fileKey);
+    loadThumbnail(thumbBox, apiBaseUrl, item.fileKey, item.thumbToken);
 
     const scoreBadge = document.createElement('div');
     scoreBadge.className = 'sim-hero-score ' + scoreBandClass(item.score);
@@ -2248,7 +2250,7 @@
     const li = document.createElement('li');
     li.className = 'sim-item';
 
-    const thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, false);
+    const thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, false, item.thumbToken);
 
     const body = document.createElement('div');
     const link = document.createElement('a');

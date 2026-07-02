@@ -91,7 +91,9 @@
       testBtn.disabled = true;
       setTestStatus('pending', '接続しています...（サーバー起動中は1分ほどかかることがあります）');
       try {
-        const healthRes = await fetch(baseUrl + '/health');
+        // 認証有効時、runtime 詳細は有効なキーを送った場合のみ返る
+        const authHeaders = apiKey ? { 'X-API-Key': apiKey } : {};
+        const healthRes = await fetch(baseUrl + '/health', { headers: authHeaders });
         if (!healthRes.ok) {
           setTestStatus('err', '✗ サーバーに接続できません（HTTP ' + healthRes.status + '）');
           return;
@@ -99,8 +101,6 @@
         const health = await healthRes.json();
         const engine = health.runtime ? (health.runtime.embeddingProvider || '') : '';
         const qdrant = health.runtime && health.runtime.qdrantConfigured;
-
-        const authHeaders = apiKey ? { 'X-API-Key': apiKey } : {};
         const tagsRes = await fetch(
           baseUrl + '/tags?tenantId=' + encodeURIComponent(deriveTenantId()),
           { headers: authHeaders }
