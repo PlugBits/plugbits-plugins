@@ -142,7 +142,13 @@ const readJson = async (request) => {
     chunks.push(chunk);
   }
   const text = Buffer.concat(chunks).toString('utf8');
-  return text ? JSON.parse(text) : {};
+  const parsed = text ? JSON.parse(text) : {};
+  // Phase 2: 認証済みテナントの強制はここで一元適用する。各ハンドラに任せると
+  // 新規エンドポイントでの適用漏れ＝テナント越えの温床になる。
+  if (request._forcedTenantId) {
+    parsed.tenantId = request._forcedTenantId;
+  }
+  return parsed;
 };
 
 const sendJson = (response, status, payload) => {
@@ -162,6 +168,12 @@ const sendJson = (response, status, payload) => {
 // 日単位バケットで署名するので URL が1日固定になり、ブラウザキャッシュも効く。
 const thumbTokenSecret = process.env.THUMB_TOKEN_SECRET ||
   createHash('sha256').update('thumb:' + (process.env.KINTONE_API_TOKEN || 'no-secret')).digest('hex');
+
+if (process.env.TENANT_AUTH_ENABLED === 'true' && !process.env.THUMB_TOKEN_SECRET) {
+  // フォールバック秘密鍵は KINTONE_API_TOKEN 由来のため、kintone トークンを
+  // ローテーションすると全サムネイルURLが即失効する。本番は明示設定を推奨。
+  console.warn('[thumbnail] THUMB_TOKEN_SECRET not set — deriving from KINTONE_API_TOKEN. Rotating the kintone token will invalidate all thumbnail URLs; set THUMB_TOKEN_SECRET explicitly.');
+}
 
 const thumbDayBucket = (offsetDays = 0) => {
   const date = new Date(Date.now() + offsetDays * 24 * 60 * 60 * 1000);
@@ -2296,7 +2308,7 @@ const server = createServer(async (request, response) => {
       }
       sendJson(response, 200, { tags: [...tagSet].sort() });
     } catch (error) {
-      sendJson(response, 500, { error: error.message });
+      sendJson(response, error.status || 500, { error: error.message });
     }
     return;
   }
@@ -2347,7 +2359,7 @@ const server = createServer(async (request, response) => {
         dimensions: [...dimensionSet].filter(Boolean).sort()
       });
     } catch (error) {
-      sendJson(response, 500, { error: error.message });
+      sendJson(response, error.status || 500, { error: error.message });
     }
     return;
   }
@@ -2379,7 +2391,6 @@ const server = createServer(async (request, response) => {
   if (request.method === 'POST' && url.pathname === '/tag') {
     try {
       const body = await readJson(request);
-      if (request._forcedTenantId) body.tenantId = request._forcedTenantId;
       if (!body.recordId) {
         sendJson(response, 400, { error: 'recordId is required' });
         return;
@@ -2401,7 +2412,32 @@ const server = createServer(async (request, response) => {
       );
       sendJson(response, 200, { ok: true, recordId: body.recordId, tags });
     } catch (error) {
-      sendJson(response, 500, { error: error.message });
+      sendJson(response, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  // レコード削除時に対応する Qdrant ポイントを削除する（孤児ポイント対策）。
+  // 削除しないと、消えたレコードへのリンクが検索結果に出続ける。
+  if (request.method === 'POST' && url.pathname === '/delete') {
+    try {
+      const body = await readJson(request);
+      if (!body.recordId) {
+        sendJson(response, 400, { error: 'recordId is required' });
+        return;
+      }
+      if (!isQdrantConfigured()) {
+        sendJson(response, 200, { ok: true, configured: false });
+        return;
+      }
+      const pointIds = embeddingRotations.map((rot) => toPointIdWithRotation(body.tenantId, body.recordId, rot));
+      await qdrantRequest(
+        '/collections/' + encodeURIComponent(qdrantCollection) + '/points/delete?wait=true',
+        { method: 'POST', body: JSON.stringify({ points: pointIds }) }
+      );
+      sendJson(response, 200, { ok: true, recordId: body.recordId });
+    } catch (error) {
+      sendJson(response, error.status || 500, { error: error.message });
     }
     return;
   }
@@ -2409,7 +2445,6 @@ const server = createServer(async (request, response) => {
   if (request.method === 'POST' && url.pathname === '/similar') {
     try {
       const body = await readJson(request);
-      if (request._forcedTenantId) body.tenantId = request._forcedTenantId;
       if (isQdrantConfigured()) {
         const indexed = await getIndexedDrawingVector(body);
         let vector = indexed?.vector || null;
@@ -2524,7 +2559,6 @@ const server = createServer(async (request, response) => {
     try {
       step = 'payload';
       const body = await readJson(request);
-      if (request._forcedTenantId) body.tenantId = request._forcedTenantId;
       indexLog('payload received', {
         recordId: body.recordId,
         tenantId: body.tenantId || 'default'

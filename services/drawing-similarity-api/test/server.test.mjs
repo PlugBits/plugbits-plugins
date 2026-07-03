@@ -126,6 +126,10 @@ const startMockBackend = () => {
           .map((p) => ({ id: p.id, payload: p.payload }));
         return json(200, { result: { points, next_page_offset: null } });
       }
+      if (sub.startsWith('/points/delete') && req.method === 'POST') {
+        for (const id of body.points || []) state.points.delete(String(id));
+        return json(200, { result: {} });
+      }
       if (sub.startsWith('/points/payload') && req.method === 'POST') {
         for (const id of body.points || []) {
           const p = state.points.get(String(id));
@@ -293,6 +297,16 @@ test('413: ボディ上限を超えると 413', async () => {
   }
 });
 
+test('delete: レコード削除でテナント名前空間のポイントが消える', async () => {
+  // suite冒頭の index テストで tenant-a/record1 と tenant-b/record1 が登録済み
+  assert.equal(mock.state.points.size, 2);
+  const res = await postJson(api.url, '/delete', { recordId: '1', tenantId: 'tenant-a' });
+  assert.equal(res.status, 200, await res.text());
+  assert.equal(mock.state.points.size, 1, 'tenant-a のポイントだけが消える');
+  const remaining = [...mock.state.points.values()][0];
+  assert.equal(remaining.payload.tenant_id, 'tenant-b');
+});
+
 // ================================================================
 // Suite 2: 認証ON（キー検証・強制テナント・サムネトークン）
 // ================================================================
@@ -387,6 +401,26 @@ test('auth: thumbnail はトークン必須・正しいトークンで取得可'
   // トークンは fileKey に紐づく（別 fileKey には使えない）
   const cross = await fetch(authApi.url + '/thumbnail?fileKey=file-b&token=' + thumbToken);
   assert.equal(cross.status, 401);
+});
+
+test('auth: delete もキーのテナントに強制され、他テナントのポイントは消せない', async () => {
+  // tenant-a(record10) と tenant-b(record20) が登録済み。
+  // key-a で tenant-b の record20 を消そうとしても、強制テナント(tenant-a)の
+  // ポイントIDが計算されるため tenant-b のデータは残る。
+  const before = authMock.state.points.size;
+  const res = await postJson(authApi.url, '/delete', {
+    recordId: '20', tenantId: 'tenant-b'
+  }, { 'X-API-Key': 'key-a' });
+  assert.equal(res.status, 200, await res.text());
+  assert.equal(authMock.state.points.size, before, 'tenant-b のポイントは消えていない');
+
+  // 自テナントの record10 は消せる
+  const res2 = await postJson(authApi.url, '/delete', {
+    recordId: '10'
+  }, { 'X-API-Key': 'key-a' });
+  assert.equal(res2.status, 200);
+  const tenants = [...authMock.state.points.values()].map((p) => p.payload.tenant_id);
+  assert.deepEqual(tenants, ['tenant-b'], 'tenant-a のポイントだけが消えた');
 });
 
 test('auth: tags はクエリの tenantId を無視してキーのテナントで絞る', async () => {

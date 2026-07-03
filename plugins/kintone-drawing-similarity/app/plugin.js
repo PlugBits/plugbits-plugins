@@ -635,6 +635,28 @@
     return event;
   });
 
+  // レコード削除時は検索インデックス（Qdrant ポイント）も削除する。
+  // 放置すると、存在しないレコードへのリンクが検索結果に出続ける。
+  kintone.events.on('app.record.detail.delete.submit', (event) => {
+    const config = kintone.plugin.app.getConfig(PLUGIN_ID);
+    const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
+    if (!apiBaseUrl || !event.recordId) {
+      return event;
+    }
+    // 削除後は画面遷移するため keepalive で送信を保証し、結果は待たない
+    fetch(apiBaseUrl + '/delete', {
+      method: 'POST',
+      keepalive: true,
+      headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+      body: JSON.stringify({
+        appId: String(kintone.app.getId() || ''),
+        recordId: String(event.recordId),
+        tenantId: deriveTenantId()
+      })
+    }).catch(() => {});
+    return event;
+  });
+
   kintone.events.on('app.record.detail.show', (event) => {
     clearPluginUi();
 
@@ -2146,7 +2168,7 @@
       }).then(async (indexRes) => {
         const data = await indexRes.json().catch(() => ({}));
         if (!indexRes.ok) {
-          throw new Error(data.error || 'HTTP ' + indexRes.status);
+          throw new Error(describeApiError(indexRes.status, data.error));
         }
         return data;
       });
