@@ -2313,6 +2313,58 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // テナント内のインデックス済み一覧（record_id と file_key）を返す。
+  // プラグイン側で kintone レコードと突き合わせ、未登録・要更新（PDF差し替え）・
+  // 孤児（レコード削除済み）を検知するための材料。
+  if (request.method === 'GET' && url.pathname === '/index-status') {
+    if (!isQdrantConfigured()) {
+      sendJson(response, 200, { configured: false, items: [] });
+      return;
+    }
+    try {
+      const tenantId = request._forcedTenantId || url.searchParams.get('tenantId') || 'default';
+      const appId = url.searchParams.get('appId') || '';
+      const must = [{ key: 'tenant_id', match: { value: tenantId } }];
+      const byRecord = new Map(); // record_id -> file_key（回転違いは同一レコードに集約）
+      let nextOffset = null;
+      let hasMore = true;
+      while (hasMore) {
+        const scrollBody = {
+          limit: 250,
+          with_payload: ['record_id', 'app_id', 'file_key'],
+          filter: { must }
+        };
+        if (nextOffset != null) {
+          scrollBody.offset = nextOffset;
+        }
+        const data = await qdrantRequest(
+          '/collections/' + encodeURIComponent(qdrantCollection) + '/points/scroll',
+          { method: 'POST', body: JSON.stringify(scrollBody) }
+        );
+        for (const point of (data.result?.points || [])) {
+          const payload = point.payload || {};
+          if (appId && payload.app_id && String(payload.app_id) !== String(appId)) {
+            continue;
+          }
+          if (payload.record_id) {
+            byRecord.set(String(payload.record_id), String(payload.file_key || ''));
+          }
+        }
+        nextOffset = data.result?.next_page_offset ?? null;
+        hasMore = nextOffset != null;
+      }
+      sendJson(response, 200, {
+        configured: true,
+        tenantId,
+        count: byRecord.size,
+        items: [...byRecord.entries()].map(([recordId, fileKey]) => ({ recordId, fileKey }))
+      });
+    } catch (error) {
+      sendJson(response, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/field-values') {
     if (!isQdrantConfigured()) {
       sendJson(response, 200, { drawingNos: [], productNames: [], materials: [], dimensions: [] });

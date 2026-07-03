@@ -64,7 +64,8 @@
     upload: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"></path><path d="m7 8 5-5 5 5"></path><path d="M5 21h14"></path></svg>',
     plus: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"></path><path d="M5 12h14"></path></svg>',
     layers: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12 2 9 5-9 5-9-5 9-5Z"></path><path d="m3 12 9 5 9-5"></path><path d="m3 17 9 5 9-5"></path></svg>',
-    refresh: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v5h-5"></path></svg>'
+    refresh: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"></path><path d="M21 3v5h-5"></path></svg>',
+    gear: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>'
   };
 
   const createHeaderButton = ({ id, label, variant = 'primary', icon }) => {
@@ -77,6 +78,56 @@
       : '';
     btn.innerHTML = iconSvg + '<span class="pb-btn-label">' + label + '</span>';
     return btn;
+  };
+
+  // 管理系アクションのドロップダウンメニュー。機能が増えてもヘッダーの
+  // ボタンを増やさず、ここに項目を足すだけで済むようにする。
+  const createManageMenu = (items) => {
+    const wrap = document.createElement('div');
+    wrap.className = 'pb-menu-wrap';
+    const btn = createHeaderButton({ id: 'pb-manage-btn', label: '管理 ▾', variant: 'ghost', icon: 'gear' });
+    btn.setAttribute('aria-haspopup', 'true');
+    btn.setAttribute('aria-expanded', 'false');
+
+    const menu = document.createElement('div');
+    menu.className = 'pb-menu';
+    menu.hidden = true;
+    items.forEach(({ label, description, onClick }) => {
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'pb-menu-item';
+      const title = document.createElement('span');
+      title.className = 'pb-menu-item-title';
+      title.textContent = label;
+      item.appendChild(title);
+      if (description) {
+        const desc = document.createElement('span');
+        desc.className = 'pb-menu-item-desc';
+        desc.textContent = description;
+        item.appendChild(desc);
+      }
+      item.addEventListener('click', () => {
+        menu.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+        onClick();
+      });
+      menu.appendChild(item);
+    });
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      menu.hidden = !menu.hidden;
+      btn.setAttribute('aria-expanded', String(!menu.hidden));
+    });
+    document.addEventListener('click', () => {
+      if (!menu.hidden) {
+        menu.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+      }
+    });
+
+    wrap.append(btn, menu);
+    return wrap;
   };
 
   // --- エラーメッセージの日本語化 ---
@@ -145,11 +196,16 @@
     shadow.append(style, overlay);
 
     const previousFocus = document.activeElement;
+    // モーダル内で作った blob URL を追跡し、閉じるときにまとめて解放する
+    //（kintone は SPA でページが長寿命のため、解放しないと数MB単位で蓄積する）
+    const objectUrls = [];
+    const trackObjectUrl = (blobUrl) => { objectUrls.push(blobUrl); return blobUrl; };
     const onKeydown = (e) => {
       if (e.key === 'Escape') closeModal();
     };
     const closeModal = () => {
       document.removeEventListener('keydown', onKeydown, true);
+      objectUrls.forEach((blobUrl) => { try { URL.revokeObjectURL(blobUrl); } catch (_) {} });
       host.remove();
       if (previousFocus && typeof previousFocus.focus === 'function') {
         try { previousFocus.focus(); } catch (_) {}
@@ -161,7 +217,38 @@
     overlay.addEventListener('click', (e) => { if (e.target === overlay) closeModal(); });
     setTimeout(() => modal.focus(), 0);
 
-    return { host, shadow, overlay, modal, content, closeModal };
+    return { host, shadow, overlay, modal, content, closeModal, trackObjectUrl };
+  };
+
+  // PDFプレビューパネル（モーダル左ペイン）の共通ヘルパー。
+  // trackUrl に createModalShell の trackObjectUrl を渡すと close 時に blob URL を解放する。
+  const buildPreviewPanel = (name, trackUrl) => {
+    const panel = document.createElement('div');
+    panel.className = 'preview-panel';
+    const label = document.createElement('div');
+    label.className = 'preview-label';
+    label.textContent = name || '';
+    panel.appendChild(label);
+    const placeholder = document.createElement('div');
+    placeholder.className = 'preview-placeholder';
+    placeholder.textContent = 'プレビューを読み込み中...';
+    panel.appendChild(placeholder);
+
+    const showBlob = (blobOrFile) => {
+      let blobUrl = URL.createObjectURL(blobOrFile);
+      if (trackUrl) blobUrl = trackUrl(blobUrl);
+      const embed = document.createElement('embed');
+      embed.src = blobUrl;
+      embed.type = 'application/pdf';
+      embed.className = 'preview-embed';
+      if (placeholder.parentNode === panel) {
+        panel.replaceChild(embed, placeholder);
+      } else {
+        panel.appendChild(embed);
+      }
+    };
+    const showMessage = (message) => { placeholder.textContent = message; };
+    return { panel, showBlob, showMessage };
   };
 
   // --- 一致理由バッジ（サーバーの reasons を日本語ラベルに変換） ---
@@ -816,7 +903,8 @@
     return { records, total };
   };
 
-  const runBulkIndex = async (overlay, config, apiBaseUrl) => {
+  // options.onlyRecordIds: 指定した recordId のみ処理（未登録のみ登録などに使用）
+  const runBulkIndex = async (overlay, config, apiBaseUrl, options = {}) => {
     const cancel = { requested: false };
     const state = {
       phase: 'fetch',
@@ -869,6 +957,10 @@
       );
       records = result.records;
       state.total = result.total;
+      if (options.onlyRecordIds) {
+        records = records.filter((record) => options.onlyRecordIds.has(String(record['$id'].value)));
+        state.total = records.length;
+      }
     } catch (error) {
       state.phase = 'error';
       state.errorMessage = error.message || 'レコード取得に失敗しました';
@@ -1177,6 +1269,28 @@
     '.sim-shape-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }',
     '.sim-shape-tag { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;',
     '  background: var(--pb-violet-soft); color: var(--pb-violet); font-size: 10.5px; font-weight: 600; }',
+    // ---- index status (integrity check) ----
+    '.stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 4px 0 16px; }',
+    '.stat-card { padding: 12px 8px; border: 1px solid var(--pb-line); border-radius: 12px;',
+    '  text-align: center; background: var(--pb-bg); }',
+    '.stat-num { font-size: 22px; font-weight: 800; line-height: 1.2; color: var(--pb-ink); }',
+    '.stat-label { margin-top: 2px; font-size: 11px; color: var(--pb-muted); font-weight: 600; }',
+    '.stat-card.ok .stat-num { color: var(--pb-green); }',
+    '.stat-card.warn .stat-num { color: var(--pb-amber); }',
+    '.stat-card.err .stat-num { color: var(--pb-red); }',
+    '.diff-section { margin: 12px 0; }',
+    '.diff-title { font-size: 12.5px; font-weight: 700; color: var(--pb-ink-2); margin-bottom: 6px; }',
+    '.diff-list { max-height: 150px; overflow-y: auto; margin: 0; padding: 8px 12px; list-style: none;',
+    '  border: 1px solid var(--pb-line); border-radius: 9px; background: var(--pb-bg); font-size: 12px; }',
+    '.diff-list li { padding: 2px 0; color: var(--pb-ink-2); }',
+    '.diff-list a { color: var(--pb-primary-hover); text-decoration: none; font-weight: 600; }',
+    '.diff-list a:hover { text-decoration: underline; }',
+    '.diff-note { font-size: 11.5px; color: var(--pb-faint); margin-top: 8px; }',
+    '.btn-danger { min-height: 42px; padding: 10px 16px; background: #fff; color: var(--pb-red);',
+    '  border: 1px solid #fecaca; border-radius: var(--pb-radius-sm); font-size: 14px; font-weight: 600;',
+    '  cursor: pointer; transition: background .15s; }',
+    '.btn-danger:hover:not(:disabled) { background: var(--pb-red-soft); }',
+    '.btn-danger:disabled { opacity: .5; cursor: not-allowed; }',
     // ---- debug (collapsed) ----
     '.sim-debug { margin-top: 10px; font-size: 11px; color: var(--pb-faint); }',
     '.sim-debug summary { cursor: pointer; user-select: none; }',
@@ -1299,7 +1413,7 @@
       }
     });
     shell.host.id = 'pb-register-host';
-    const { modal, content, closeModal } = shell;
+    const { modal, content, closeModal, trackObjectUrl } = shell;
 
     let cancelStateTimer = null;
     const clear = () => {
@@ -1339,25 +1453,9 @@
       const layout = document.createElement('div');
       layout.className = 'form-layout';
 
-      const previewPanel = document.createElement('div');
-      previewPanel.className = 'preview-panel';
-      const previewLabel = document.createElement('div');
-      previewLabel.className = 'preview-label';
-      previewLabel.textContent = file ? file.name : '';
-      previewPanel.appendChild(previewLabel);
-      if (file) {
-        const blobUrl = URL.createObjectURL(file);
-        const embed = document.createElement('embed');
-        embed.src = blobUrl;
-        embed.type = 'application/pdf';
-        embed.className = 'preview-embed';
-        previewPanel.appendChild(embed);
-      } else {
-        const ph = document.createElement('div');
-        ph.className = 'preview-placeholder';
-        ph.textContent = 'プレビューなし';
-        previewPanel.appendChild(ph);
-      }
+      const preview = buildPreviewPanel(file ? file.name : '', trackObjectUrl);
+      if (file) preview.showBlob(file); else preview.showMessage('プレビューなし');
+      const previewPanel = preview.panel;
 
       const formPanel = document.createElement('div');
       formPanel.className = 'form-panel';
@@ -1393,16 +1491,8 @@
       const layout = document.createElement('div');
       layout.className = 'form-layout';
 
-      const previewPanel = document.createElement('div');
-      previewPanel.className = 'preview-panel';
-      const previewLabel = document.createElement('div');
-      previewLabel.className = 'preview-label';
-      previewLabel.textContent = fileMeta.name || '';
-      previewPanel.appendChild(previewLabel);
-      const previewPh = document.createElement('div');
-      previewPh.className = 'preview-placeholder';
-      previewPh.textContent = 'プレビューを読み込み中...';
-      previewPanel.appendChild(previewPh);
+      const preview = buildPreviewPanel(fileMeta.name || '', trackObjectUrl);
+      const previewPanel = preview.panel;
 
       const formPanel = document.createElement('div');
       formPanel.className = 'form-panel';
@@ -1431,15 +1521,10 @@
       let currentFile = null;
       downloadKintoneFile(fileMeta.fileKey).then((blob) => {
         currentFile = new File([blob], fileMeta.name || 'drawing.pdf', { type: 'application/pdf' });
-        const blobUrl = URL.createObjectURL(currentFile);
-        const embed = document.createElement('embed');
-        embed.src = blobUrl;
-        embed.type = 'application/pdf';
-        embed.className = 'preview-embed';
-        previewPanel.replaceChild(embed, previewPh);
+        preview.showBlob(currentFile);
         recalcBtn.disabled = false;
       }).catch((error) => {
-        previewPh.textContent = 'プレビューを表示できません: ' + error.message;
+        preview.showMessage('プレビューを表示できません: ' + error.message);
       });
 
       recalcBtn.addEventListener('click', () => {
@@ -1765,25 +1850,9 @@
       layout.className = 'form-layout';
 
       // Left: PDF preview
-      const previewPanel = document.createElement('div');
-      previewPanel.className = 'preview-panel';
-      const previewLabel = document.createElement('div');
-      previewLabel.className = 'preview-label';
-      previewLabel.textContent = file ? file.name : '';
-      previewPanel.appendChild(previewLabel);
-      if (file) {
-        const blobUrl = URL.createObjectURL(file);
-        const embed = document.createElement('embed');
-        embed.src = blobUrl;
-        embed.type = 'application/pdf';
-        embed.className = 'preview-embed';
-        previewPanel.appendChild(embed);
-      } else {
-        const ph = document.createElement('div');
-        ph.className = 'preview-placeholder';
-        ph.textContent = 'プレビューなし';
-        previewPanel.appendChild(ph);
-      }
+      const preview = buildPreviewPanel(file ? file.name : '', trackObjectUrl);
+      if (file) preview.showBlob(file); else preview.showMessage('プレビューなし');
+      const previewPanel = preview.panel;
 
       // Right: Form panel
       const formPanel = document.createElement('div');
@@ -2480,34 +2549,14 @@
     const layout = document.createElement('div');
     layout.className = 'form-layout';
 
-    const previewPanel = document.createElement('div');
-    previewPanel.className = 'preview-panel';
-    const previewLabel = document.createElement('div');
-    previewLabel.className = 'preview-label';
-    previewLabel.textContent = fileMeta ? (fileMeta.name || '') : '自分の図面';
-    previewPanel.appendChild(previewLabel);
-
+    const preview = buildPreviewPanel(fileMeta ? (fileMeta.name || '') : '自分の図面', shell.trackObjectUrl);
+    const previewPanel = preview.panel;
     if (fileMeta) {
-      const previewPh = document.createElement('div');
-      previewPh.className = 'preview-placeholder';
-      previewPh.textContent = 'プレビューを読み込み中...';
-      previewPanel.appendChild(previewPh);
-
-      downloadKintoneFile(fileMeta.fileKey).then((blob) => {
-        const blobUrl = URL.createObjectURL(blob);
-        const embed = document.createElement('embed');
-        embed.src = blobUrl;
-        embed.type = 'application/pdf';
-        embed.className = 'preview-embed';
-        previewPanel.replaceChild(embed, previewPh);
-      }).catch((error) => {
-        previewPh.textContent = 'プレビューを表示できません: ' + error.message;
-      });
+      downloadKintoneFile(fileMeta.fileKey)
+        .then((blob) => preview.showBlob(blob))
+        .catch((error) => preview.showMessage('プレビューを表示できません: ' + error.message));
     } else {
-      const ph = document.createElement('div');
-      ph.className = 'preview-placeholder';
-      ph.textContent = 'PDFが登録されていません';
-      previewPanel.appendChild(ph);
+      preview.showMessage('PDFが登録されていません');
     }
 
     const queryShapeTagsEl = document.createElement('div');
@@ -2608,7 +2657,7 @@
   const openUploadSimilarModal = (config, apiBaseUrl) => {
     const shell = createModalShell();
     shell.host.id = 'pb-upload-similar-host';
-    const { modal, content, closeModal } = shell;
+    const { modal, content, closeModal, trackObjectUrl } = shell;
 
     const clear = () => { content.textContent = ''; };
 
@@ -2648,18 +2697,9 @@
       const layout = document.createElement('div');
       layout.className = 'form-layout';
 
-      const previewPanel = document.createElement('div');
-      previewPanel.className = 'preview-panel';
-      const previewLabel = document.createElement('div');
-      previewLabel.className = 'preview-label';
-      previewLabel.textContent = file.name || '';
-      previewPanel.appendChild(previewLabel);
-      const blobUrl = URL.createObjectURL(file);
-      const embed = document.createElement('embed');
-      embed.src = blobUrl;
-      embed.type = 'application/pdf';
-      embed.className = 'preview-embed';
-      previewPanel.appendChild(embed);
+      const preview = buildPreviewPanel(file.name || '', trackObjectUrl);
+      preview.showBlob(file);
+      const previewPanel = preview.panel;
 
       const formPanel = document.createElement('div');
       formPanel.className = 'form-panel';
@@ -2731,6 +2771,240 @@
     showDropState();
   };
 
+  // === インデックス状況チェック（kintone ⇔ Qdrant の整合性確認） ===
+  // 未登録（kintoneにあるが検索に出ない）・要更新（PDF差し替え済みでベクトルが古い）・
+  // 孤児（レコード削除済みなのに検索に出る）を検知し、その場で修復できるようにする。
+  const openIndexStatusModal = (config, apiBaseUrl) => {
+    if (!config.pdfFileField) {
+      window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
+      return;
+    }
+    const shell = createModalShell();
+    shell.host.id = 'pb-index-status-host';
+    const { content, closeModal } = shell;
+    const appId = kintone.app.getId();
+    const tenantId = deriveTenantId();
+
+    const recordLink = (entry) => {
+      const li = document.createElement('li');
+      const a = document.createElement('a');
+      a.href = '/k/' + appId + '/show#record=' + encodeURIComponent(entry.recordId);
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.textContent = entry.drawingNo || ('レコード ' + entry.recordId);
+      li.appendChild(a);
+      return li;
+    };
+
+    const buildSection = (label, entries, { linkable = true, max = 100 } = {}) => {
+      const section = document.createElement('div');
+      section.className = 'diff-section';
+      const title = document.createElement('div');
+      title.className = 'diff-title';
+      title.textContent = label + '（' + entries.length + '件）';
+      const list = document.createElement('ul');
+      list.className = 'diff-list';
+      entries.slice(0, max).forEach((entry) => {
+        if (linkable) {
+          list.appendChild(recordLink(entry));
+        } else {
+          const li = document.createElement('li');
+          li.textContent = 'レコード ' + entry.recordId + '（kintone側に存在しません）';
+          list.appendChild(li);
+        }
+      });
+      if (entries.length > max) {
+        const li = document.createElement('li');
+        li.textContent = '… 他 ' + (entries.length - max) + ' 件';
+        list.appendChild(li);
+      }
+      section.append(title, list);
+      return section;
+    };
+
+    const run = async () => {
+      content.textContent = '';
+      const title = document.createElement('h2');
+      title.textContent = 'インデックス状況チェック';
+      const statusEl = document.createElement('div');
+      statusEl.className = 'status-line';
+      const spinner = document.createElement('div');
+      spinner.className = 'pb-spinner';
+      const statusText = document.createElement('span');
+      statusText.textContent = 'kintoneレコードと検索インデックスを照合しています...';
+      statusEl.append(spinner, statusText);
+      content.append(title, statusEl);
+
+      let records;
+      let indexItems;
+      try {
+        const fields = ['$id', config.pdfFileField];
+        if (config.drawingNoField) fields.push(config.drawingNoField);
+        const [recordsResult, statusRes] = await Promise.all([
+          fetchAllRecords(appId, fields, () => {}, { requested: false }),
+          fetch(apiBaseUrl + '/index-status?tenantId=' + encodeURIComponent(tenantId) +
+            '&appId=' + encodeURIComponent(String(appId || '')), {
+            headers: apiKeyHeader(config.apiKey)
+          })
+        ]);
+        records = recordsResult.records;
+        if (!statusRes.ok) {
+          let detail = '';
+          try { detail = (await statusRes.json()).error || ''; } catch (_) {}
+          throw new Error(describeApiError(statusRes.status, detail));
+        }
+        const statusData = await statusRes.json();
+        indexItems = Array.isArray(statusData.items) ? statusData.items : [];
+      } catch (error) {
+        statusEl.remove();
+        const err = document.createElement('div');
+        err.className = 'sim-note';
+        err.textContent = '⚠ 照合に失敗しました: ' + error.message;
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn-secondary';
+        retry.textContent = '再試行';
+        retry.addEventListener('click', run);
+        content.append(err, retry);
+        return;
+      }
+
+      // --- 突き合わせ ---
+      const indexMap = new Map(indexItems.map((it) => [String(it.recordId), String(it.fileKey || '')]));
+      const drawingNoOf = (record) => config.drawingNoField && record[config.drawingNoField]
+        ? String(record[config.drawingNoField].value || '') : '';
+      const ok = [];
+      const unindexed = [];
+      const stale = [];
+      const noPdf = [];
+      const kintoneIds = new Set();
+      for (const record of records) {
+        const recordId = String(record['$id'].value);
+        kintoneIds.add(recordId);
+        const fileField = record[config.pdfFileField];
+        const files = fileField && Array.isArray(fileField.value) ? fileField.value : [];
+        const entry = { recordId, drawingNo: drawingNoOf(record) };
+        if (!files.length) { noPdf.push(entry); continue; }
+        const indexedFileKey = indexMap.get(recordId);
+        if (indexedFileKey === undefined) { unindexed.push(entry); continue; }
+        // file_key 未記録の旧データは差分判定不能のため OK 扱い
+        if (indexedFileKey && indexedFileKey !== String(files[0].fileKey)) { stale.push(entry); continue; }
+        ok.push(entry);
+      }
+      const orphans = [...indexMap.keys()]
+        .filter((id) => !kintoneIds.has(id))
+        .map((recordId) => ({ recordId }));
+
+      // --- 結果表示 ---
+      content.textContent = '';
+      content.appendChild(title);
+
+      const grid = document.createElement('div');
+      grid.className = 'stat-grid';
+      [
+        { num: ok.length, label: '登録済み', cls: 'ok' },
+        { num: unindexed.length, label: '未登録', cls: unindexed.length ? 'warn' : '' },
+        { num: stale.length, label: '要更新', cls: stale.length ? 'warn' : '' },
+        { num: orphans.length, label: '孤児', cls: orphans.length ? 'err' : '' }
+      ].forEach(({ num, label, cls }) => {
+        const card = document.createElement('div');
+        card.className = 'stat-card' + (cls ? ' ' + cls : '');
+        const n = document.createElement('div');
+        n.className = 'stat-num';
+        n.textContent = String(num);
+        const l = document.createElement('div');
+        l.className = 'stat-label';
+        l.textContent = label;
+        card.append(n, l);
+        grid.appendChild(card);
+      });
+      content.appendChild(grid);
+
+      if (!unindexed.length && !stale.length && !orphans.length) {
+        const done = document.createElement('div');
+        done.className = 'result-wrap result-ok';
+        done.innerHTML = '<div class="result-icon">✓</div><div class="result-msg">kintoneと検索インデックスは一致しています。</div>';
+        content.appendChild(done);
+      }
+      if (unindexed.length) content.appendChild(buildSection('未登録（検索に出ません）', unindexed));
+      if (stale.length) content.appendChild(buildSection('要更新（PDFが差し替えられています）', stale));
+      if (orphans.length) content.appendChild(buildSection('孤児（レコード削除済み・検索結果に残っています）', orphans, { linkable: false }));
+      if (noPdf.length) {
+        const note = document.createElement('div');
+        note.className = 'diff-note';
+        note.textContent = '※ PDF未添付のレコードが ' + noPdf.length + ' 件あります（チェック対象外）。';
+        content.appendChild(note);
+      }
+
+      // --- アクション ---
+      const actions = document.createElement('div');
+      actions.className = 'form-actions';
+
+      const runFiltered = (label, entries) => {
+        closeModal();
+        const overlay = createBulkModal();
+        overlay.querySelector('.pb-bulk-title').textContent = label;
+        runBulkIndex(overlay, config, apiBaseUrl, {
+          onlyRecordIds: new Set(entries.map((entry) => entry.recordId))
+        });
+      };
+
+      if (unindexed.length) {
+        const registerBtn = document.createElement('button');
+        registerBtn.type = 'button';
+        registerBtn.className = 'btn-primary';
+        registerBtn.textContent = '未登録を登録（' + unindexed.length + '件）';
+        registerBtn.addEventListener('click', () => runFiltered('未登録レコードの登録', unindexed));
+        actions.appendChild(registerBtn);
+      }
+      if (stale.length) {
+        const staleBtn = document.createElement('button');
+        staleBtn.type = 'button';
+        staleBtn.className = unindexed.length ? 'btn-secondary' : 'btn-primary';
+        staleBtn.textContent = '要更新を再登録（' + stale.length + '件）';
+        staleBtn.addEventListener('click', () => runFiltered('要更新レコードの再登録', stale));
+        actions.appendChild(staleBtn);
+      }
+      if (orphans.length) {
+        const orphanBtn = document.createElement('button');
+        orphanBtn.type = 'button';
+        orphanBtn.className = 'btn-danger';
+        orphanBtn.textContent = '孤児を削除（' + orphans.length + '件）';
+        orphanBtn.addEventListener('click', async () => {
+          orphanBtn.disabled = true;
+          let done = 0;
+          for (const orphan of orphans) {
+            try {
+              await fetch(apiBaseUrl + '/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+                body: JSON.stringify({
+                  appId: String(appId || ''),
+                  recordId: orphan.recordId,
+                  tenantId
+                })
+              });
+            } catch (_) { /* 個別失敗は再チェックで拾う */ }
+            done += 1;
+            orphanBtn.textContent = '削除中... ' + done + ' / ' + orphans.length;
+          }
+          run();
+        });
+        actions.appendChild(orphanBtn);
+      }
+      const recheckBtn = document.createElement('button');
+      recheckBtn.type = 'button';
+      recheckBtn.className = 'btn-secondary';
+      recheckBtn.textContent = '再チェック';
+      recheckBtn.addEventListener('click', run);
+      actions.appendChild(recheckBtn);
+
+      content.appendChild(actions);
+    };
+
+    run();
+  };
+
   kintone.events.on('app.record.index.show', (event) => {
     if (document.getElementById('pb-list-btns')) {
       return event;
@@ -2766,22 +3040,33 @@
     });
     group.appendChild(uploadSearchBtn);
 
-    // 一括図面登録ボタンは設定でオフにできる（既定は表示）。
+    // 管理系のアクションは「管理」メニューに集約する。
+    // 今後機能が増えてもヘッダーのボタンを増やさず、メニュー項目を足すだけで済む。
+    const menuItems = [{
+      label: 'インデックス状況チェック',
+      description: 'kintoneと検索インデックスの差分を確認・修復',
+      onClick: () => {
+        if (document.getElementById('pb-index-status-host')) return;
+        openIndexStatusModal(config, apiBaseUrl);
+      }
+    }];
+    // 一括図面登録は設定でオフにできる（既定は表示）。
     if (config.showBulkButton !== 'false') {
-      const button = createHeaderButton({ id: 'pb-bulk-index-btn', label: '一括図面登録', variant: 'ghost', icon: 'layers' });
-      button.addEventListener('click', () => {
-        if (document.getElementById('pb-bulk-overlay')) {
-          return;
+      menuItems.push({
+        label: '一括図面登録（全件）',
+        description: '表示中アプリの全レコードを順次登録',
+        onClick: () => {
+          if (document.getElementById('pb-bulk-overlay')) return;
+          if (!config.pdfFileField) {
+            window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
+            return;
+          }
+          const overlay = createBulkModal();
+          runBulkIndex(overlay, config, apiBaseUrl);
         }
-        if (!config.pdfFileField) {
-          window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
-          return;
-        }
-        const overlay = createBulkModal();
-        runBulkIndex(overlay, config, apiBaseUrl);
       });
-      group.appendChild(button);
     }
+    group.appendChild(createManageMenu(menuItems));
 
     header.appendChild(group);
 
