@@ -7,6 +7,7 @@ on:
       - "plugins/**"
       - "tools/**"
       - "scripts/**"
+      - "services/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/**"
@@ -16,6 +17,7 @@ on:
       - "plugins/**"
       - "tools/**"
       - "scripts/**"
+      - "services/**"
       - "package.json"
       - "package-lock.json"
       - ".github/workflows/**"
@@ -35,6 +37,19 @@ jobs:
       - run: npm ci
       - name: Run code & plugin checks
         run: npm run check   # ← ここで eslint と kb-check-css をまとめて実行
+
+  # 1.5) drawing-similarity API の統合テスト（mock Qdrant/kintone/Firestore）
+  server-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Install poppler (pdftoppm)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+      - name: Run server integration tests
+        run: npm test
+        working-directory: services/drawing-similarity-api
 
   # 2) ビルド（各プラグインの build を横断実行）
   build:

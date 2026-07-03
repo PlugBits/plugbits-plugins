@@ -709,6 +709,10 @@ const getGcpAccessTokenFromServiceAccountKey = async (keyJson, scope) => {
 };
 
 const getGcpAccessToken = async () => {
+  // テスト/ローカル開発用: 固定トークンを注入できる（本番では未設定）
+  if (process.env.GCP_ACCESS_TOKEN) {
+    return process.env.GCP_ACCESS_TOKEN;
+  }
   const now = Date.now();
   if (_gcpTokenCache && _gcpTokenCache.expiresAt > now + 30000) {
     return _gcpTokenCache.token;
@@ -751,8 +755,11 @@ const parseFirestoreFields = (fields) => {
   return out;
 };
 
+// テスト用にエンドポイントを差し替え可能にする（本番は既定の googleapis.com）
+const FIRESTORE_BASE_URL = String(process.env.FIRESTORE_BASE_URL || 'https://firestore.googleapis.com').replace(/\/+$/, '');
+
 const fetchTenantDoc = async (docId, gcpToken) => {
-  const docUrl = `https://firestore.googleapis.com/v1/projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/tenants/${encodeURIComponent(docId)}`;
+  const docUrl = `${FIRESTORE_BASE_URL}/v1/projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/tenants/${encodeURIComponent(docId)}`;
   const res = await fetch(docUrl, { headers: { Authorization: `Bearer ${gcpToken}` } });
   if (!res.ok) return null;
   const doc = await res.json();
