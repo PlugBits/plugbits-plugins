@@ -79,7 +79,7 @@ const startMockBackend = () => {
     }
 
     // --- Firestore ---
-    const fsMatch = url.pathname.match(/^\/v1\/projects\/[^/]+\/databases\/\(default\)\/documents\/tenants\/([^/]+)$/);
+    const fsMatch = url.pathname.match(/^\/v1\/projects\/[^/]+\/databases\/[^/]+\/documents\/tenants\/([^/]+)$/);
     if (fsMatch) {
       const doc = state.tenants.get(decodeURIComponent(fsMatch[1]));
       if (!doc) return json(404, { error: { code: 404 } });
@@ -431,6 +431,21 @@ test('auth: delete もキーのテナントに強制され、他テナントの�
   assert.equal(res2.status, 200);
   const tenants = [...authMock.state.points.values()].map((p) => p.payload.tenant_id);
   assert.deepEqual(tenants, ['tenant-b'], 'tenant-a のポイントだけが消えた');
+});
+
+test('auth: 名前付きDB（FIRESTORE_DATABASE_ID）でもテナント解決できる', async () => {
+  const namedMock = await startMockBackend();
+  const namedApi = await startApi(namedMock.url, {
+    TENANT_AUTH_ENABLED: 'true', FIRESTORE_DATABASE_ID: 'default'
+  });
+  try {
+    const res = await fetch(namedApi.url + '/health', { headers: { 'X-API-Key': 'key-a' } });
+    const data = await res.json();
+    assert.ok(data.runtime, '名前付きDBでも有効キーとして解決される');
+  } finally {
+    namedApi.child.kill();
+    namedMock.server.close();
+  }
 });
 
 test('auth: index-status もキーのテナントに強制される', async () => {

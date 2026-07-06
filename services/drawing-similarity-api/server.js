@@ -769,9 +769,12 @@ const parseFirestoreFields = (fields) => {
 
 // テスト用にエンドポイントを差し替え可能にする（本番は既定の googleapis.com）
 const FIRESTORE_BASE_URL = String(process.env.FIRESTORE_BASE_URL || 'https://firestore.googleapis.com').replace(/\/+$/, '');
+// Firestore のデータベースID。本来の既定DBは "(default)"（括弧つき）だが、
+// 名前付きDB（例: "default"）を使う環境もあるため env で指定可能にする。
+const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || '(default)';
 
 const fetchTenantDoc = async (docId, gcpToken) => {
-  const docUrl = `${FIRESTORE_BASE_URL}/v1/projects/${FIRESTORE_PROJECT_ID}/databases/(default)/documents/tenants/${encodeURIComponent(docId)}`;
+  const docUrl = `${FIRESTORE_BASE_URL}/v1/projects/${FIRESTORE_PROJECT_ID}/databases/${FIRESTORE_DATABASE_ID}/documents/tenants/${encodeURIComponent(docId)}`;
   const res = await fetch(docUrl, { headers: { Authorization: `Bearer ${gcpToken}` } });
   if (!res.ok) return null;
   const doc = await res.json();
