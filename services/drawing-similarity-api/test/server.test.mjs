@@ -39,6 +39,7 @@ const startMockBackend = () => {
     collections: new Map(), // name -> { size }
     points: new Map(),      // id -> { id, vector, payload }
     captured: { upserts: [], searches: [], scrolls: [] },
+    indexedFields: new Set(), // Qdrant の payload インデックス（フィルタに必須）
     kintoneFiles: new Map([['file-a', PDF_A], ['file-b', PDF_B]]),
     // Firestore: docId -> fields
     tenants: new Map([
@@ -103,6 +104,7 @@ const startMockBackend = () => {
         return json(200, { result: true });
       }
       if (sub === '/index' && req.method === 'PUT') {
+        if (body.field_name) state.indexedFields.add(body.field_name);
         return json(200, { result: true });
       }
       if (sub.startsWith('/points') && req.method === 'PUT') {
@@ -127,6 +129,11 @@ const startMockBackend = () => {
         return json(200, { result: { points, next_page_offset: null } });
       }
       if (sub.startsWith('/points/delete') && req.method === 'POST') {
+        const filterKeys = (body.filter?.must || []).map((c) => c.key);
+        const missing = filterKeys.find((k) => !state.indexedFields.has(k));
+        if (missing) {
+          return json(400, { status: { error: 'Bad request: Index required but not found for "' + missing + '" of one of the following types: [keyword].' } });
+        }
         if (Array.isArray(body.points)) {
           for (const id of body.points) state.points.delete(String(id));
         } else if (body.filter) {
@@ -335,6 +342,19 @@ test('delete: 旧スキーム（数値ID等）のポイントもフィルタ削�
   const res = await postJson(api.url, '/delete', { recordId: '99', tenantId: 'tenant-a' });
   assert.equal(res.status, 200, await res.text());
   assert.equal(mock.state.points.has('99'), false, '数値IDの旧ポイントも消える');
+});
+
+test('delete: record_id インデックスが無くても自己修復して削除できる', async () => {
+  // 旧コードで作られた「record_id 未インデックス」のコレクションを模擬
+  mock.state.indexedFields.delete('record_id');
+  mock.state.points.set('op1', {
+    id: 'op1', vector: [0, 0, 0],
+    payload: { tenant_id: 'tenant-a', record_id: '77', file_key: 'x' }
+  });
+  const res = await postJson(api.url, '/delete', { recordId: '77', tenantId: 'tenant-a' });
+  assert.equal(res.status, 200, await res.text());
+  assert.equal(mock.state.indexedFields.has('record_id'), true, 'インデックスが自動作成される');
+  assert.equal(mock.state.points.has('op1'), false, '再試行で削除される');
 });
 
 // ================================================================

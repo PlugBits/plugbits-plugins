@@ -1750,17 +1750,33 @@ const deleteRecordPoints = async (tenantId, recordId) => {
   if (!isQdrantConfigured()) {
     return false;
   }
-  await qdrantRequest('/collections/' + encodeURIComponent(qdrantCollection) + '/points/delete?wait=true', {
-    method: 'POST',
-    body: JSON.stringify({
-      filter: {
-        must: [
-          { key: 'tenant_id', match: { value: String(tenantId || 'default') } },
-          { key: 'record_id', match: { value: String(recordId) } }
-        ]
-      }
-    })
-  });
+  const runDelete = () => qdrantRequest(
+    '/collections/' + encodeURIComponent(qdrantCollection) + '/points/delete?wait=true',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        filter: {
+          must: [
+            { key: 'tenant_id', match: { value: String(tenantId || 'default') } },
+            { key: 'record_id', match: { value: String(recordId) } }
+          ]
+        }
+      })
+    }
+  );
+  try {
+    await runDelete();
+  } catch (error) {
+    // record_id の payload インデックスが無いと 400 になる。既存コレクションが
+    // 旧コードで作られていた場合に起きるので、その場でインデックスを張って1回だけ再試行する。
+    if (error.status === 400 && /Index required/i.test(error.message || '')) {
+      payloadIndexesReady = false;
+      await ensurePayloadIndexes();
+      await runDelete();
+    } else {
+      throw error;
+    }
+  }
   return true;
 };
 
