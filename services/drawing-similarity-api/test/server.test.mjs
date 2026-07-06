@@ -127,7 +127,16 @@ const startMockBackend = () => {
         return json(200, { result: { points, next_page_offset: null } });
       }
       if (sub.startsWith('/points/delete') && req.method === 'POST') {
-        for (const id of body.points || []) state.points.delete(String(id));
+        if (Array.isArray(body.points)) {
+          for (const id of body.points) state.points.delete(String(id));
+        } else if (body.filter) {
+          const want = {};
+          for (const c of (body.filter.must || [])) want[c.key] = c.match.value;
+          for (const [id, p] of [...state.points]) {
+            const hit = Object.entries(want).every(([k, v]) => String(p.payload?.[k]) === String(v));
+            if (hit) state.points.delete(id);
+          }
+        }
         return json(200, { result: {} });
       }
       if (sub.startsWith('/points/payload') && req.method === 'POST') {
@@ -315,6 +324,17 @@ test('delete: レコード削除でテナント名前空間のポイントが消
   assert.equal(mock.state.points.size, 1, 'tenant-a のポイントだけが消える');
   const remaining = [...mock.state.points.values()][0];
   assert.equal(remaining.payload.tenant_id, 'tenant-b');
+});
+
+test('delete: 旧スキーム（数値ID等）のポイントもフィルタ削除で消える', async () => {
+  // Phase 2 以前の想定: ポイントIDが payload と無関係（例: 数値 recordId）
+  mock.state.points.set('99', {
+    id: 99, vector: [0, 0, 0],
+    payload: { tenant_id: 'tenant-a', record_id: '99', file_key: 'legacy' }
+  });
+  const res = await postJson(api.url, '/delete', { recordId: '99', tenantId: 'tenant-a' });
+  assert.equal(res.status, 200, await res.text());
+  assert.equal(mock.state.points.has('99'), false, '数値IDの旧ポイントも消える');
 });
 
 // ================================================================

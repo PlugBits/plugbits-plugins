@@ -1733,6 +1733,28 @@ const ensurePayloadIndexes = async () => {
   return true;
 };
 
+// テナント＋レコードIDのポイントを「フィルタで」削除する。ポイントIDを計算して
+// 消す方式だと、Phase 2 以前に別スキームのIDで保存された古いポイントに命中せず
+// 残ってしまう。payload の tenant_id + record_id で消せば新旧どちらのスキームでも
+// 確実に除去できる（孤児削除・PDF差し替え時の旧ベクトル掃除に使用）。
+const deleteRecordPoints = async (tenantId, recordId) => {
+  if (!isQdrantConfigured()) {
+    return false;
+  }
+  await qdrantRequest('/collections/' + encodeURIComponent(qdrantCollection) + '/points/delete?wait=true', {
+    method: 'POST',
+    body: JSON.stringify({
+      filter: {
+        must: [
+          { key: 'tenant_id', match: { value: String(tenantId || 'default') } },
+          { key: 'record_id', match: { value: String(recordId) } }
+        ]
+      }
+    })
+  });
+  return true;
+};
+
 // Point ID はテナントで名前空間を分ける。これをしないと、異なるテナントで
 // 同じ recordId（例: どちらも 1）が同一 point に衝突し、後勝ちで上書きされて
 // テナント分離が崩れる。tenantId + recordId(+ rotation) をハッシュして一意化する。
@@ -1827,6 +1849,11 @@ const upsertDrawing = async (body, embedding, context = {}) => {
   };
 
   try {
+    // 再登録（PDF差し替え等）で古いポイントが残らないよう、upsert 前に
+    // このレコードの既存ポイントをフィルタ削除する（旧スキームのIDも掃除される）。
+    await deleteRecordPoints(body.tenantId, body.recordId).catch((error) => {
+      throw attachStep(error, 'qdrant_delete_old');
+    });
     await qdrantRequest('/collections/' + encodeURIComponent(qdrantCollection) + '/points?wait=true', {
       method: 'PUT',
       body: JSON.stringify({
@@ -2485,11 +2512,7 @@ const server = createServer(async (request, response) => {
         sendJson(response, 200, { ok: true, configured: false });
         return;
       }
-      const pointIds = embeddingRotations.map((rot) => toPointIdWithRotation(body.tenantId, body.recordId, rot));
-      await qdrantRequest(
-        '/collections/' + encodeURIComponent(qdrantCollection) + '/points/delete?wait=true',
-        { method: 'POST', body: JSON.stringify({ points: pointIds }) }
-      );
+      await deleteRecordPoints(body.tenantId, body.recordId);
       sendJson(response, 200, { ok: true, recordId: body.recordId });
     } catch (error) {
       sendJson(response, error.status || 500, { error: error.message });
