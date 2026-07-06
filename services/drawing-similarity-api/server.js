@@ -1703,9 +1703,16 @@ const ensureCollection = async (size) => {
       }
     })
   });
+  // コレクションを作り直したときは、既存の「作成済み」フラグを無効化して
+  // 新しいコレクションに payload インデックスを確実に張り直す。
+  payloadIndexesReady = false;
   await ensurePayloadIndexes();
   return true;
 };
+
+// フィルタ検索・フィルタ削除に使う payload フィールドは Qdrant 側でインデックスが必要。
+// tenant_id（テナント絞り込み）と record_id（レコード単位の削除/再登録）の両方を張る。
+const INDEXED_PAYLOAD_FIELDS = ['tenant_id', 'record_id'];
 
 const ensurePayloadIndexes = async () => {
   if (!isQdrantConfigured()) {
@@ -1715,17 +1722,19 @@ const ensurePayloadIndexes = async () => {
     return true;
   }
 
-  try {
-    await qdrantRequest('/collections/' + encodeURIComponent(qdrantCollection) + '/index', {
-      method: 'PUT',
-      body: JSON.stringify({
-        field_name: 'tenant_id',
-        field_schema: 'keyword'
-      })
-    });
-  } catch (error) {
-    if (error.status !== 409) {
-      throw error;
+  for (const field of INDEXED_PAYLOAD_FIELDS) {
+    try {
+      await qdrantRequest('/collections/' + encodeURIComponent(qdrantCollection) + '/index', {
+        method: 'PUT',
+        body: JSON.stringify({
+          field_name: field,
+          field_schema: 'keyword'
+        })
+      });
+    } catch (error) {
+      if (error.status !== 409) {
+        throw error;
+      }
     }
   }
 
