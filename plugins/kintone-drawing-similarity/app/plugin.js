@@ -1107,7 +1107,21 @@
     });
   };
 
-  const runArchiveIndex = async (overlay, config, apiBaseUrl, files) => {
+  // Googleドライブのファイルをアクセストークン付きでダウンロードしBase64化する。
+  const fetchDriveFileBase64 = async (fileId, accessToken) => {
+    const response = await fetch(
+      'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media',
+      { headers: { Authorization: 'Bearer ' + accessToken } }
+    );
+    if (!response.ok) {
+      throw new Error('Google Driveからのダウンロードに失敗しました（HTTP ' + response.status + '）');
+    }
+    return toBase64(await response.blob());
+  };
+
+  // driveAccessToken を渡すと files は Google Drive の {id, name}[]、
+  // 渡さない場合は従来通りローカルの File オブジェクト配列として処理する。
+  const runArchiveIndex = async (overlay, config, apiBaseUrl, files, driveAccessToken) => {
     const cancel = { requested: false };
     const state = {
       phase: 'process',
@@ -1132,21 +1146,25 @@
 
     const appId = kintone.app.getId();
     const tenantId = deriveTenantId();
+    const isDriveImport = !!driveAccessToken;
 
     for (const file of files) {
       if (cancel.requested) {
         break;
       }
 
-      const relPath = (file.webkitRelativePath || file.name).normalize('NFC');
+      const driveFileId = isDriveImport ? file.id : '';
+      const relPath = isDriveImport ? file.name : (file.webkitRelativePath || file.name).normalize('NFC');
 
       try {
-        const docId = await sha256Hex(relPath);
-        const pdf_base64 = await toBase64(file);
+        const docId = await sha256Hex(isDriveImport ? 'gdrive:' + driveFileId : relPath);
+        const pdf_base64 = isDriveImport
+          ? await fetchDriveFileBase64(driveFileId, driveAccessToken)
+          : await toBase64(file);
         const response = await fetch(apiBaseUrl + '/archive-index', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-          body: JSON.stringify({ tenantId, appId, docId, relPath, fileName: file.name, pdf_base64 })
+          body: JSON.stringify({ tenantId, appId, docId, relPath, fileName: file.name, driveFileId, pdf_base64 })
         });
         const data = await response.json();
         if (!response.ok) {
@@ -1165,6 +1183,40 @@
     state.phase = cancel.requested ? 'cancelled' : 'done';
     updateArchiveModal(overlay, state);
   };
+
+  // Google Drive OAuthポップアップ（当方サーバーがホストする固定オリジンのページ）を開き、
+  // ユーザーがPickerで選んだPDFの一覧とアクセストークンを postMessage で受け取る。
+  const openGoogleDrivePicker = (apiBaseUrl) => new Promise((resolve, reject) => {
+    const popupOrigin = new URL(apiBaseUrl).origin;
+    const popupUrl = popupOrigin + '/google/oauth/popup?origin=' + encodeURIComponent(window.location.origin);
+    const popup = window.open(popupUrl, 'pb-gdrive-picker', 'width=560,height=640');
+    if (!popup) {
+      reject(new Error('ポップアップがブロックされました。ブラウザのポップアップ許可設定をご確認ください。'));
+      return;
+    }
+    let settled = false;
+    const cleanup = () => {
+      window.removeEventListener('message', onMessage);
+      clearInterval(closeWatcher);
+    };
+    const onMessage = (event) => {
+      if (event.origin !== popupOrigin || !event.data || typeof event.data !== 'object') return;
+      settled = true;
+      cleanup();
+      if (event.data.ok) {
+        resolve({ accessToken: event.data.accessToken, files: event.data.files || [] });
+      } else {
+        reject(new Error(event.data.error === 'cancelled' ? 'キャンセルされました' : (event.data.error || 'Google連携に失敗しました')));
+      }
+    };
+    window.addEventListener('message', onMessage);
+    const closeWatcher = setInterval(() => {
+      if (popup.closed && !settled) {
+        cleanup();
+        reject(new Error('キャンセルされました'));
+      }
+    }, 500);
+  });
 
   // フォルダ選択（webkitdirectory）→ 進捗モーダルの2段階。ドラッグ&ドロップの再帰走査は実装しない
   // （フォルダピッカーはローカル/NAS/クラウド同期フォルダのいずれでもOSレベルで同一に動作するため）。
@@ -1209,6 +1261,19 @@
     zone.append(icon, mainEl, subEl, folderInput, noteEl);
     formPanel.appendChild(zone);
 
+    const orEl = document.createElement('div');
+    orEl.className = 'status-line';
+    orEl.style.cssText = 'justify-content:center; margin-top:14px;';
+    orEl.textContent = 'または';
+    formPanel.appendChild(orEl);
+
+    const gdriveBtn = document.createElement('button');
+    gdriveBtn.type = 'button';
+    gdriveBtn.className = 'btn-secondary';
+    gdriveBtn.style.cssText = 'width:100%; margin-top:10px;';
+    gdriveBtn.textContent = 'Googleドライブから選択';
+    formPanel.appendChild(gdriveBtn);
+
     const statusEl = document.createElement('div');
     statusEl.className = 'status-line';
     formPanel.appendChild(statusEl);
@@ -1225,28 +1290,50 @@
 
     content.append(header, formPanel);
 
-    let selectedFiles = [];
+    // selection.source: 'local'（Fileオブジェクト配列） | 'gdrive'（{id,name}配列＋accessToken）
+    let selection = { source: 'local', files: [], accessToken: null };
 
     zone.addEventListener('click', (e) => {
       if (e.target !== folderInput) folderInput.click();
     });
 
     folderInput.addEventListener('change', () => {
-      selectedFiles = Array.from(folderInput.files || []).filter((f) => /\.pdf$/i.test(f.name));
-      if (!selectedFiles.length) {
+      const files = Array.from(folderInput.files || []).filter((f) => /\.pdf$/i.test(f.name));
+      selection = { source: 'local', files, accessToken: null };
+      if (!files.length) {
         statusEl.textContent = 'このフォルダにPDFファイルが見つかりませんでした。';
         startBtn.disabled = true;
         return;
       }
-      statusEl.textContent = selectedFiles.length + ' 件のPDFが見つかりました。';
+      statusEl.textContent = files.length + ' 件のPDFが見つかりました。';
       startBtn.disabled = false;
     });
 
+    gdriveBtn.addEventListener('click', async () => {
+      gdriveBtn.disabled = true;
+      statusEl.textContent = 'Googleドライブと連携しています...';
+      try {
+        const { accessToken, files } = await openGoogleDrivePicker(apiBaseUrl);
+        if (!files.length) {
+          statusEl.textContent = 'ファイルが選択されませんでした。';
+          startBtn.disabled = true;
+          return;
+        }
+        selection = { source: 'gdrive', files, accessToken };
+        statusEl.textContent = files.length + ' 件のPDFが選択されました（Googleドライブ）。';
+        startBtn.disabled = false;
+      } catch (error) {
+        statusEl.textContent = error.message;
+      } finally {
+        gdriveBtn.disabled = false;
+      }
+    });
+
     startBtn.addEventListener('click', () => {
-      const files = selectedFiles;
+      const { source, files, accessToken } = selection;
       shell.closeModal();
       const overlay = createArchiveModal();
-      runArchiveIndex(overlay, config, apiBaseUrl, files);
+      runArchiveIndex(overlay, config, apiBaseUrl, files, source === 'gdrive' ? accessToken : null);
     });
   };
 

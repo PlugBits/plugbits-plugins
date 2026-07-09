@@ -187,6 +187,7 @@ const startApiServer = (mockUrl, extraEnv = {}) => new Promise((resolve, reject)
       FIRESTORE_PROJECT_ID: 'test-project',
       GCP_ACCESS_TOKEN: 'test-gcp-token',
       EMBEDDING_PROVIDER: 'dummy',
+      GOOGLE_OAUTH_CLIENT_ID: 'test-client-id.apps.googleusercontent.com',
       ...extraEnv
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -374,6 +375,40 @@ test('archive-index: doc_type=archive と archive_rel_path をQdrantに書き込
   assert.equal(points[0].payload.doc_type, 'archive');
   assert.equal(points[0].payload.archive_rel_path, '2019/Q3/DWG-9001.pdf');
   assert.equal(points[0].payload.tenant_id, 'tenant-a');
+});
+
+test('archive-index: driveFileId を渡すと drive_file_id としてQdrantに書き込まれる', async () => {
+  const res = await postJson(api.url, '/archive-index', {
+    tenantId: 'tenant-a', appId: '1', docId: 'archive:gdrive-1',
+    relPath: 'DWG-9002.pdf', fileName: 'DWG-9002.pdf', driveFileId: '1AbCdEfGhIjK',
+    pdf_base64: PDF_A.toString('base64')
+  });
+  assert.equal(res.status, 200, await res.text());
+
+  const points = [...mock.state.points.values()].filter((p) => p.payload.record_id === 'archive:gdrive-1');
+  assert.ok(points.length > 0, 'ポイントが作成される');
+  assert.equal(points[0].payload.drive_file_id, '1AbCdEfGhIjK');
+});
+
+test('archive-index: driveFileId 未指定では drive_file_id が空文字になる', async () => {
+  const res = await postJson(api.url, '/archive-index', {
+    tenantId: 'tenant-a', appId: '1', docId: 'archive:local-only',
+    relPath: 'DWG-9003.pdf', fileName: 'DWG-9003.pdf',
+    pdf_base64: PDF_A.toString('base64')
+  });
+  assert.equal(res.status, 200, await res.text());
+
+  const points = [...mock.state.points.values()].filter((p) => p.payload.record_id === 'archive:local-only');
+  assert.equal(points[0].payload.drive_file_id, '');
+});
+
+test('google/oauth/popup: HTMLを返しクライアントIDを埋め込む', async () => {
+  const res = await fetch(api.url + '/google/oauth/popup');
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get('content-type') || '', /text\/html/);
+  const html = await res.text();
+  assert.match(html, /test-client-id\.apps\.googleusercontent\.com/);
+  assert.match(html, /drive\.file/);
 });
 
 test('index-status: doc_type=archive の点は一覧に含まれない', async () => {
