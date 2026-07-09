@@ -1110,14 +1110,19 @@
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   // Googleドライブのファイルをアクセストークン付きでダウンロードしBase64化する。
-  // Pickerで選択した直後は drive.file の権限がGoogle側にまだ反映しきっていないことがあり、
-  // 直後の取得が404になる場合がある（伝播遅延）。404のみ短い間隔でリトライする。
-  const fetchDriveFileBase64 = async (fileId, accessToken) => {
+  // resourceKey: 共有リンク経由等の一部ファイルは fileId だけでは files.get が404になり、
+  // Drive APIのリソースキー要件（X-Goog-Drive-Resource-Keys ヘッダー）を満たす必要がある。
+  // https://developers.google.com/workspace/drive/api/guides/resource-keys
+  const fetchDriveFileBase64 = async (fileId, accessToken, resourceKey) => {
     const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media';
+    const headers = { Authorization: 'Bearer ' + accessToken };
+    if (resourceKey) {
+      headers['X-Goog-Drive-Resource-Keys'] = fileId + '/' + resourceKey;
+    }
     const delaysMs = [500, 1000, 2000];
     let lastStatus = 0;
     for (let attempt = 0; attempt <= delaysMs.length; attempt++) {
-      const response = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+      const response = await fetch(url, { headers });
       if (response.ok) {
         return toBase64(await response.blob());
       }
@@ -1170,7 +1175,7 @@
       try {
         const docId = await sha256Hex(isDriveImport ? 'gdrive:' + driveFileId : relPath);
         const pdf_base64 = isDriveImport
-          ? await fetchDriveFileBase64(driveFileId, driveAccessToken)
+          ? await fetchDriveFileBase64(driveFileId, driveAccessToken, file.resourceKey)
           : await toBase64(file);
         const response = await fetch(apiBaseUrl + '/archive-index', {
           method: 'POST',

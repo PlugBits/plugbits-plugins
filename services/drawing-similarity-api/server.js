@@ -313,7 +313,9 @@ const buildGoogleOAuthPopupHtml = () => `<!doctype html>
         .setCallback(function (data) {
           if (data.action === google.picker.Action.PICKED) {
             var files = (data.docs || []).map(function (doc) {
-              return { id: doc.id, name: doc.name };
+              // resourceKey: 共有リンク経由等の一部ファイルは fileId だけでは
+              // files.get が404になり、Drive API の resourceKey 要件を満たす必要がある。
+              return { id: doc.id, name: doc.name, resourceKey: doc.resourceKey || '' };
             });
             finish({ ok: true, accessToken: accessToken, files: files });
           } else if (data.action === google.picker.Action.CANCEL) {
