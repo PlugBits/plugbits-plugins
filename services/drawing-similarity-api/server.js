@@ -269,6 +269,10 @@ const getRuntimeInfo = () => ({
 // （drive.file スコープの一時アクセストークンのみで完結）。
 const googleOauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '';
 const googlePickerApiKey = process.env.GOOGLE_PICKER_API_KEY || '';
+// PickerBuilder.setAppId に必要な GCP プロジェクト番号。未設定だと Picker で選んだ
+// ファイルが drive.file スコープの付与先として正しく登録されず、選択直後の
+// files.get?alt=media が 404（アクセス不可）になることがある。
+const googleCloudProjectNumber = process.env.GOOGLE_CLOUD_PROJECT_NUMBER || '';
 
 const buildGoogleOAuthPopupHtml = () => `<!doctype html>
 <html><head><meta charset="utf-8"><title>Google Driveと連携</title></head>
@@ -278,6 +282,7 @@ const buildGoogleOAuthPopupHtml = () => `<!doctype html>
 (function () {
   var CLIENT_ID = ${JSON.stringify(googleOauthClientId)};
   var API_KEY = ${JSON.stringify(googlePickerApiKey)};
+  var APP_ID = ${JSON.stringify(googleCloudProjectNumber)};
   var params = new URLSearchParams(window.location.search);
   var targetOrigin = params.get('origin') || '*';
   var statusEl = document.getElementById('status');
@@ -316,6 +321,7 @@ const buildGoogleOAuthPopupHtml = () => `<!doctype html>
           }
         });
       if (API_KEY) builder.setDeveloperKey(API_KEY);
+      if (APP_ID) builder.setAppId(APP_ID);
       builder.build().setVisible(true);
     });
   }
