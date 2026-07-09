@@ -1170,17 +1170,18 @@
       }
 
       const driveFileId = isDriveImport ? file.id : '';
+      const resourceKey = isDriveImport ? (file.resourceKey || '') : '';
       const relPath = isDriveImport ? file.name : (file.webkitRelativePath || file.name).normalize('NFC');
 
       try {
         const docId = await sha256Hex(isDriveImport ? 'gdrive:' + driveFileId : relPath);
         const pdf_base64 = isDriveImport
-          ? await fetchDriveFileBase64(driveFileId, driveAccessToken, file.resourceKey)
+          ? await fetchDriveFileBase64(driveFileId, driveAccessToken, resourceKey)
           : await toBase64(file);
         const response = await fetch(apiBaseUrl + '/archive-index', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-          body: JSON.stringify({ tenantId, appId, docId, relPath, fileName: file.name, driveFileId, pdf_base64 })
+          body: JSON.stringify({ tenantId, appId, docId, relPath, fileName: file.name, driveFileId, resourceKey, pdf_base64 })
         });
         const data = await response.json();
         if (!response.ok) {
@@ -1202,10 +1203,10 @@
 
   // Google Drive OAuthポップアップ（当方サーバーがホストする固定オリジンのページ）を開き、
   // ユーザーがPickerで選んだPDFの一覧とアクセストークンを postMessage で受け取る。
-  const openGoogleDrivePicker = (apiBaseUrl) => new Promise((resolve, reject) => {
+  const openGooglePopup = (apiBaseUrl, extraQuery) => new Promise((resolve, reject) => {
     const popupOrigin = new URL(apiBaseUrl).origin;
-    const popupUrl = popupOrigin + '/google/oauth/popup?origin=' + encodeURIComponent(window.location.origin);
-    const popup = window.open(popupUrl, 'pb-gdrive-picker', 'width=560,height=640');
+    const popupUrl = popupOrigin + '/google/oauth/popup?origin=' + encodeURIComponent(window.location.origin) + (extraQuery || '');
+    const popup = window.open(popupUrl, 'pb-gdrive-popup', 'width=560,height=640');
     if (!popup) {
       reject(new Error('ポップアップがブロックされました。ブラウザのポップアップ許可設定をご確認ください。'));
       return;
@@ -1233,6 +1234,11 @@
       }
     }, 500);
   });
+
+  const openGoogleDrivePicker = (apiBaseUrl) => openGooglePopup(apiBaseUrl, '');
+
+  // Picker無しで、アクセストークンの取得だけを行う（検索結果のサムネイル取得用）。
+  const openGoogleDriveTokenOnly = (apiBaseUrl) => openGooglePopup(apiBaseUrl, '&mode=token');
 
   // フォルダ選択（webkitdirectory）→ 進捗モーダルの2段階。ドラッグ&ドロップの再帰走査は実装しない
   // （フォルダピッカーはローカル/NAS/クラウド同期フォルダのいずれでもOSレベルで同一に動作するため）。
@@ -2638,6 +2644,10 @@
     thumbBox.className = 'sim-hero-thumb' + (isArchive ? ' sim-thumb-archive' : '');
     if (isArchive) {
       thumbBox.textContent = '📁';
+      if (item.driveFileId) {
+        thumbBox.dataset.driveFileId = item.driveFileId;
+        thumbBox.dataset.driveResourceKey = item.driveResourceKey || '';
+      }
     } else {
       loadThumbnail(thumbBox, apiBaseUrl, item.fileKey, item.thumbToken);
     }
@@ -2689,6 +2699,10 @@
       thumbBox = document.createElement('div');
       thumbBox.className = 'sim-thumb sim-thumb-archive';
       thumbBox.textContent = '📁';
+      if (item.driveFileId) {
+        thumbBox.dataset.driveFileId = item.driveFileId;
+        thumbBox.dataset.driveResourceKey = item.driveResourceKey || '';
+      }
     } else {
       thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, false, item.thumbToken);
     }
@@ -2825,6 +2839,72 @@
       restResults.forEach((item) => restList.appendChild(buildResultRow(item, apiBaseUrl, options.debug)));
       listEl.appendChild(restList);
     }
+
+    // Google Drive由来のアーカイブ結果が1件でもあれば、まとめてサムネイル取得できる
+    // ボタンを出す（自動取得はしない。都度Google認証が走ると体感が悪化するため）。
+    const driveBoxes = listEl.querySelectorAll('[data-drive-file-id]');
+    if (driveBoxes.length) {
+      const loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.className = 'btn-secondary';
+      loadBtn.style.cssText = 'margin-bottom:12px;';
+      loadBtn.textContent = '🔓 Googleドライブのサムネイルを表示（' + driveBoxes.length + '件）';
+      loadBtn.addEventListener('click', () => loadArchiveDriveThumbnails(listEl, apiBaseUrl, loadBtn, options.config || {}, options.trackObjectUrl));
+      listEl.insertBefore(loadBtn, listEl.firstChild);
+    }
+  };
+
+  // Google連携ポップアップ（トークンのみ）→ 対象PDFをDriveから取得 → /render-thumbnail でPNG化、
+  // という流れで、表示中のアーカイブ結果のサムネイルをまとめて置き換える。何も永続化しない。
+  const loadArchiveDriveThumbnails = async (container, apiBaseUrl, triggerBtn, config, trackObjectUrl) => {
+    triggerBtn.disabled = true;
+    triggerBtn.textContent = 'Googleと連携しています...';
+    let accessToken;
+    try {
+      ({ accessToken } = await openGoogleDriveTokenOnly(apiBaseUrl));
+    } catch (error) {
+      triggerBtn.disabled = false;
+      triggerBtn.textContent = '⚠ ' + error.message + '（再試行）';
+      return;
+    }
+
+    const boxes = [...container.querySelectorAll('[data-drive-file-id]')];
+    triggerBtn.textContent = 'サムネイルを読み込み中... 0 / ' + boxes.length;
+    let done = 0;
+    let failed = 0;
+    for (const box of boxes) {
+      const fileId = box.dataset.driveFileId;
+      const resourceKey = box.dataset.driveResourceKey || '';
+      box.textContent = '';
+      const skeleton = document.createElement('div');
+      skeleton.className = 'sim-skeleton';
+      box.appendChild(skeleton);
+      try {
+        const pdf_base64 = await fetchDriveFileBase64(fileId, accessToken, resourceKey);
+        const res = await fetch(apiBaseUrl + '/render-thumbnail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+          body: JSON.stringify({ pdf_base64 })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        let blobUrl = URL.createObjectURL(await res.blob());
+        if (trackObjectUrl) blobUrl = trackObjectUrl(blobUrl);
+        const img = document.createElement('img');
+        img.className = 'sim-thumb-img';
+        img.alt = '';
+        img.src = blobUrl;
+        box.textContent = '';
+        box.appendChild(img);
+      } catch (error) {
+        failed += 1;
+        box.textContent = '📁';
+      }
+      done += 1;
+      triggerBtn.textContent = 'サムネイルを読み込み中... ' + done + ' / ' + boxes.length;
+    }
+    triggerBtn.textContent = failed
+      ? '読み込み完了（' + failed + '件失敗）'
+      : 'サムネイル読み込み済み';
   };
 
   // 検索中ステータス（スピナー＋経過に応じた文言）を statusEl に表示する
@@ -2839,7 +2919,7 @@
   };
 
   // 検索実行（進行表示・エラー日本語化・再試行を共通化）
-  const runSimilarSearch = ({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions }) => {
+  const runSimilarSearch = ({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl }) => {
     listEl.textContent = '';
     confidenceEl.hidden = true;
     const stopStatus = showSearchingStatus(statusEl);
@@ -2863,6 +2943,8 @@
         stopStatus();
         if (onData) onData(data);
         renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl, {
+          config,
+          trackObjectUrl,
           debug: isDebugEnabled(config),
           emptyActions: emptyActions ? emptyActions() : undefined
         });
@@ -2880,7 +2962,7 @@
         retryBtn.textContent = '再試行';
         retryBtn.style.cssText = 'margin-top:4px;';
         retryBtn.addEventListener('click', () => {
-          runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions });
+          runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl });
         });
         listEl.append(errBox, retryBtn);
       });
@@ -2951,7 +3033,8 @@
         if (queryShapeTagsChips) {
           queryShapeTagsEl.replaceWith(queryShapeTagsChips);
         }
-      }
+      },
+      trackObjectUrl: shell.trackObjectUrl
     });
   };
 
@@ -3101,7 +3184,8 @@
           statusEl,
           confidenceEl,
           listEl,
-          emptyActions: buildEmptyActions
+          emptyActions: buildEmptyActions,
+          trackObjectUrl
         });
       }).catch((error) => {
         statusEl.textContent = 'ファイルの読み込みに失敗しました: ' + error.message;
