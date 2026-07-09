@@ -188,6 +188,7 @@ const startApiServer = (mockUrl, extraEnv = {}) => new Promise((resolve, reject)
       GCP_ACCESS_TOKEN: 'test-gcp-token',
       EMBEDDING_PROVIDER: 'dummy',
       GOOGLE_OAUTH_CLIENT_ID: 'test-client-id.apps.googleusercontent.com',
+      GOOGLE_CLOUD_PROJECT_NUMBER: '123456789012',
       ...extraEnv
     },
     stdio: ['ignore', 'pipe', 'pipe']
@@ -409,6 +410,7 @@ test('google/oauth/popup: HTMLを返しクライアントIDを埋め込む', asy
   const html = await res.text();
   assert.match(html, /test-client-id\.apps\.googleusercontent\.com/);
   assert.match(html, /drive\.file/);
+  assert.match(html, /123456789012/);
 });
 
 test('index-status: doc_type=archive の点は一覧に含まれない', async () => {
