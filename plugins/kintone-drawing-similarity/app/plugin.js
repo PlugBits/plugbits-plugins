@@ -1107,16 +1107,27 @@
     });
   };
 
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
   // Googleドライブのファイルをアクセストークン付きでダウンロードしBase64化する。
+  // Pickerで選択した直後は drive.file の権限がGoogle側にまだ反映しきっていないことがあり、
+  // 直後の取得が404になる場合がある（伝播遅延）。404のみ短い間隔でリトライする。
   const fetchDriveFileBase64 = async (fileId, accessToken) => {
-    const response = await fetch(
-      'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media',
-      { headers: { Authorization: 'Bearer ' + accessToken } }
-    );
-    if (!response.ok) {
-      throw new Error('Google Driveからのダウンロードに失敗しました（HTTP ' + response.status + '）');
+    const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media';
+    const delaysMs = [500, 1000, 2000];
+    let lastStatus = 0;
+    for (let attempt = 0; attempt <= delaysMs.length; attempt++) {
+      const response = await fetch(url, { headers: { Authorization: 'Bearer ' + accessToken } });
+      if (response.ok) {
+        return toBase64(await response.blob());
+      }
+      lastStatus = response.status;
+      if (response.status !== 404 || attempt === delaysMs.length) {
+        break;
+      }
+      await sleep(delaysMs[attempt]);
     }
-    return toBase64(await response.blob());
+    throw new Error('Google Driveからのダウンロードに失敗しました（HTTP ' + lastStatus + '）');
   };
 
   // driveAccessToken を渡すと files は Google Drive の {id, name}[]、
