@@ -2616,6 +2616,61 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // 過去図面アーカイブの取込状況一覧。/index-status はアーカイブ点を意図的に
+  // 除外しているため（孤児誤検知防止）、アーカイブだけを確認する専用の一覧が別途必要。
+  if (request.method === 'GET' && url.pathname === '/archive-status') {
+    if (!isQdrantConfigured()) {
+      sendJson(response, 200, { configured: false, items: [] });
+      return;
+    }
+    try {
+      const tenantId = request._forcedTenantId || url.searchParams.get('tenantId') || 'default';
+      const must = [
+        { key: 'tenant_id', match: { value: tenantId } },
+        { key: 'doc_type', match: { value: 'archive' } }
+      ];
+      const byRecord = new Map(); // record_id -> 取込情報（回転違いは同一レコードに集約）
+      let nextOffset = null;
+      let hasMore = true;
+      while (hasMore) {
+        const scrollBody = {
+          limit: 250,
+          with_payload: ['record_id', 'file_name', 'archive_rel_path', 'drive_file_id', 'drawing_no', 'product_name', 'indexed_at'],
+          filter: { must }
+        };
+        if (nextOffset != null) {
+          scrollBody.offset = nextOffset;
+        }
+        const data = await qdrantRequest(
+          '/collections/' + encodeURIComponent(qdrantCollection) + '/points/scroll',
+          { method: 'POST', body: JSON.stringify(scrollBody) }
+        );
+        for (const point of (data.result?.points || [])) {
+          const payload = point.payload || {};
+          if (!payload.record_id || byRecord.has(String(payload.record_id))) {
+            continue;
+          }
+          byRecord.set(String(payload.record_id), {
+            docId: String(payload.record_id),
+            fileName: payload.file_name || '',
+            relPath: payload.archive_rel_path || '',
+            driveFileId: payload.drive_file_id || '',
+            drawingNo: payload.drawing_no || '',
+            productName: payload.product_name || '',
+            indexedAt: payload.indexed_at || ''
+          });
+        }
+        nextOffset = data.result?.next_page_offset ?? null;
+        hasMore = nextOffset != null;
+      }
+      const items = [...byRecord.values()].sort((a, b) => (b.indexedAt || '').localeCompare(a.indexedAt || ''));
+      sendJson(response, 200, { configured: true, tenantId, count: items.length, items });
+    } catch (error) {
+      sendJson(response, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
   if (request.method === 'GET' && url.pathname === '/field-values') {
     if (!isQdrantConfigured()) {
       sendJson(response, 200, { drawingNos: [], productNames: [], materials: [], dimensions: [] });
