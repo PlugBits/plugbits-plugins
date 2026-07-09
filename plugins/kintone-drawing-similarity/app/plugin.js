@@ -1037,6 +1037,219 @@
     updateBulkModal(overlay, state);
   };
 
+  // === 過去図面アーカイブ取り込み（kintoneには登録せず、フォルダ内PDFを検索対象に追加） ===
+
+  const sha256Hex = async (text) => {
+    const data = new TextEncoder().encode(text);
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+    return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const createArchiveModal = () => {
+    const overlay = document.createElement('div');
+    overlay.id = 'pb-archive-overlay';
+    overlay.className = 'pb-bulk-overlay';
+    overlay.innerHTML = [
+      '<div class="pb-bulk-modal">',
+      '<h2 class="pb-bulk-title">過去図面アーカイブ取り込み</h2>',
+      '<div class="pb-bulk-phase">準備中...</div>',
+      '<div class="pb-bulk-bar-wrap"><div class="pb-bulk-bar-fill"></div></div>',
+      '<div class="pb-bulk-counts">',
+      '<span class="pb-bulk-total">合計 <b>-</b></span>',
+      '<span class="pb-bulk-success">成功 <b>0</b></span>',
+      '<span class="pb-bulk-skip">スキップ <b>0</b></span>',
+      '<span class="pb-bulk-fail">失敗 <b>0</b></span>',
+      '</div>',
+      '<ul class="pb-bulk-errors"></ul>',
+      '<div class="pb-bulk-actions">',
+      '<button class="pb-bulk-cancel pb-similarity-button secondary" type="button">キャンセル</button>',
+      '</div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(overlay);
+    return overlay;
+  };
+
+  const updateArchiveModal = (overlay, state) => {
+    const phaseEl = overlay.querySelector('.pb-bulk-phase');
+    const fill = overlay.querySelector('.pb-bulk-bar-fill');
+    const cancelBtn = overlay.querySelector('.pb-bulk-cancel');
+
+    if (state.phase === 'process') {
+      phaseEl.textContent = '取り込み中... ' + state.processed + ' / ' + state.total + ' 件';
+      fill.style.width = state.total > 0
+        ? Math.round(state.processed / state.total * 100) + '%'
+        : '5%';
+    } else if (state.phase === 'done') {
+      phaseEl.textContent = '完了しました。';
+      fill.style.width = '100%';
+    } else if (state.phase === 'cancelled') {
+      phaseEl.textContent = 'キャンセルしました。同じフォルダを再度選択すると続きから再開できます。';
+    } else if (state.phase === 'error') {
+      phaseEl.textContent = 'エラー: ' + (state.errorMessage || '不明なエラー');
+    }
+
+    const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
+    cancelBtn.textContent = isDone ? '閉じる' : 'キャンセル';
+
+    overlay.querySelector('.pb-bulk-total b').textContent = state.total > 0 ? state.total + '件' : '-';
+    overlay.querySelector('.pb-bulk-success b').textContent = state.success;
+    overlay.querySelector('.pb-bulk-skip b').textContent = state.skip;
+    overlay.querySelector('.pb-bulk-fail b').textContent = state.fail;
+
+    const errorsList = overlay.querySelector('.pb-bulk-errors');
+    errorsList.textContent = '';
+    (state.errors || []).slice(-10).forEach((entry) => {
+      const li = document.createElement('li');
+      li.className = 'pb-bulk-error-item';
+      li.textContent = entry.relPath + ': ' + entry.message;
+      errorsList.appendChild(li);
+    });
+  };
+
+  const runArchiveIndex = async (overlay, config, apiBaseUrl, files) => {
+    const cancel = { requested: false };
+    const state = {
+      phase: 'process',
+      total: files.length,
+      processed: 0,
+      success: 0,
+      skip: 0,
+      fail: 0,
+      errors: []
+    };
+
+    overlay.querySelector('.pb-bulk-cancel').addEventListener('click', () => {
+      const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
+      if (isDone) {
+        overlay.remove();
+        return;
+      }
+      cancel.requested = true;
+    });
+
+    updateArchiveModal(overlay, state);
+
+    const appId = kintone.app.getId();
+    const tenantId = deriveTenantId();
+
+    for (const file of files) {
+      if (cancel.requested) {
+        break;
+      }
+
+      const relPath = (file.webkitRelativePath || file.name).normalize('NFC');
+
+      try {
+        const docId = await sha256Hex(relPath);
+        const pdf_base64 = await toBase64(file);
+        const response = await fetch(apiBaseUrl + '/archive-index', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+          body: JSON.stringify({ tenantId, appId, docId, relPath, fileName: file.name, pdf_base64 })
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.error || 'HTTP ' + response.status + (data.step ? ' [' + data.step + ']' : ''));
+        }
+        state.success += 1;
+      } catch (error) {
+        state.fail += 1;
+        state.errors.push({ relPath, message: error.message });
+      }
+
+      state.processed += 1;
+      updateArchiveModal(overlay, state);
+    }
+
+    state.phase = cancel.requested ? 'cancelled' : 'done';
+    updateArchiveModal(overlay, state);
+  };
+
+  // フォルダ選択（webkitdirectory）→ 進捗モーダルの2段階。ドラッグ&ドロップの再帰走査は実装しない
+  // （フォルダピッカーはローカル/NAS/クラウド同期フォルダのいずれでもOSレベルで同一に動作するため）。
+  const openArchiveIngestModal = (config, apiBaseUrl) => {
+    const shell = createModalShell();
+    shell.host.id = 'pb-archive-select-host';
+    const { content } = shell;
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('h2');
+    title.textContent = '過去図面アーカイブ取り込み';
+    const sub = document.createElement('div');
+    sub.className = 'modal-sub';
+    sub.textContent = 'kintoneに登録せず、フォルダ内のPDFをまとめて検索対象に追加します';
+    titleWrap.append(title, sub);
+    header.appendChild(titleWrap);
+
+    const formPanel = document.createElement('div');
+    formPanel.className = 'form-panel';
+
+    const zone = document.createElement('div');
+    zone.className = 'dropzone';
+    const icon = document.createElement('div');
+    icon.className = 'drop-icon';
+    icon.textContent = '📁';
+    const mainEl = document.createElement('div');
+    mainEl.className = 'drop-main';
+    mainEl.textContent = 'フォルダを選択';
+    const subEl = document.createElement('div');
+    subEl.className = 'drop-sub';
+    subEl.textContent = 'NASやクラウド同期フォルダも通常のフォルダと同様に選択できます';
+    const noteEl = document.createElement('div');
+    noteEl.className = 'drop-note';
+    noteEl.textContent = '選択したフォルダ内のPDFファイルのみが対象です（原本はそのまま・kintoneには送信されません）';
+    const folderInput = document.createElement('input');
+    folderInput.type = 'file';
+    folderInput.webkitdirectory = true;
+    folderInput.multiple = true;
+    folderInput.className = 'file-input';
+    zone.append(icon, mainEl, subEl, folderInput, noteEl);
+    formPanel.appendChild(zone);
+
+    const statusEl = document.createElement('div');
+    statusEl.className = 'status-line';
+    formPanel.appendChild(statusEl);
+
+    const actions = document.createElement('div');
+    actions.className = 'form-actions';
+    const startBtn = document.createElement('button');
+    startBtn.className = 'btn-primary';
+    startBtn.type = 'button';
+    startBtn.textContent = '取り込み開始';
+    startBtn.disabled = true;
+    actions.appendChild(startBtn);
+    formPanel.appendChild(actions);
+
+    content.append(header, formPanel);
+
+    let selectedFiles = [];
+
+    zone.addEventListener('click', (e) => {
+      if (e.target !== folderInput) folderInput.click();
+    });
+
+    folderInput.addEventListener('change', () => {
+      selectedFiles = Array.from(folderInput.files || []).filter((f) => /\.pdf$/i.test(f.name));
+      if (!selectedFiles.length) {
+        statusEl.textContent = 'このフォルダにPDFファイルが見つかりませんでした。';
+        startBtn.disabled = true;
+        return;
+      }
+      statusEl.textContent = selectedFiles.length + ' 件のPDFが見つかりました。';
+      startBtn.disabled = false;
+    });
+
+    startBtn.addEventListener('click', () => {
+      const files = selectedFiles;
+      shell.closeModal();
+      const overlay = createArchiveModal();
+      runArchiveIndex(overlay, config, apiBaseUrl, files);
+    });
+  };
+
   // === 図面登録（Shadow DOM モーダル） ===
 
   const REGISTER_CSS = [
@@ -1246,6 +1459,10 @@
     '.sim-reasons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }',
     '.sim-reason { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;',
     '  background: var(--pb-primary-soft); color: var(--pb-primary-hover); font-size: 10.5px; font-weight: 600; }',
+    '.sim-thumb-archive { font-size: 26px; }',
+    '.sim-archive-badge { display: inline-flex; align-items: center; margin-top: 6px; padding: 2px 8px;',
+    '  border-radius: 999px; background: var(--pb-violet-soft); color: var(--pb-violet);',
+    '  font-size: 10.5px; font-weight: 700; }',
     // ---- hero cards ----
     '.sim-hero-grid { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }',
     '.sim-hero-card { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--pb-line);',
@@ -2300,31 +2517,53 @@
   };
 
   // 上位3件はサムネイルを主役にした大きいカードで見せ、残りは品番中心の補助リストにする。
+  // アーカイブ結果（doc_type='archive'）には kintone レコードが無いので、リンクの代わりに
+  // ファイル名・相対パスをテキスト表示し、サムネイルの代わりに汎用アイコン＋バッジを出す。
+  const buildArchiveBadge = () => {
+    const badge = document.createElement('span');
+    badge.className = 'sim-archive-badge';
+    badge.textContent = 'アーカイブ（未登録）';
+    return badge;
+  };
+
   const buildHeroCard = (item, apiBaseUrl, debug) => {
     const card = document.createElement('div');
     card.className = 'sim-hero-card';
+    const isArchive = item.docType === 'archive';
 
     const thumbBox = document.createElement('div');
-    thumbBox.className = 'sim-hero-thumb';
-    loadThumbnail(thumbBox, apiBaseUrl, item.fileKey, item.thumbToken);
+    thumbBox.className = 'sim-hero-thumb' + (isArchive ? ' sim-thumb-archive' : '');
+    if (isArchive) {
+      thumbBox.textContent = '📁';
+    } else {
+      loadThumbnail(thumbBox, apiBaseUrl, item.fileKey, item.thumbToken);
+    }
 
     const scoreBadge = document.createElement('div');
     scoreBadge.className = 'sim-hero-score ' + scoreBandClass(item.score);
     scoreBadge.textContent = formatPercent(item.score);
     thumbBox.appendChild(scoreBadge);
 
-    const link = document.createElement('a');
+    const link = document.createElement(isArchive ? 'span' : 'a');
     link.className = 'sim-hero-link';
-    link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
-    link.target = '_blank';
-    link.rel = 'noopener';
-    link.textContent = item.drawingNo || 'record ' + item.recordId;
+    if (!isArchive) {
+      link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
+      link.target = '_blank';
+      link.rel = 'noopener';
+    }
+    link.textContent = isArchive
+      ? (item.drawingNo || item.archiveFileName || 'アーカイブ')
+      : (item.drawingNo || 'record ' + item.recordId);
 
     const meta = document.createElement('div');
     meta.className = 'sim-hero-meta';
-    meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
+    meta.textContent = isArchive
+      ? [item.productName, item.archiveRelPath].filter(Boolean).join(' / ')
+      : [item.productName, item.customer].filter(Boolean).join(' / ');
 
     card.append(thumbBox, link, meta);
+
+    if (isArchive) card.appendChild(buildArchiveBadge());
 
     const reasonsEl = buildReasonBadges(item.reasons);
     if (reasonsEl) card.appendChild(reasonsEl);
@@ -2340,22 +2579,38 @@
   const buildResultRow = (item, apiBaseUrl, debug) => {
     const li = document.createElement('li');
     li.className = 'sim-item';
+    const isArchive = item.docType === 'archive';
 
-    const thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, false, item.thumbToken);
+    let thumbBox;
+    if (isArchive) {
+      thumbBox = document.createElement('div');
+      thumbBox.className = 'sim-thumb sim-thumb-archive';
+      thumbBox.textContent = '📁';
+    } else {
+      thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, false, item.thumbToken);
+    }
 
     const body = document.createElement('div');
-    const link = document.createElement('a');
+    const link = document.createElement(isArchive ? 'span' : 'a');
     link.className = 'sim-link';
-    link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
-    link.target = '_blank';
-    link.rel = 'noopener';
-    link.textContent = item.drawingNo || 'record ' + item.recordId;
+    if (!isArchive) {
+      link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
+      link.target = '_blank';
+      link.rel = 'noopener';
+    }
+    link.textContent = isArchive
+      ? (item.drawingNo || item.archiveFileName || 'アーカイブ')
+      : (item.drawingNo || 'record ' + item.recordId);
 
     const meta = document.createElement('div');
     meta.className = 'sim-meta';
-    meta.textContent = [item.productName, item.customer].filter(Boolean).join(' / ');
+    meta.textContent = isArchive
+      ? [item.productName, item.archiveRelPath].filter(Boolean).join(' / ')
+      : [item.productName, item.customer].filter(Boolean).join(' / ');
 
     body.append(link, meta);
+
+    if (isArchive) body.appendChild(buildArchiveBadge());
 
     const reasonsEl = buildReasonBadges(item.reasons);
     if (reasonsEl) body.appendChild(reasonsEl);
@@ -3063,6 +3318,17 @@
           }
           const overlay = createBulkModal();
           runBulkIndex(overlay, config, apiBaseUrl);
+        }
+      });
+    }
+    // 過去図面アーカイブ取り込みは設定でオフにできる（既定は表示）。
+    if (config.showArchiveButton !== 'false') {
+      menuItems.push({
+        label: '過去図面アーカイブ取り込み',
+        description: 'フォルダをまとめて検索対象に追加（kintoneには登録しません）',
+        onClick: () => {
+          if (document.getElementById('pb-archive-select-host') || document.getElementById('pb-archive-overlay')) return;
+          openArchiveIngestModal(config, apiBaseUrl);
         }
       });
     }
