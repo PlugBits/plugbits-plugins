@@ -72,6 +72,12 @@
     debugToggle.checked = config.showDebugInfo === 'true';
   }
 
+  // 過去図面アーカイブ取り込みメニューの表示トグル（既定: 表示）
+  const archiveToggle = getElement('showArchiveButton');
+  if (archiveToggle) {
+    archiveToggle.checked = config.showArchiveButton !== 'false';
+  }
+
   // 接続テスト: /health で疎通、/tags（認証対象）でAPIキーを検証する
   const testBtn = getElement('testConnection');
   const testStatus = getElement('testStatus');
@@ -157,6 +163,7 @@
 
     nextConfig.showBulkButton = getElement('showBulkButton') && getElement('showBulkButton').checked ? 'true' : 'false';
     nextConfig.showDebugInfo = getElement('showDebugInfo') && getElement('showDebugInfo').checked ? 'true' : 'false';
+    nextConfig.showArchiveButton = getElement('showArchiveButton') && getElement('showArchiveButton').checked ? 'true' : 'false';
 
     if (!nextConfig.apiBaseUrl) {
       window.alert('API Base URLを入力してください。');

@@ -978,13 +978,16 @@ const cropPngForOcr = async (pngBuffer) => {
 };
 
 const buildOcrText = async (pngBuffer, context = {}) => {
-  if (ocrEngine === 'gemini') {
+  // context.engine で呼び出し側が強制上書き可能（アーカイブ一括取込は件数が多く
+  // Gemini/Vertex だとコスト・レート制限が問題になるため Tesseract に固定する）。
+  const engine = context.engine || ocrEngine;
+  if (engine === 'gemini') {
     return buildOcrTextGemini(pngBuffer);
   }
-  if (ocrEngine === 'vertex') {
+  if (engine === 'vertex') {
     return buildOcrTextVertexAI(pngBuffer);
   }
-  if (ocrEngine === 'none') {
+  if (engine === 'none') {
     return {
       engine: 'none',
       langs: '',
@@ -992,8 +995,8 @@ const buildOcrText = async (pngBuffer, context = {}) => {
       imagePath: ''
     };
   }
-  if (ocrEngine !== 'tesseract') {
-    const error = new Error('Unsupported OCR_ENGINE: ' + ocrEngine);
+  if (engine !== 'tesseract') {
+    const error = new Error('Unsupported OCR_ENGINE: ' + engine);
     error.status = 500;
     throw error;
   }
@@ -1712,7 +1715,7 @@ const ensureCollection = async (size) => {
 
 // フィルタ検索・フィルタ削除に使う payload フィールドは Qdrant 側でインデックスが必要。
 // tenant_id（テナント絞り込み）と record_id（レコード単位の削除/再登録）の両方を張る。
-const INDEXED_PAYLOAD_FIELDS = ['tenant_id', 'record_id'];
+const INDEXED_PAYLOAD_FIELDS = ['tenant_id', 'record_id', 'doc_type'];
 
 const ensurePayloadIndexes = async () => {
   if (!isQdrantConfigured()) {
@@ -1833,6 +1836,10 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     tenant_id: body.tenantId || 'default',
     record_id: String(body.recordId),
     app_id: body.appId ? String(body.appId) : '',
+    // 過去図面アーカイブ取込（kintone未登録）用。既存データは doc_type が
+    // 欠損しているため、読み取り側は必ず === 'archive' の肯定比較で判定すること。
+    doc_type: body.docType || 'drawing',
+    archive_rel_path: body.relPath || '',
     drawing_no: context.extracted?.drawingNo || body.drawingNo || '',
     product_name: context.extracted?.productName || body.productName || '',
     tags: Array.isArray(body.tags) ? body.tags.filter(Boolean).join(',') : String(body.tags || ''),
@@ -2046,11 +2053,18 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
         ...payload,
         __vectorScore: Number(item.score || 0)
       }, queryProfile);
+      const isArchive = payload.doc_type === 'archive';
       return {
         recordId: payload.record_id || item.id,
-        fileKey: payload.file_key || '',
-        thumbToken: payload.file_key ? mintThumbToken(payload.file_key) : '',
-        drawingNo: payload.drawing_no || 'record ' + item.id,
+        docType: isArchive ? 'archive' : 'drawing',
+        // アーカイブ点には kintone ファイルが無いのでサムネイル取得・リンクの材料を出さない。
+        fileKey: isArchive ? '' : (payload.file_key || ''),
+        thumbToken: isArchive || !payload.file_key ? '' : mintThumbToken(payload.file_key),
+        archiveRelPath: isArchive ? (payload.archive_rel_path || '') : '',
+        archiveFileName: isArchive ? (payload.file_name || '') : '',
+        // アーカイブ点は kintone record ではないので、図番未抽出時のフォールバックに内部IDを出さない
+        // （呼び出し側は drawingNo || archiveFileName でファイル名にフォールバックする）。
+        drawingNo: payload.drawing_no || (isArchive ? '' : 'record ' + item.id),
         productName: payload.product_name || '',
         customer: payload.file_name || '',
         material: payload.ocr_material || '',
@@ -2332,6 +2346,73 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // 過去図面アーカイブの一括取込。kintone には一切書き込まない
+  // （fileKey も recordId も kintone 由来ではない）。クライアントが選んだ
+  // フォルダ内PDFを1件ずつ pdf_base64 で受け取り、doc_type='archive' として
+  // Qdrant にだけ登録する。件数が多くなりうるため、有料OCR（Gemini/Vertex）
+  // からは Tesseract へ強制ダウングレードする（コスト・レート制限対策）。
+  // 運用が OCR_ENGINE=none/tesseract を選んでいる場合はその設定を尊重する
+  // （tesseract バイナリが無い最小構成デプロイを壊さないため）。
+  if (request.method === 'POST' && url.pathname === '/archive-index') {
+    try {
+      const body = await readJson(request);
+      const docId = String(body.docId || '').trim();
+      if (!docId) {
+        sendJson(response, 400, { error: 'docId is required' });
+        return;
+      }
+      const pdfBase64 = String(body.pdf_base64 || '');
+      if (!pdfBase64) {
+        sendJson(response, 400, { error: 'pdf_base64 is required' });
+        return;
+      }
+      const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+      if (!pdfBuffer.length) {
+        sendJson(response, 400, { error: 'Empty PDF content' });
+        return;
+      }
+
+      const { pngBuffer } = await convertPdfFirstPageToPng(pdfBuffer);
+      const ocrBuffer = await cropPngForOcr(pngBuffer).catch(() => pngBuffer);
+      const archiveOcrEngine = (ocrEngine === 'gemini' || ocrEngine === 'vertex') ? 'tesseract' : ocrEngine;
+
+      const [ocr, shape] = await Promise.all([
+        buildOcrText(ocrBuffer, { engine: archiveOcrEngine }),
+        buildShapeProfile(pngBuffer, {})
+      ]);
+      const extracted = extractOcrFields(ocr.text, body);
+
+      const embeddings = [];
+      for (const rotation of embeddingRotations) {
+        const entry = await buildEmbedding(pngBuffer, { rotation });
+        entry.rotation = rotation;
+        embeddings.push(entry);
+      }
+
+      await upsertDrawing({
+        tenantId: body.tenantId,
+        appId: body.appId,
+        recordId: docId,
+        docType: 'archive',
+        relPath: body.relPath || '',
+        fileName: body.fileName || ''
+      }, embeddings, { extracted, ocr, shape });
+
+      sendJson(response, 200, {
+        ok: true,
+        docId,
+        extracted: {
+          drawingNo: extracted.drawingNo || '',
+          productName: extracted.productName || '',
+          material: extracted.material || '',
+          dimension: extracted.dimension || ''
+        }
+      });
+    } catch (error) {
+      sendJson(response, error.status || 500, { error: error.message, step: error.step || 'archive-index' });
+    }
+    return;
+  }
 
   if (request.method === 'GET' && url.pathname === '/tags') {
     if (!isQdrantConfigured()) {
@@ -2386,7 +2467,7 @@ const server = createServer(async (request, response) => {
       while (hasMore) {
         const scrollBody = {
           limit: 250,
-          with_payload: ['record_id', 'app_id', 'file_key'],
+          with_payload: ['record_id', 'app_id', 'file_key', 'doc_type'],
           filter: { must }
         };
         if (nextOffset != null) {
@@ -2398,6 +2479,11 @@ const server = createServer(async (request, response) => {
         );
         for (const point of (data.result?.points || [])) {
           const payload = point.payload || {};
+          // アーカイブ点は kintone レコードが存在しないのが正常なので、
+          // 未登録/要更新/孤児の判定対象から外す（含めると永久に「孤児」誤検知になる）。
+          if (payload.doc_type === 'archive') {
+            continue;
+          }
           if (appId && payload.app_id && String(payload.app_id) !== String(appId)) {
             continue;
           }
@@ -2439,7 +2525,7 @@ const server = createServer(async (request, response) => {
       while (hasMore) {
         const scrollBody = {
           limit: 250,
-          with_payload: ['drawing_no', 'product_name', 'ocr_material', 'ocr_dimension'],
+          with_payload: ['drawing_no', 'product_name', 'ocr_material', 'ocr_dimension', 'doc_type'],
           filter
         };
         if (nextOffset != null) {
@@ -2451,6 +2537,10 @@ const server = createServer(async (request, response) => {
         );
         for (const point of (data.result?.points || [])) {
           const payload = point.payload || {};
+          // アーカイブ由来の値が新規登録フォームの候補を埋め尽くさないよう除外する。
+          if (payload.doc_type === 'archive') {
+            continue;
+          }
           if (payload.drawing_no) drawingNoSet.add(String(payload.drawing_no).trim());
           if (payload.product_name) productNameSet.add(String(payload.product_name).trim());
           if (payload.ocr_material) materialSet.add(String(payload.ocr_material).trim());
