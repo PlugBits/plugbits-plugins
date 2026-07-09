@@ -285,6 +285,9 @@ const buildGoogleOAuthPopupHtml = () => `<!doctype html>
   var APP_ID = ${JSON.stringify(googleCloudProjectNumber)};
   var params = new URLSearchParams(window.location.search);
   var targetOrigin = params.get('origin') || '*';
+  // mode=token: Pickerでのファイル選択を伴わず、アクセストークンの取得だけで完了する
+  // （検索結果のサムネイル表示など、取込時とは別の用途向け）。
+  var tokenOnly = params.get('mode') === 'token';
   var statusEl = document.getElementById('status');
 
   function finish(payload) {
@@ -343,6 +346,10 @@ const buildGoogleOAuthPopupHtml = () => `<!doctype html>
       callback: function (response) {
         if (response.error) {
           fail(response.error);
+          return;
+        }
+        if (tokenOnly) {
+          finish({ ok: true, accessToken: response.access_token });
           return;
         }
         openPicker(response.access_token);
@@ -1941,6 +1948,9 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     // Google Drive経由で取り込んだアーカイブのみ設定。将来のDrive再アクセス（例:サムネイル）用の参照情報で、
     // フィルタ対象ではないため INDEXED_PAYLOAD_FIELDS には追加しない。
     drive_file_id: body.driveFileId || '',
+    // 共有リンク経由等、files.get に resourceKey が必要なDriveファイル用。
+    // 未使用なら空文字のままで問題ない。
+    drive_resource_key: body.resourceKey || '',
     drawing_no: context.extracted?.drawingNo || body.drawingNo || '',
     product_name: context.extracted?.productName || body.productName || '',
     tags: Array.isArray(body.tags) ? body.tags.filter(Boolean).join(',') : String(body.tags || ''),
@@ -2163,6 +2173,8 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
         thumbToken: isArchive || !payload.file_key ? '' : mintThumbToken(payload.file_key),
         archiveRelPath: isArchive ? (payload.archive_rel_path || '') : '',
         archiveFileName: isArchive ? (payload.file_name || '') : '',
+        driveFileId: isArchive ? (payload.drive_file_id || '') : '',
+        driveResourceKey: isArchive ? (payload.drive_resource_key || '') : '',
         // アーカイブ点は kintone record ではないので、図番未抽出時のフォールバックに内部IDを出さない
         // （呼び出し側は drawingNo || archiveFileName でファイル名にフォールバックする）。
         drawingNo: payload.drawing_no || (isArchive ? '' : 'record ' + item.id),
@@ -2505,7 +2517,8 @@ const server = createServer(async (request, response) => {
         docType: 'archive',
         relPath: body.relPath || '',
         fileName: body.fileName || '',
-        driveFileId: body.driveFileId || ''
+        driveFileId: body.driveFileId || '',
+        resourceKey: body.resourceKey || ''
       }, embeddings, { extracted, ocr, shape });
 
       sendJson(response, 200, {
@@ -2746,6 +2759,30 @@ const server = createServer(async (request, response) => {
       });
     } catch (error) {
       sendJson(response, 502, { error: error.message });
+    }
+    return;
+  }
+
+  // Google Driveアーカイブのサムネイル用。ブラウザが自分のGoogleアクセストークンで
+  // Driveから取得したPDFバイト列を渡してもらい、1ページ目をPNG化して返すだけの
+  // 状態を持たないユーティリティ。Drive認証・Qdrant・永続化には一切関与しない。
+  if (request.method === 'POST' && url.pathname === '/render-thumbnail') {
+    try {
+      const body = await readJson(request);
+      const pdfBase64 = String(body.pdf_base64 || '');
+      if (!pdfBase64) {
+        sendJson(response, 400, { error: 'pdf_base64 is required' });
+        return;
+      }
+      const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+      if (!pdfBuffer.length) {
+        sendJson(response, 400, { error: 'Empty PDF content' });
+        return;
+      }
+      const thumbBuffer = await convertPdfFirstPageToThumbnailPng(pdfBuffer);
+      sendBinary(response, 200, 'image/png', thumbBuffer, { 'Cache-Control': 'no-store' });
+    } catch (error) {
+      sendJson(response, error.status || 502, { error: error.message });
     }
     return;
   }

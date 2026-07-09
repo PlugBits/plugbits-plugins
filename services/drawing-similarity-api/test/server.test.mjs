@@ -469,6 +469,41 @@ test('similar: アーカイブ結果は docType=archive・thumbTokenなしで通
   assert.equal(archiveResult.archiveRelPath, '2019/Q3/DWG-9001.pdf');
 });
 
+test('similar: Drive由来のアーカイブ結果には driveFileId が含まれる', async () => {
+  const res = await postJson(api.url, '/similar', {
+    tenantId: 'tenant-a', pdf_base64: PDF_A.toString('base64'), limit: 10
+  });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  const gdriveResult = data.results.find((r) => r.recordId === 'archive:gdrive-1');
+  assert.ok(gdriveResult, 'Drive由来のアーカイブ結果が出る');
+  assert.equal(gdriveResult.driveFileId, '1AbCdEfGhIjK');
+
+  const localResult = data.results.find((r) => r.recordId === 'archive:local-only');
+  assert.equal(localResult.driveFileId, '', 'ローカル由来は driveFileId が空文字');
+});
+
+test('render-thumbnail: PDFの1ページ目をPNG化して返す（状態は持たない）', async () => {
+  const res = await postJson(api.url, '/render-thumbnail', {
+    pdf_base64: PDF_A.toString('base64')
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/png');
+  assert.equal(res.headers.get('cache-control'), 'no-store');
+});
+
+test('render-thumbnail: pdf_base64 が無ければ400', async () => {
+  const res = await postJson(api.url, '/render-thumbnail', {});
+  assert.equal(res.status, 400);
+});
+
+test('google/oauth/popup: mode=token ではPickerを起動せずトークン取得のみで完了する', async () => {
+  const res = await fetch(api.url + '/google/oauth/popup?mode=token');
+  assert.equal(res.status, 200);
+  const html = await res.text();
+  assert.match(html, /tokenOnly/, 'mode=tokenの分岐ロジックが埋め込まれている');
+});
+
 // ================================================================
 // Suite 2: 認証ON（キー検証・強制テナント・サムネトークン）
 // ================================================================
