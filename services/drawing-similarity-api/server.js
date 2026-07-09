@@ -261,6 +261,96 @@ const getRuntimeInfo = () => ({
   renderDpi
 });
 
+// --- Google Drive OAuthポップアップ（過去図面アーカイブ取込のGoogle Drive連携） ---
+// マルチテナントSaaSでkintoneの各サブドメインを個別にGoogle Cloud Consoleへ
+// オリジン登録するのは非現実的なため、OAuth同意とPicker選択は当方サーバー自身が
+// ホストする固定オリジンのこのページ内で完結させ、結果だけ postMessage で
+// 呼び出し元（kintoneプラグイン）に返す。サーバー側は何も永続化しない
+// （drive.file スコープの一時アクセストークンのみで完結）。
+const googleOauthClientId = process.env.GOOGLE_OAUTH_CLIENT_ID || '';
+const googlePickerApiKey = process.env.GOOGLE_PICKER_API_KEY || '';
+
+const buildGoogleOAuthPopupHtml = () => `<!doctype html>
+<html><head><meta charset="utf-8"><title>Google Driveと連携</title></head>
+<body style="font-family:system-ui,sans-serif;padding:24px;color:#334155;">
+<p id="status">Googleに接続しています...</p>
+<script>
+(function () {
+  var CLIENT_ID = ${JSON.stringify(googleOauthClientId)};
+  var API_KEY = ${JSON.stringify(googlePickerApiKey)};
+  var params = new URLSearchParams(window.location.search);
+  var targetOrigin = params.get('origin') || '*';
+  var statusEl = document.getElementById('status');
+
+  function finish(payload) {
+    try {
+      if (window.opener) window.opener.postMessage(payload, targetOrigin);
+    } catch (e) {}
+    window.close();
+  }
+
+  function fail(message) {
+    statusEl.textContent = 'エラー: ' + message;
+    finish({ ok: false, error: message });
+  }
+
+  function openPicker(accessToken) {
+    statusEl.textContent = 'ファイルを選択してください...';
+    gapi.load('picker', function () {
+      var view = new google.picker.DocsView(google.picker.ViewId.DOCS)
+        .setMimeTypes('application/pdf')
+        .setIncludeFolders(true)
+        .setSelectFolderEnabled(false);
+      var builder = new google.picker.PickerBuilder()
+        .addView(view)
+        .setOAuthToken(accessToken)
+        .enableFeature(google.picker.Feature.MULTISELECT_ENABLED)
+        .setCallback(function (data) {
+          if (data.action === google.picker.Action.PICKED) {
+            var files = (data.docs || []).map(function (doc) {
+              return { id: doc.id, name: doc.name };
+            });
+            finish({ ok: true, accessToken: accessToken, files: files });
+          } else if (data.action === google.picker.Action.CANCEL) {
+            finish({ ok: false, error: 'cancelled' });
+          }
+        });
+      if (API_KEY) builder.setDeveloperKey(API_KEY);
+      builder.build().setVisible(true);
+    });
+  }
+
+  function start() {
+    if (!CLIENT_ID) {
+      fail('サーバーにGoogle連携が設定されていません（GOOGLE_OAUTH_CLIENT_ID未設定）');
+      return;
+    }
+    if (!window.google || !google.accounts || !google.accounts.oauth2) {
+      fail('Googleライブラリの読み込みに失敗しました');
+      return;
+    }
+    var tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: 'https://www.googleapis.com/auth/drive.file',
+      callback: function (response) {
+        if (response.error) {
+          fail(response.error);
+          return;
+        }
+        openPicker(response.access_token);
+      }
+    });
+    tokenClient.requestAccessToken();
+  }
+
+  window.__onGsiLoad = start;
+})();
+</script>
+<script src="https://accounts.google.com/gsi/client" async defer onload="window.__onGsiLoad()"></script>
+<script src="https://apis.google.com/js/api.js"></script>
+</body></html>
+`;
+
 const buildMockResults = (body) => {
   const base = Number(body.recordId || 1000);
   return Array.from({ length: Math.min(Number(body.limit || 10), 10) }, (_, index) => {
@@ -1840,6 +1930,9 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     // 欠損しているため、読み取り側は必ず === 'archive' の肯定比較で判定すること。
     doc_type: body.docType || 'drawing',
     archive_rel_path: body.relPath || '',
+    // Google Drive経由で取り込んだアーカイブのみ設定。将来のDrive再アクセス（例:サムネイル）用の参照情報で、
+    // フィルタ対象ではないため INDEXED_PAYLOAD_FIELDS には追加しない。
+    drive_file_id: body.driveFileId || '',
     drawing_no: context.extracted?.drawingNo || body.drawingNo || '',
     product_name: context.extracted?.productName || body.productName || '',
     tags: Array.isArray(body.tags) ? body.tags.filter(Boolean).join(',') : String(body.tags || ''),
@@ -2247,6 +2340,14 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // Google Drive OAuthポップアップ。kintoneの各テナントサブドメインではなく
+  // 当方サーバー自身のオリジンから開くページなので、APIキー認証の対象外
+  // （テナントに紐づく情報は一切扱わない）。
+  if (request.method === 'GET' && url.pathname === '/google/oauth/popup') {
+    sendBinary(response, 200, 'text/html; charset=utf-8', Buffer.from(buildGoogleOAuthPopupHtml(), 'utf-8'));
+    return;
+  }
+
   // /thumbnail は <img> から呼ばれヘッダーを送れないため、ヘッダー認証の対象外。
   // 代わりにハンドラ内で HMAC トークンを検証する。
   if (TENANT_AUTH_ENABLED && url.pathname !== '/thumbnail') {
@@ -2395,7 +2496,8 @@ const server = createServer(async (request, response) => {
         recordId: docId,
         docType: 'archive',
         relPath: body.relPath || '',
-        fileName: body.fileName || ''
+        fileName: body.fileName || '',
+        driveFileId: body.driveFileId || ''
       }, embeddings, { extracted, ocr, shape });
 
       sendJson(response, 200, {
