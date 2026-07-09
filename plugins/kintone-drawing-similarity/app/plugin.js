@@ -3363,6 +3363,90 @@
     run();
   };
 
+  // 過去図面アーカイブの取込状況一覧。/index-status は意図的にアーカイブ点を除外して
+  // いるため（孤児誤検知防止）、アーカイブだけを確認できる専用の一覧を別途用意する。
+  const openArchiveStatusModal = (config, apiBaseUrl) => {
+    const shell = createModalShell();
+    shell.host.id = 'pb-archive-status-host';
+    const { content } = shell;
+    const tenantId = deriveTenantId();
+
+    const run = async () => {
+      content.textContent = '';
+      const title = document.createElement('h2');
+      title.textContent = 'アーカイブ取込状況';
+      const statusEl = document.createElement('div');
+      statusEl.className = 'status-line';
+      const spinner = document.createElement('div');
+      spinner.className = 'pb-spinner';
+      const statusText = document.createElement('span');
+      statusText.textContent = '取込済みのアーカイブを確認しています...';
+      statusEl.append(spinner, statusText);
+      content.append(title, statusEl);
+
+      let data;
+      try {
+        const res = await fetch(apiBaseUrl + '/archive-status?tenantId=' + encodeURIComponent(tenantId), {
+          headers: apiKeyHeader(config.apiKey)
+        });
+        if (!res.ok) {
+          let detail = '';
+          try { detail = (await res.json()).error || ''; } catch (_) {}
+          throw new Error(describeApiError(res.status, detail));
+        }
+        data = await res.json();
+      } catch (error) {
+        statusEl.remove();
+        const err = document.createElement('div');
+        err.className = 'sim-note';
+        err.textContent = '⚠ 取得に失敗しました: ' + error.message;
+        const retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn-secondary';
+        retry.textContent = '再試行';
+        retry.addEventListener('click', run);
+        content.append(err, retry);
+        return;
+      }
+
+      content.textContent = '';
+      content.appendChild(title);
+
+      if (!data.configured) {
+        const note = document.createElement('div');
+        note.className = 'sim-note';
+        note.textContent = '検索インデックス（Qdrant）が未設定のため確認できません。';
+        content.appendChild(note);
+        return;
+      }
+
+      const sub = document.createElement('div');
+      sub.className = 'modal-sub';
+      sub.textContent = '取込済み ' + data.count + ' 件（kintoneには登録されていません）';
+      content.appendChild(sub);
+
+      const list = document.createElement('ul');
+      list.className = 'diff-list';
+      list.style.maxHeight = '360px';
+      (data.items || []).forEach((item) => {
+        const li = document.createElement('li');
+        const label = item.drawingNo || item.fileName || item.docId;
+        const meta = [item.productName, item.relPath].filter(Boolean).join(' / ');
+        const source = item.driveFileId ? '（Google Drive）' : '（ローカル）';
+        li.textContent = label + source + (meta ? ' — ' + meta : '');
+        list.appendChild(li);
+      });
+      if (!data.items || !data.items.length) {
+        const li = document.createElement('li');
+        li.textContent = 'まだアーカイブの取込はありません。';
+        list.appendChild(li);
+      }
+      content.appendChild(list);
+    };
+
+    run();
+  };
+
   kintone.events.on('app.record.index.show', (event) => {
     if (document.getElementById('pb-list-btns')) {
       return event;
@@ -3432,6 +3516,14 @@
         onClick: () => {
           if (document.getElementById('pb-archive-select-host') || document.getElementById('pb-archive-overlay')) return;
           openArchiveIngestModal(config, apiBaseUrl);
+        }
+      });
+      menuItems.push({
+        label: 'アーカイブ取込状況',
+        description: '取込済みの過去図面アーカイブを一覧で確認',
+        onClick: () => {
+          if (document.getElementById('pb-archive-status-host')) return;
+          openArchiveStatusModal(config, apiBaseUrl);
         }
       });
     }
