@@ -251,9 +251,43 @@
     return { panel, showBlob, showMessage };
   };
 
+  // パネル幅比率の記憶（次回モーダルを開いたときに復元する）。
+  const PANEL_RATIO_STORAGE_KEY = 'pb-drawing-sim-panel-ratio';
+  const readStoredPanelRatio = () => {
+    try {
+      const raw = window.localStorage.getItem(PANEL_RATIO_STORAGE_KEY);
+      const value = raw === null ? NaN : parseFloat(raw);
+      return Number.isFinite(value) ? value : null;
+    } catch (_) {
+      return null;
+    }
+  };
+  const writeStoredPanelRatio = (ratio) => {
+    try { window.localStorage.setItem(PANEL_RATIO_STORAGE_KEY, String(ratio)); } catch (_) { /* プライベートモード等は無視 */ }
+  };
+
   // preview-panel と form-panel の境界にドラッグ用のハンドルを挿入し、幅比率を可変にする。
-  // ダブルクリックでCSSの既定比率（40:60）に戻せる。
+  // PDFプレビューの<embed>の上をポインタが通るとdocument側のpointerup/moveが
+  // 取りこぼされ「ドラッグ解除されない」不具合が起きるため、resizer自身に
+  // setPointerCaptureしてイベントを固定する（要素をまたいでも確実に追従・解除できる）。
+  // 直近の比率は localStorage に保存し、次回モーダルを開いたときに復元する。
+  // ダブルクリックで既定比率（40:60）にリセット（保存値もクリア）。
   const attachPanelResizer = (layout, previewPanel, formPanel) => {
+    const MIN_RATIO = 0.22;
+    const MAX_RATIO = 0.78;
+    let currentRatio = null;
+
+    const applyRatio = (ratio) => {
+      currentRatio = ratio;
+      previewPanel.style.flex = '0 0 ' + (ratio * 100) + '%';
+      formPanel.style.flex = '0 0 ' + ((1 - ratio) * 100) + '%';
+    };
+
+    const storedRatio = readStoredPanelRatio();
+    if (storedRatio !== null && storedRatio >= MIN_RATIO && storedRatio <= MAX_RATIO) {
+      applyRatio(storedRatio);
+    }
+
     const resizer = document.createElement('div');
     resizer.className = 'panel-resizer';
     resizer.setAttribute('role', 'separator');
@@ -261,31 +295,40 @@
     resizer.setAttribute('aria-label', 'パネル幅の調整');
     previewPanel.after(resizer);
 
-    const MIN_RATIO = 0.22;
-    const MAX_RATIO = 0.78;
+    let dragging = false;
     const onPointerMove = (e) => {
+      if (!dragging) return;
       const rect = layout.getBoundingClientRect();
       if (!rect.width) return;
       const ratio = Math.min(MAX_RATIO, Math.max(MIN_RATIO, (e.clientX - rect.left) / rect.width));
-      previewPanel.style.flex = '0 0 ' + (ratio * 100) + '%';
-      formPanel.style.flex = '0 0 ' + ((1 - ratio) * 100) + '%';
+      applyRatio(ratio);
     };
-    const onPointerUp = () => {
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
       resizer.classList.remove('active');
       document.body.style.userSelect = '';
-      document.removeEventListener('pointermove', onPointerMove);
-      document.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('blur', endDrag);
+      if (currentRatio !== null) writeStoredPanelRatio(currentRatio);
     };
     resizer.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
       e.preventDefault();
+      dragging = true;
       resizer.classList.add('active');
       document.body.style.userSelect = 'none';
-      document.addEventListener('pointermove', onPointerMove);
-      document.addEventListener('pointerup', onPointerUp);
+      try { resizer.setPointerCapture(e.pointerId); } catch (_) { /* 未対応環境は無視 */ }
+      window.addEventListener('blur', endDrag);
     });
+    resizer.addEventListener('pointermove', onPointerMove);
+    resizer.addEventListener('pointerup', endDrag);
+    resizer.addEventListener('pointercancel', endDrag);
+    resizer.addEventListener('lostpointercapture', endDrag);
     resizer.addEventListener('dblclick', () => {
       previewPanel.style.flex = '';
       formPanel.style.flex = '';
+      currentRatio = null;
+      try { window.localStorage.removeItem(PANEL_RATIO_STORAGE_KEY); } catch (_) { /* 無視 */ }
     });
     return resizer;
   };
