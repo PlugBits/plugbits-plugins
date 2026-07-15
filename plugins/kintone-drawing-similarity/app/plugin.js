@@ -251,6 +251,45 @@
     return { panel, showBlob, showMessage };
   };
 
+  // preview-panel と form-panel の境界にドラッグ用のハンドルを挿入し、幅比率を可変にする。
+  // ダブルクリックでCSSの既定比率（40:60）に戻せる。
+  const attachPanelResizer = (layout, previewPanel, formPanel) => {
+    const resizer = document.createElement('div');
+    resizer.className = 'panel-resizer';
+    resizer.setAttribute('role', 'separator');
+    resizer.setAttribute('aria-orientation', 'vertical');
+    resizer.setAttribute('aria-label', 'パネル幅の調整');
+    previewPanel.after(resizer);
+
+    const MIN_RATIO = 0.22;
+    const MAX_RATIO = 0.78;
+    const onPointerMove = (e) => {
+      const rect = layout.getBoundingClientRect();
+      if (!rect.width) return;
+      const ratio = Math.min(MAX_RATIO, Math.max(MIN_RATIO, (e.clientX - rect.left) / rect.width));
+      previewPanel.style.flex = '0 0 ' + (ratio * 100) + '%';
+      formPanel.style.flex = '0 0 ' + ((1 - ratio) * 100) + '%';
+    };
+    const onPointerUp = () => {
+      resizer.classList.remove('active');
+      document.body.style.userSelect = '';
+      document.removeEventListener('pointermove', onPointerMove);
+      document.removeEventListener('pointerup', onPointerUp);
+    };
+    resizer.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      resizer.classList.add('active');
+      document.body.style.userSelect = 'none';
+      document.addEventListener('pointermove', onPointerMove);
+      document.addEventListener('pointerup', onPointerUp);
+    });
+    resizer.addEventListener('dblclick', () => {
+      previewPanel.style.flex = '';
+      formPanel.style.flex = '';
+    });
+    return resizer;
+  };
+
   // --- 一致理由バッジ（サーバーの reasons を日本語ラベルに変換） ---
   const REASON_LABELS = {
     'drawingNo match': '図番一致',
@@ -1405,6 +1444,12 @@
     '.preview-placeholder { flex: 1; display: flex; align-items: center; justify-content: center;',
     '  color: var(--pb-faint); font-size: 13px; }',
     '.form-panel { flex: 0 0 60%; overflow-y: auto; padding: 20px 24px 28px; }',
+    '.panel-resizer { flex: 0 0 8px; width: 8px; margin: 0 -4px; cursor: col-resize;',
+    '  position: relative; z-index: 2; background: transparent; touch-action: none; }',
+    '.panel-resizer::after { content: \'\'; position: absolute; top: 8px; bottom: 8px; left: 50%;',
+    '  width: 3px; transform: translateX(-50%); border-radius: 3px; background: transparent;',
+    '  transition: background .15s; }',
+    '.panel-resizer:hover::after, .panel-resizer.active::after { background: var(--pb-primary); }',
     '.modal.wide .modal-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }',
     'h2 { font-size: 17px; font-weight: 700; color: var(--pb-ink); letter-spacing: .01em; margin-bottom: 18px; }',
     '.modal-header h2, .modal.wide h2 { margin-bottom: 0; }',
@@ -3030,6 +3075,7 @@
 
     formPanel.append(statusEl, confidenceEl, listEl);
     layout.append(previewPanel, formPanel);
+    attachPanelResizer(layout, previewPanel, formPanel);
     content.append(header, layout);
 
     runSimilarSearch({
@@ -3166,6 +3212,7 @@
       formPanel.append(statusEl, confidenceEl, listEl);
 
       layout.append(previewPanel, formPanel);
+      attachPanelResizer(layout, previewPanel, formPanel);
       content.append(header, layout);
 
       // 0件時は「この図面を登録」への導線をエンプティステートにも出す
