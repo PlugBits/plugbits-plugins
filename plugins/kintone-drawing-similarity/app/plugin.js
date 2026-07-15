@@ -1536,6 +1536,22 @@
     '  background: var(--pb-bg); border: 1px solid var(--pb-line); color: var(--pb-faint); }',
     '.sim-empty-text { font-size: 14px; font-weight: 600; color: var(--pb-ink-2); margin-bottom: 6px; }',
     '.sim-empty-sub { font-size: 12.5px; color: var(--pb-muted); line-height: 1.6; }',
+    // ---- 未取得の行（上位3件より下位・プレビュー取得/一括取得前の暫定表示） ----
+    '.sim-item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 12px;',
+    '  border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: #fff;',
+    '  transition: border-color .15s, box-shadow .15s; }',
+    '.sim-item:hover { border-color: var(--pb-line-2); box-shadow: 0 4px 14px rgba(15,23,42,.07); }',
+    '.sim-thumb { display: flex; align-items: center; justify-content: center; box-sizing: border-box;',
+    '  width: 68px; height: 68px; border: 1px solid var(--pb-line); border-radius: 8px; background: var(--pb-bg);',
+    '  color: var(--pb-faint); font-size: 10px; text-align: center; overflow: hidden; flex-shrink: 0; }',
+    '.sim-link { color: var(--pb-primary-hover); font-weight: 700; text-decoration: none; font-size: 13.5px; }',
+    '.sim-link:hover { text-decoration: underline; }',
+    '.sim-meta { margin-top: 3px; color: var(--pb-muted); font-size: 12px; }',
+    '.sim-scorebox { display: grid; min-width: 60px; justify-items: end; align-content: start; gap: 4px; }',
+    '.sim-score { display: inline-flex; align-items: center; min-height: 24px; padding: 0 10px;',
+    '  border-radius: 9999px; font-size: 12.5px; font-weight: 700; background: #f1f5f9; color: var(--pb-ink-2); }',
+    '.sim-score.band-high { background: var(--pb-green-soft); color: #166534; }',
+    '.sim-score.band-mid { background: var(--pb-amber-soft); color: #92400e; }',
     '.sim-thumb-img { max-width: 100%; max-height: 100%; object-fit: contain; }',
     '.sim-thumb-load { border: none; background: transparent; color: var(--pb-primary); font-size: 13px;',
     '  cursor: pointer; padding: 8px; font-weight: 600; }',
@@ -1547,7 +1563,8 @@
     '.sim-reasons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }',
     '.sim-reason { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;',
     '  background: var(--pb-primary-soft); color: var(--pb-primary-hover); font-size: 10.5px; font-weight: 600; }',
-    '.sim-thumb-archive { font-size: 64px; }',
+    '.sim-thumb.sim-thumb-archive { font-size: 26px; }',
+    '.sim-hero-thumb.sim-thumb-archive { font-size: 64px; }',
     '.sim-archive-badge { display: inline-flex; align-items: center; margin-top: 6px; padding: 2px 8px;',
     '  border-radius: 999px; background: var(--pb-violet-soft); color: var(--pb-violet);',
     '  font-size: 10.5px; font-weight: 700; }',
@@ -1556,7 +1573,9 @@
     '.sim-hero-card { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--pb-line);',
     '  border-radius: 14px; background: #fff; transition: border-color .15s, box-shadow .15s; }',
     '.sim-hero-card:hover { border-color: var(--pb-line-2); box-shadow: 0 6px 20px rgba(15,23,42,.08); }',
-    '.sim-hero-thumb { position: relative; width: 100%; height: min(58vh, 460px); display: flex;',
+    // 図面シートは横長（landscape）が多いため、縦に長すぎる箱を避けてアスペクト比で
+    // サイズを決める。object-fit:containの余白（レターボックス）を最小限にするため。
+    '.sim-hero-thumb { position: relative; width: 100%; aspect-ratio: 3 / 2; height: auto; max-height: 70vh; display: flex;',
     '  align-items: center; justify-content: center; box-sizing: border-box;',
     '  border: 1px solid var(--pb-line); border-radius: 10px; background: var(--pb-bg);',
     '  color: var(--pb-faint); font-size: 13px; text-align: center; overflow: hidden; }',
@@ -2671,6 +2690,73 @@
     return card;
   };
 
+  // 上位3件より下位の結果は、まずこの小さい行で表示する（プレビュー未取得の暫定表示）。
+  // kintone登録図面は「プレビュー取得」クリックで、アーカイブは一括読み込みボタン経由で、
+  // その結果1件だけ buildHeroCard の大きいカードに差し替わる（expandToHeroCard参照）。
+  const buildResultRow = (item, apiBaseUrl, debug) => {
+    const row = document.createElement('div');
+    row.className = 'sim-item';
+    const isArchive = item.docType === 'archive';
+
+    const thumbBox = document.createElement('div');
+    thumbBox.className = 'sim-thumb' + (isArchive ? ' sim-thumb-archive' : '');
+
+    if (isArchive) {
+      thumbBox.textContent = '📁';
+      if (item.driveFileId) {
+        thumbBox.dataset.driveFileId = item.driveFileId;
+        thumbBox.dataset.driveResourceKey = item.driveResourceKey || '';
+      }
+    } else {
+      const loadBtn = document.createElement('button');
+      loadBtn.type = 'button';
+      loadBtn.className = 'sim-thumb-load';
+      loadBtn.textContent = 'プレビュー取得';
+      loadBtn.addEventListener('click', () => {
+        row.replaceWith(buildHeroCard(item, apiBaseUrl, debug, true));
+      });
+      thumbBox.appendChild(loadBtn);
+    }
+
+    const body = document.createElement('div');
+    const link = document.createElement(isArchive ? 'span' : 'a');
+    link.className = 'sim-link';
+    if (!isArchive) {
+      link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
+      link.target = '_blank';
+      link.rel = 'noopener';
+    }
+    link.textContent = isArchive
+      ? (item.drawingNo || item.archiveFileName || 'アーカイブ')
+      : (item.drawingNo || 'record ' + item.recordId);
+
+    const meta = document.createElement('div');
+    meta.className = 'sim-meta';
+    meta.textContent = isArchive
+      ? [item.productName, item.archiveRelPath].filter(Boolean).join(' / ')
+      : [item.productName, item.customer].filter(Boolean).join(' / ');
+
+    body.append(link, meta);
+
+    if (isArchive) body.appendChild(buildArchiveBadge());
+
+    const reasonsEl = buildReasonBadges(item.reasons);
+    if (reasonsEl) body.appendChild(reasonsEl);
+
+    const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
+    if (shapeTagsEl) body.appendChild(shapeTagsEl);
+
+    const scoreBox = document.createElement('div');
+    scoreBox.className = 'sim-scorebox';
+    const score = document.createElement('div');
+    score.className = 'sim-score ' + scoreBandClass(item.score);
+    score.textContent = formatPercent(item.score);
+    scoreBox.appendChild(score);
+
+    row.append(thumbBox, body, scoreBox);
+    return row;
+  };
+
   // デバッグ表示: スコア内訳を折りたたみで出す
   const buildDebugDetails = (item) => {
     const details = document.createElement('details');
@@ -2735,33 +2821,54 @@
       listEl.appendChild(note);
     }
 
-    // 図面の見た目で比較するのが検索の主目的のため、上位3件に限らず全結果を
-    // 同じ大きいカードで表示する。kintone登録図面のサムネイル自動取得のみ
-    // 上位 THUMBNAIL_AUTO_COUNT 件に絞る（全件自動取得は帯域・待ち時間の面で重い）。
+    // 上位 THUMBNAIL_AUTO_COUNT 件は大きいカード＋サムネイル自動取得、それより下位は
+    // 小さい行で暫定表示する（プレビュー取得/一括取得のトリガーで、その1件だけ大きい
+    // カードに差し替わる＝expand）。未取得のまま全件を大きくすると縦に長くなりすぎるため。
     const heroGrid = document.createElement('div');
     heroGrid.className = 'sim-hero-grid';
+    // アーカイブ結果の現在の要素（行 or カード）を保持し、一括取得ボタンから
+    // 差し替え・サムネイル取得先の特定に使う。
+    const archiveTargets = [];
     results.forEach((item, index) => {
-      heroGrid.appendChild(buildHeroCard(item, apiBaseUrl, options.debug, index < THUMBNAIL_AUTO_COUNT));
+      const isArchive = item.docType === 'archive';
+      const autoLoad = index < THUMBNAIL_AUTO_COUNT;
+      let el = autoLoad
+        ? buildHeroCard(item, apiBaseUrl, options.debug, true)
+        : buildResultRow(item, apiBaseUrl, options.debug);
+      heroGrid.appendChild(el);
+
+      if (isArchive && item.driveFileId) {
+        archiveTargets.push({
+          getThumbBox: () => {
+            if (el.classList.contains('sim-item')) {
+              const heroCard = buildHeroCard(item, apiBaseUrl, options.debug, true);
+              el.replaceWith(heroCard);
+              el = heroCard;
+            }
+            return el.querySelector('[data-drive-file-id]');
+          }
+        });
+      }
     });
     listEl.appendChild(heroGrid);
 
     // Google Drive由来のアーカイブ結果が1件でもあれば、まとめてサムネイル取得できる
     // ボタンを出す（自動取得はしない。都度Google認証が走ると体感が悪化するため）。
-    const driveBoxes = listEl.querySelectorAll('[data-drive-file-id]');
-    if (driveBoxes.length) {
+    if (archiveTargets.length) {
       const loadBtn = document.createElement('button');
       loadBtn.type = 'button';
       loadBtn.className = 'btn-secondary';
       loadBtn.style.cssText = 'margin-bottom:12px;';
-      loadBtn.textContent = '🔓 Googleドライブのサムネイルを表示（' + driveBoxes.length + '件）';
-      loadBtn.addEventListener('click', () => loadArchiveDriveThumbnails(listEl, apiBaseUrl, loadBtn, options.config || {}, options.trackObjectUrl));
+      loadBtn.textContent = '🔓 Googleドライブのサムネイルを表示（' + archiveTargets.length + '件）';
+      loadBtn.addEventListener('click', () => loadArchiveDriveThumbnails(archiveTargets, apiBaseUrl, loadBtn, options.config || {}, options.trackObjectUrl));
       listEl.insertBefore(loadBtn, listEl.firstChild);
     }
   };
 
   // Google連携ポップアップ（トークンのみ）→ 対象PDFをDriveから取得 → /render-thumbnail でPNG化、
   // という流れで、表示中のアーカイブ結果のサムネイルをまとめて置き換える。何も永続化しない。
-  const loadArchiveDriveThumbnails = async (container, apiBaseUrl, triggerBtn, config, trackObjectUrl) => {
+  // targets: [{ getThumbBox }]（行のままなら大きいカードに差し替えてから箱を返す）。
+  const loadArchiveDriveThumbnails = async (targets, apiBaseUrl, triggerBtn, config, trackObjectUrl) => {
     triggerBtn.disabled = true;
     triggerBtn.textContent = 'Googleと連携しています...';
     let accessToken;
@@ -2773,11 +2880,11 @@
       return;
     }
 
-    const boxes = [...container.querySelectorAll('[data-drive-file-id]')];
-    triggerBtn.textContent = 'サムネイルを読み込み中... 0 / ' + boxes.length;
+    triggerBtn.textContent = 'サムネイルを読み込み中... 0 / ' + targets.length;
     let done = 0;
     let failed = 0;
-    for (const box of boxes) {
+    for (const target of targets) {
+      const box = target.getThumbBox();
       const fileId = box.dataset.driveFileId;
       const resourceKey = box.dataset.driveResourceKey || '';
       box.textContent = '';
@@ -2805,7 +2912,7 @@
         box.textContent = '📁';
       }
       done += 1;
-      triggerBtn.textContent = 'サムネイルを読み込み中... ' + done + ' / ' + boxes.length;
+      triggerBtn.textContent = 'サムネイルを読み込み中... ' + done + ' / ' + targets.length;
     }
     triggerBtn.textContent = failed
       ? '読み込み完了（' + failed + '件失敗）'
