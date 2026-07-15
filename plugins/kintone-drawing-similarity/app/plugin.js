@@ -535,9 +535,9 @@
       (thumbToken ? '&token=' + encodeURIComponent(thumbToken) : '');
   };
 
-  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad, thumbToken) => {
+  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad, thumbToken, boxClassName) => {
     const thumbBox = document.createElement('div');
-    thumbBox.className = 'sim-thumb';
+    thumbBox.className = boxClassName || 'sim-thumb';
 
     if (autoLoad) {
       loadThumbnail(thumbBox, apiBaseUrl, fileKey, thumbToken);
@@ -1396,7 +1396,7 @@
     '.modal-sub { margin-top: 2px; color: var(--pb-muted); font-size: 12px; font-weight: 400; }',
     '.modal-header-actions { display: flex; gap: 8px; flex-shrink: 0; }',
     '.form-layout { display: flex; flex: 1; overflow: hidden; }',
-    '.preview-panel { flex: 0 0 58%; display: flex; flex-direction: column;',
+    '.preview-panel { flex: 0 0 40%; display: flex; flex-direction: column;',
     '  border-right: 1px solid var(--pb-line); background: var(--pb-bg); min-height: 0; }',
     '.preview-label { padding: 8px 14px; font-size: 11px; color: var(--pb-muted); font-weight: 600;',
     '  background: #fff; border-bottom: 1px solid var(--pb-line); flex-shrink: 0;',
@@ -1404,7 +1404,7 @@
     '.preview-embed { flex: 1; width: 100%; border: none; display: block; min-height: 0; }',
     '.preview-placeholder { flex: 1; display: flex; align-items: center; justify-content: center;',
     '  color: var(--pb-faint); font-size: 13px; }',
-    '.form-panel { flex: 0 0 42%; overflow-y: auto; padding: 20px 24px 28px; }',
+    '.form-panel { flex: 0 0 60%; overflow-y: auto; padding: 20px 24px 28px; }',
     '.modal.wide .modal-content { display: flex; flex-direction: column; flex: 1; overflow: hidden; min-height: 0; }',
     'h2 { font-size: 17px; font-weight: 700; color: var(--pb-ink); letter-spacing: .01em; margin-bottom: 18px; }',
     '.modal-header h2, .modal.wide h2 { margin-bottom: 0; }',
@@ -1536,39 +1536,18 @@
     '  background: var(--pb-bg); border: 1px solid var(--pb-line); color: var(--pb-faint); }',
     '.sim-empty-text { font-size: 14px; font-weight: 600; color: var(--pb-ink-2); margin-bottom: 6px; }',
     '.sim-empty-sub { font-size: 12.5px; color: var(--pb-muted); line-height: 1.6; }',
-    '.sim-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }',
-    '.sim-item { display: grid; grid-template-columns: auto 1fr auto; gap: 12px; padding: 12px;',
-    '  border: 1px solid var(--pb-line); border-radius: var(--pb-radius); background: #fff;',
-    '  transition: border-color .15s, box-shadow .15s; }',
-    '.sim-item:hover { border-color: var(--pb-line-2); box-shadow: 0 4px 14px rgba(15,23,42,.07); }',
-    '.sim-thumb { display: flex; align-items: center; justify-content: center; box-sizing: border-box;',
-    '  width: 68px; height: 68px; border: 1px solid var(--pb-line); border-radius: 8px; background: var(--pb-bg);',
-    '  color: var(--pb-faint); font-size: 10px; text-align: center; overflow: hidden; }',
     '.sim-thumb-img { max-width: 100%; max-height: 100%; object-fit: contain; }',
-    '.sim-thumb-load { border: none; background: transparent; color: var(--pb-primary); font-size: 10px;',
-    '  cursor: pointer; padding: 4px; font-weight: 600; }',
+    '.sim-thumb-load { border: none; background: transparent; color: var(--pb-primary); font-size: 13px;',
+    '  cursor: pointer; padding: 8px; font-weight: 600; }',
     '.sim-skeleton { width: 100%; height: 100%; border-radius: inherit;',
     '  background: linear-gradient(90deg, #eef1f5 25%, #f7f9fb 50%, #eef1f5 75%);',
     '  background-size: 200% 100%; animation: pb-shimmer 1.3s ease-in-out infinite; }',
-    '.sim-thumb-retry { border: none; background: transparent; color: var(--pb-muted); font-size: 10px;',
+    '.sim-thumb-retry { border: none; background: transparent; color: var(--pb-muted); font-size: 11px;',
     '  cursor: pointer; padding: 4px; text-decoration: underline; }',
-    '.sim-link { color: var(--pb-primary-hover); font-weight: 700; text-decoration: none; font-size: 13.5px; }',
-    '.sim-link:hover { text-decoration: underline; }',
-    '.sim-meta { margin-top: 3px; color: var(--pb-muted); font-size: 12px; }',
-    '.sim-detail { margin-top: 4px; color: var(--pb-faint);',
-    '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace; font-size: 11px; }',
-    '.sim-scorebox { display: grid; min-width: 60px; justify-items: end; align-content: start; gap: 4px; }',
-    '.sim-vectorraw { color: var(--pb-faint);',
-    '  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;',
-    '  font-size: 11px; font-weight: 600; }',
-    '.sim-score { display: inline-flex; align-items: center; min-height: 24px; padding: 0 10px;',
-    '  border-radius: 9999px; font-size: 12.5px; font-weight: 700; background: #f1f5f9; color: var(--pb-ink-2); }',
-    '.sim-score.band-high { background: var(--pb-green-soft); color: #166534; }',
-    '.sim-score.band-mid { background: var(--pb-amber-soft); color: #92400e; }',
     '.sim-reasons { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }',
     '.sim-reason { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px;',
     '  background: var(--pb-primary-soft); color: var(--pb-primary-hover); font-size: 10.5px; font-weight: 600; }',
-    '.sim-thumb-archive { font-size: 26px; }',
+    '.sim-thumb-archive { font-size: 64px; }',
     '.sim-archive-badge { display: inline-flex; align-items: center; margin-top: 6px; padding: 2px 8px;',
     '  border-radius: 999px; background: var(--pb-violet-soft); color: var(--pb-violet);',
     '  font-size: 10.5px; font-weight: 700; }',
@@ -1577,7 +1556,7 @@
     '.sim-hero-card { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--pb-line);',
     '  border-radius: 14px; background: #fff; transition: border-color .15s, box-shadow .15s; }',
     '.sim-hero-card:hover { border-color: var(--pb-line-2); box-shadow: 0 6px 20px rgba(15,23,42,.08); }',
-    '.sim-hero-thumb { position: relative; width: 100%; height: 250px; display: flex;',
+    '.sim-hero-thumb { position: relative; width: 100%; height: min(58vh, 460px); display: flex;',
     '  align-items: center; justify-content: center; box-sizing: border-box;',
     '  border: 1px solid var(--pb-line); border-radius: 10px; background: var(--pb-bg);',
     '  color: var(--pb-faint); font-size: 13px; text-align: center; overflow: hidden; }',
@@ -2635,21 +2614,24 @@
     return badge;
   };
 
-  const buildHeroCard = (item, apiBaseUrl, debug) => {
+  // autoLoad: kintone登録図面のサムネイルを即時取得するか（false時は「プレビュー取得」ボタンを出す）。
+  // アーカイブ（Google Drive由来）はまとめて読み込むボタンを別途出すため、ここでは常に未取得状態で始める。
+  const buildHeroCard = (item, apiBaseUrl, debug, autoLoad = true) => {
     const card = document.createElement('div');
     card.className = 'sim-hero-card';
     const isArchive = item.docType === 'archive';
 
-    const thumbBox = document.createElement('div');
-    thumbBox.className = 'sim-hero-thumb' + (isArchive ? ' sim-thumb-archive' : '');
+    let thumbBox;
     if (isArchive) {
+      thumbBox = document.createElement('div');
+      thumbBox.className = 'sim-hero-thumb sim-thumb-archive';
       thumbBox.textContent = '📁';
       if (item.driveFileId) {
         thumbBox.dataset.driveFileId = item.driveFileId;
         thumbBox.dataset.driveResourceKey = item.driveResourceKey || '';
       }
     } else {
-      loadThumbnail(thumbBox, apiBaseUrl, item.fileKey, item.thumbToken);
+      thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, autoLoad, item.thumbToken, 'sim-hero-thumb');
     }
 
     const scoreBadge = document.createElement('div');
@@ -2687,76 +2669,6 @@
     if (debug) card.appendChild(buildDebugDetails(item));
 
     return card;
-  };
-
-  const buildResultRow = (item, apiBaseUrl, debug) => {
-    const li = document.createElement('li');
-    li.className = 'sim-item';
-    const isArchive = item.docType === 'archive';
-
-    let thumbBox;
-    if (isArchive) {
-      thumbBox = document.createElement('div');
-      thumbBox.className = 'sim-thumb sim-thumb-archive';
-      thumbBox.textContent = '📁';
-      if (item.driveFileId) {
-        thumbBox.dataset.driveFileId = item.driveFileId;
-        thumbBox.dataset.driveResourceKey = item.driveResourceKey || '';
-      }
-    } else {
-      thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, false, item.thumbToken);
-    }
-
-    const body = document.createElement('div');
-    const link = document.createElement(isArchive ? 'span' : 'a');
-    link.className = 'sim-link';
-    if (!isArchive) {
-      link.href = '/k/' + kintone.app.getId() + '/show#record=' + encodeURIComponent(item.recordId);
-      link.target = '_blank';
-      link.rel = 'noopener';
-    }
-    link.textContent = isArchive
-      ? (item.drawingNo || item.archiveFileName || 'アーカイブ')
-      : (item.drawingNo || 'record ' + item.recordId);
-
-    const meta = document.createElement('div');
-    meta.className = 'sim-meta';
-    meta.textContent = isArchive
-      ? [item.productName, item.archiveRelPath].filter(Boolean).join(' / ')
-      : [item.productName, item.customer].filter(Boolean).join(' / ');
-
-    body.append(link, meta);
-
-    if (isArchive) body.appendChild(buildArchiveBadge());
-
-    const reasonsEl = buildReasonBadges(item.reasons);
-    if (reasonsEl) body.appendChild(reasonsEl);
-
-    const shapeTagsEl = buildShapeTagsEl(item.shapeTags);
-    if (shapeTagsEl) body.appendChild(shapeTagsEl);
-
-    const scoreBox = document.createElement('div');
-    scoreBox.className = 'sim-scorebox';
-
-    const score = document.createElement('div');
-    score.className = 'sim-score ' + scoreBandClass(item.score);
-    score.textContent = formatPercent(item.score);
-    scoreBox.appendChild(score);
-
-    // vectorRaw / rotation は開発者向け情報。デバッグ表示のときだけ出す。
-    if (debug) {
-      const rawScore = item.vectorRaw || (item.scoreBreakdown && item.scoreBreakdown.vectorRaw);
-      const rotationText = item.embeddingRotation === null || item.embeddingRotation === undefined
-        ? ''
-        : ' / rot ' + item.embeddingRotation;
-      const detail = document.createElement('div');
-      detail.className = 'sim-detail';
-      detail.textContent = 'vectorRaw ' + formatVectorRaw(rawScore) + rotationText;
-      body.appendChild(detail);
-    }
-
-    li.append(thumbBox, body, scoreBox);
-    return li;
   };
 
   // デバッグ表示: スコア内訳を折りたたみで出す
@@ -2823,22 +2735,15 @@
       listEl.appendChild(note);
     }
 
-    const heroResults = results.slice(0, THUMBNAIL_AUTO_COUNT);
-    const restResults = results.slice(THUMBNAIL_AUTO_COUNT);
-
-    if (heroResults.length) {
-      const heroGrid = document.createElement('div');
-      heroGrid.className = 'sim-hero-grid';
-      heroResults.forEach((item) => heroGrid.appendChild(buildHeroCard(item, apiBaseUrl, options.debug)));
-      listEl.appendChild(heroGrid);
-    }
-
-    if (restResults.length) {
-      const restList = document.createElement('ul');
-      restList.className = 'sim-list';
-      restResults.forEach((item) => restList.appendChild(buildResultRow(item, apiBaseUrl, options.debug)));
-      listEl.appendChild(restList);
-    }
+    // 図面の見た目で比較するのが検索の主目的のため、上位3件に限らず全結果を
+    // 同じ大きいカードで表示する。kintone登録図面のサムネイル自動取得のみ
+    // 上位 THUMBNAIL_AUTO_COUNT 件に絞る（全件自動取得は帯域・待ち時間の面で重い）。
+    const heroGrid = document.createElement('div');
+    heroGrid.className = 'sim-hero-grid';
+    results.forEach((item, index) => {
+      heroGrid.appendChild(buildHeroCard(item, apiBaseUrl, options.debug, index < THUMBNAIL_AUTO_COUNT));
+    });
+    listEl.appendChild(heroGrid);
 
     // Google Drive由来のアーカイブ結果が1件でもあれば、まとめてサムネイル取得できる
     // ボタンを出す（自動取得はしない。都度Google認証が走ると体感が悪化するため）。
