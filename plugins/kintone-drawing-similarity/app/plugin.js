@@ -3578,11 +3578,14 @@
   // === インデックス状況チェック（kintone ⇔ Qdrant の整合性確認） ===
   // 未登録（kintoneにあるが検索に出ない）・要更新（PDF差し替え済みでベクトルが古い）・
   // 孤児（レコード削除済みなのに検索に出る）を検知し、その場で修復できるようにする。
-  const openIndexStatusModal = (config, apiBaseUrl) => {
+  const openIndexStatusModal = (config, apiBaseUrl, options = {}) => {
     if (!config.pdfFileField) {
       window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
       return;
     }
+    // bulkMode: 「一括図面登録」メニューから開いた場合。状況チェックの結果画面に
+    // 「全件登録」ボタンと案内文を追加し、まず状況を確認してから実行範囲を選べるようにする。
+    const bulkMode = !!options.bulkMode;
     const shell = createModalShell();
     shell.host.id = 'pb-index-status-host';
     const { content, closeModal } = shell;
@@ -3629,13 +3632,15 @@
     const run = async () => {
       content.textContent = '';
       const title = document.createElement('h2');
-      title.textContent = 'インデックス状況チェック';
+      title.textContent = bulkMode ? '一括図面登録' : 'インデックス状況チェック';
       const statusEl = document.createElement('div');
       statusEl.className = 'status-line';
       const spinner = document.createElement('div');
       spinner.className = 'pb-spinner';
       const statusText = document.createElement('span');
-      statusText.textContent = 'kintoneレコードと検索インデックスを照合しています...';
+      statusText.textContent = bulkMode
+        ? '登録前の状況を確認しています...'
+        : 'kintoneレコードと検索インデックスを照合しています...';
       statusEl.append(spinner, statusText);
       content.append(title, statusEl);
 
@@ -3703,6 +3708,13 @@
       content.textContent = '';
       content.appendChild(title);
 
+      if (bulkMode) {
+        const sub = document.createElement('div');
+        sub.className = 'modal-sub';
+        sub.textContent = '登録前に現在の状況を確認しました。実行する範囲を選んでください。';
+        content.appendChild(sub);
+      }
+
       const grid = document.createElement('div');
       grid.className = 'stat-grid';
       [
@@ -3729,6 +3741,12 @@
         done.className = 'result-wrap result-ok';
         done.innerHTML = '<div class="result-icon">✓</div><div class="result-msg">kintoneと検索インデックスは一致しています。</div>';
         content.appendChild(done);
+        if (bulkMode) {
+          const note = document.createElement('div');
+          note.className = 'diff-note';
+          note.textContent = 'すべて登録済みです。ベクトルを再計算したい場合のみ全件登録を実行してください。';
+          content.appendChild(note);
+        }
       }
       if (unindexed.length) content.appendChild(buildSection('未登録（検索に出ません）', unindexed));
       if (stale.length) content.appendChild(buildSection('要更新（PDFが差し替えられています）', stale));
@@ -3768,6 +3786,19 @@
         staleBtn.textContent = '要更新を再登録（' + stale.length + '件）';
         staleBtn.addEventListener('click', () => runFiltered('要更新レコードの再登録', stale));
         actions.appendChild(staleBtn);
+      }
+      if (bulkMode) {
+        // 全件登録の対象は PDF が添付されている全レコード（登録済み＋未登録＋要更新）。
+        // 差分がある場合は「未登録を登録」等が主要ボタンになるため、全件登録は常に補助扱い。
+        const allEntries = [...ok, ...unindexed, ...stale];
+        if (allEntries.length) {
+          const allBtn = document.createElement('button');
+          allBtn.type = 'button';
+          allBtn.className = 'btn-secondary';
+          allBtn.textContent = '全件登録（' + allEntries.length + '件）';
+          allBtn.addEventListener('click', () => runFiltered('一括図面登録（全件）', allEntries));
+          actions.appendChild(allBtn);
+        }
       }
       if (orphans.length) {
         const orphanBtn = document.createElement('button');
@@ -3939,18 +3970,14 @@
       }
     }];
     // 一括図面登録は設定でオフにできる（既定は表示）。
+    // 即時実行はせず、まずインデックス状況チェックを表示してから実行範囲を選んでもらう。
     if (config.showBulkButton !== 'false') {
       menuItems.push({
-        label: '一括図面登録（全件）',
-        description: '表示中アプリの全レコードを順次登録',
+        label: '一括図面登録',
+        description: '登録状況を確認してから一括登録',
         onClick: () => {
-          if (document.getElementById('pb-bulk-overlay')) return;
-          if (!config.pdfFileField) {
-            window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
-            return;
-          }
-          const overlay = createBulkModal();
-          runBulkIndex(overlay, config, apiBaseUrl);
+          if (document.getElementById('pb-index-status-host') || document.getElementById('pb-bulk-overlay')) return;
+          openIndexStatusModal(config, apiBaseUrl, { bulkMode: true });
         }
       });
     }
