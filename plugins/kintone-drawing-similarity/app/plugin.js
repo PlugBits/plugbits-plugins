@@ -902,7 +902,16 @@
       const fileMeta = getFirstFile(event.record, config.pdfFileField);
       openRegisterModal(config, apiBaseUrl, {
         recordId: event.recordId,
-        fileMeta
+        fileMeta,
+        recordValues: {
+          drawingNo: getFieldValue(event.record, config.drawingNoField),
+          productName: getFieldValue(event.record, config.productNameField),
+          material: getFieldValue(event.record, config.materialField),
+          dimension: getFieldValue(event.record, config.dimensionField),
+          processes: parseTags(getFieldValue(event.record, config.processField)),
+          tags: parseTags(getFieldValue(event.record, config.tagField)),
+          shapeTags: config.shapeTagField ? parseTags(getFieldValue(event.record, config.shapeTagField)) : []
+        }
       });
     });
 
@@ -2022,8 +2031,8 @@
     };
 
     // オートコンプリート付き複数選択フィールド
-    const makeAutoChipsField = (labelText, suggestions, allowNew) => {
-      const selected = [];
+    const makeAutoChipsField = (labelText, suggestions, allowNew, initialSelected = []) => {
+      const selected = [...initialSelected];
       const group = document.createElement('div');
       group.className = 'field-group';
       const lbl = document.createElement('div');
@@ -2129,6 +2138,7 @@
         if (item) { e.preventDefault(); addItem(item.dataset.value); }
       });
 
+      renderChips();
       inputRow.append(input, dropdown);
       group.append(lbl, chipsDiv, inputRow);
       return { element: group, getValues: () => [...selected] };
@@ -2348,13 +2358,37 @@
 
       const fv = fieldValues || { drawingNos: [], productNames: [], materials: [], dimensions: [] };
 
+      // 既存レコードの更新時（既存PDFの再計算/差し替え）は、レコードの現在値を初期値にする。
+      // OCR誤読のまま保存して正しいレコード値を上書きしたり、タグ/加工方法が空から
+      // 始まって既存の値を消してしまったりするのを防ぐ。OCR値は (a) レコード値が空の
+      // 欄のフォールバック、(b) レコード値と異なる場合は候補ドロップダウンの先頭に
+      // 追加して1クリックで選べるようにする。
+      const rv = (existingContext && existingContext.recordId && existingContext.recordValues) || null;
+      const initialValue = (recordVal, ocrVal) => rv ? (recordVal || ocrVal || '') : (ocrVal || '');
+      const withOcrCandidate = (list, ocrVal, recordVal) => {
+        const arr = [...list];
+        const ocr = String(ocrVal || '').trim();
+        if (rv && ocr && ocr !== (recordVal || '') && !arr.includes(ocr)) {
+          arr.unshift(ocr);
+        }
+        return arr;
+      };
+
+      if (rv) {
+        const updateNote = document.createElement('div');
+        updateNote.className = 'field-note info';
+        updateNote.textContent = '既存レコードの値を初期表示しています。OCRの読み取り値は各欄の候補から選べます。';
+        formPanel.appendChild(updateNote);
+      }
+
       // 図番
       const drawingNoGroup = document.createElement('div');
       drawingNoGroup.className = 'field-group';
       const drawingNoLabel = document.createElement('label');
       drawingNoLabel.className = 'field-label';
       drawingNoLabel.textContent = '図番 *';
-      const drawingNoAc = makeAutoCompleteInput(fv.drawingNos, analyzeResult.drawingNo || '');
+      const drawingNoCandidates = withOcrCandidate(fv.drawingNos, analyzeResult.drawingNo, rv && rv.drawingNo);
+      const drawingNoAc = makeAutoCompleteInput(drawingNoCandidates, initialValue(rv && rv.drawingNo, analyzeResult.drawingNo));
       drawingNoInput = drawingNoAc.input;
       drawingNoInput.placeholder = '図番を入力（既存から選択も可）';
       drawingNoGroup.append(drawingNoLabel, drawingNoAc.element);
@@ -2391,7 +2425,8 @@
       const productNameLabel = document.createElement('label');
       productNameLabel.className = 'field-label';
       productNameLabel.textContent = '品名';
-      const productNameAc = makeAutoCompleteInput(fv.productNames, analyzeResult.productName || '');
+      const productNameCandidates = withOcrCandidate(fv.productNames, analyzeResult.productName, rv && rv.productName);
+      const productNameAc = makeAutoCompleteInput(productNameCandidates, initialValue(rv && rv.productName, analyzeResult.productName));
       productNameInput = productNameAc.input;
       productNameInput.placeholder = '品名を入力（既存から選択も可）';
       productNameGroup.append(productNameLabel, productNameAc.element);
@@ -2403,7 +2438,8 @@
       const materialLabel = document.createElement('label');
       materialLabel.className = 'field-label';
       materialLabel.textContent = '材質';
-      const materialAc = makeAutoCompleteInput(fv.materials, analyzeResult.material || '');
+      const materialCandidates = withOcrCandidate(fv.materials, analyzeResult.material, rv && rv.material);
+      const materialAc = makeAutoCompleteInput(materialCandidates, initialValue(rv && rv.material, analyzeResult.material));
       materialInput = materialAc.input;
       materialInput.placeholder = '例: SPCC, SUS304, S45C';
       materialGroup.append(materialLabel, materialAc.element);
@@ -2415,7 +2451,8 @@
       const dimensionLabel = document.createElement('label');
       dimensionLabel.className = 'field-label';
       dimensionLabel.textContent = '寸法 (板厚 / 外径)';
-      const dimensionAc = makeAutoCompleteInput(fv.dimensions, analyzeResult.dimension || '');
+      const dimensionCandidates = withOcrCandidate(fv.dimensions, analyzeResult.dimension, rv && rv.dimension);
+      const dimensionAc = makeAutoCompleteInput(dimensionCandidates, initialValue(rv && rv.dimension, analyzeResult.dimension));
       dimensionInput = dimensionAc.input;
       dimensionInput.placeholder = '例: t1.6, φ28.6';
       dimensionGroup.append(dimensionLabel, dimensionAc.element);
@@ -2430,21 +2467,25 @@
         formPanel.appendChild(shapeCommentEl);
       }
 
-      // 加工方法 autocomplete
+      // 加工方法 autocomplete（更新時は既存レコードの加工方法を初期値にする。空始まりだと
+      // 差し替え保存で既存の加工方法が消えてしまうため）
       let getProcessValues = () => [];
       {
-        const { element, getValues } = makeAutoChipsField('加工方法', [...processOptions], false);
+        const { element, getValues } = makeAutoChipsField('加工方法', [...processOptions], false, rv ? [...rv.processes] : []);
         formPanel.appendChild(element);
         getProcessValues = getValues;
       }
 
       // タグ（ユーザータグ + AI形状タグの提案を同じ欄に表示、色で区別）
+      // 更新時は既存レコードのタグを初期値にする（同上の理由）。AI形状タグは
+      // レコードに保存済みのタグと今回のOCR新提案をマージ・重複排除して表示する。
       const shapeTagSuggestions = Array.isArray(analyzeResult.extracted && analyzeResult.extracted.shapeTags)
         ? analyzeResult.extracted.shapeTags
         : [];
+      const initialAiTags = rv ? [...new Set([...rv.shapeTags, ...shapeTagSuggestions])] : shapeTagSuggestions;
       let getTagValues = () => ({ tags: [], shapeTags: [] });
       {
-        const { element, getValues } = makeTagChipsField('タグ', [...availableTags], [], shapeTagSuggestions);
+        const { element, getValues } = makeTagChipsField('タグ', [...availableTags], rv ? [...rv.tags] : [], initialAiTags);
         formPanel.appendChild(element);
         getTagValues = getValues;
       }
