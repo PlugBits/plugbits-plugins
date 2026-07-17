@@ -2,7 +2,7 @@
   'use strict';
 
   const PLUGIN_ID = kintone.$PLUGIN_ID;
-  const editableTextFields = ['apiBaseUrl', 'apiKey', 'tagSpaceId', 'processOptions'];
+  const editableTextFields = ['apiBaseUrl', 'apiKey', 'tagSpaceId', 'processOptions', 'resultDetailFields'];
   const textFields = [...editableTextFields, 'tenantId'];
   const selectFields = ['drawingNoField', 'productNameField', 'pdfFileField', 'materialField', 'dimensionField', 'tagField', 'shapeTagField', 'processField'];
   const fields = [...textFields, ...selectFields];

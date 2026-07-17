@@ -384,6 +384,10 @@
 
   const isDebugEnabled = (config) => config && config.showDebugInfo === 'true';
 
+  // 検索結果に表示する追加フィールド（resultDetailFields）のラベル解決に使う。
+  // モーダル表示中は1回だけ取得すればよいので _tagsCache と同様にモジュールスコープでキャッシュする。
+  let _fieldLabelsCache = null;
+
   let _tagsCache = null;
   const fetchTags = async (apiBaseUrl, tenantId, appId, apiKey) => {
     if (_tagsCache) {
@@ -1635,6 +1639,7 @@
     '.sim-link { color: var(--pb-primary-hover); font-weight: 700; text-decoration: none; font-size: 13.5px; }',
     '.sim-link:hover { text-decoration: underline; }',
     '.sim-meta { margin-top: 3px; color: var(--pb-muted); font-size: 12px; }',
+    '.sim-rank { color: var(--pb-faint); font-size: 11px; font-weight: 600; }',
     '.sim-scorebox { display: grid; min-width: 60px; justify-items: end; align-content: start; gap: 4px; }',
     '.sim-score { display: inline-flex; align-items: center; min-height: 24px; padding: 0 10px;',
     '  border-radius: 9999px; font-size: 12.5px; font-weight: 700; background: #f1f5f9; color: var(--pb-ink-2); }',
@@ -1656,11 +1661,24 @@
     '.sim-archive-badge { display: inline-flex; align-items: center; margin-top: 6px; padding: 2px 8px;',
     '  border-radius: 999px; background: var(--pb-violet-soft); color: var(--pb-violet);',
     '  font-size: 10.5px; font-weight: 700; }',
+    '.sim-drive-link { display: inline-block; margin-top: 4px; color: var(--pb-primary-hover);',
+    '  font-size: 12px; text-decoration: none; }',
+    '.sim-drive-link:hover { text-decoration: underline; }',
+    // ---- 検索結果に表示するkintone業務フィールド（設定の resultDetailFields） ----
+    '.sim-detail-fields { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; font-size: 12px; }',
+    '.sim-detail-fields:empty { display: none; margin-top: 0; }',
+    '.sim-detail-field { display: flex; gap: 6px; }',
+    '.sim-detail-label { color: var(--pb-faint); flex-shrink: 0; }',
+    '.sim-detail-value { color: var(--pb-ink-2); font-weight: 600; }',
+    // ---- 一括アクションボタン（アーカイブサムネイル一括取得・残りプレビュー一括表示） ----
+    '.sim-actions-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }',
     // ---- hero cards ----
     '.sim-hero-grid { display: flex; flex-direction: column; gap: 14px; margin-bottom: 18px; }',
     '.sim-hero-card { display: flex; flex-direction: column; padding: 12px; border: 1px solid var(--pb-line);',
     '  border-radius: 14px; background: #fff; transition: border-color .15s, box-shadow .15s; }',
     '.sim-hero-card:hover { border-color: var(--pb-line-2); box-shadow: 0 6px 20px rgba(15,23,42,.08); }',
+    '.sim-hero-card-clickable { cursor: pointer; }',
+    '.sim-hero-card-clickable:hover { border-color: var(--pb-primary); box-shadow: 0 6px 20px rgba(15,23,42,.08); }',
     // 図面シートは横長（landscape）が多いため、縦に長すぎる箱を避けてアスペクト比で
     // サイズを決める。object-fit:containの余白（レターボックス）を最小限にするため。
     '.sim-hero-thumb { position: relative; width: 100%; aspect-ratio: 3 / 2; height: auto; max-height: 70vh; display: flex;',
@@ -1673,8 +1691,11 @@
     '  backdrop-filter: blur(2px); }',
     '.sim-hero-score.band-high { background: rgba(5,150,105,.92); }',
     '.sim-hero-score.band-mid { background: rgba(180,83,9,.92); }',
+    '.sim-hero-rank { position: absolute; top: 10px; left: 10px; padding: 4px 11px; border-radius: 9999px;',
+    '  background: rgba(15,23,42,.82); color: #fff; font-size: 12px; font-weight: 700;',
+    '  backdrop-filter: blur(2px); }',
     '.sim-hero-link { display: inline-block; margin-top: 10px; color: var(--pb-primary-hover);',
-    '  font-weight: 700; font-size: 14px; text-decoration: none; }',
+    '  font-weight: 700; font-size: 16px; text-decoration: none; }',
     '.sim-hero-link:hover { text-decoration: underline; }',
     '.sim-hero-meta { margin-top: 2px; color: var(--pb-muted); font-size: 12px; }',
     '.sim-shape-comment { margin-top: 4px; color: var(--pb-violet); font-size: 11px; font-style: italic; }',
@@ -2721,9 +2742,130 @@
     return badge;
   };
 
+  // アーカイブ結果に driveFileId があれば、Googleドライブで直接開けるリンクを返す（無ければ null）。
+  const buildDriveLink = (item) => {
+    if (!item.driveFileId) return null;
+    const driveLink = document.createElement('a');
+    driveLink.className = 'sim-drive-link';
+    driveLink.href = 'https://drive.google.com/file/d/' + encodeURIComponent(item.driveFileId) + '/view' +
+      (item.driveResourceKey ? '?resourcekey=' + encodeURIComponent(item.driveResourceKey) : '');
+    driveLink.target = '_blank';
+    driveLink.rel = 'noopener';
+    driveLink.textContent = 'Google Driveで開く ↗';
+    return driveLink;
+  };
+
+  // 追加フィールド（resultDetailFields）の「ラベル: 値」表示を container に描画する。
+  const renderDetailFieldsInto = (container, fields) => {
+    container.textContent = '';
+    fields.forEach((field) => {
+      const row = document.createElement('div');
+      row.className = 'sim-detail-field';
+      const label = document.createElement('span');
+      label.className = 'sim-detail-label';
+      label.textContent = field.label + ':';
+      const value = document.createElement('span');
+      value.className = 'sim-detail-value';
+      value.textContent = field.value;
+      row.append(label, value);
+      container.appendChild(row);
+    });
+  };
+
+  // kintone結果のカード/行に「追加フィールド」表示枠を作る。detailFieldsMap に取得済みデータが
+  // あれば生成時点で即描画し、無ければ空のまま返す（loadResultDetailFields の完了後に後追いで埋める）。
+  const buildDetailFieldsSlot = (item, detailFieldsMap) => {
+    const slot = document.createElement('div');
+    slot.className = 'sim-detail-fields';
+    slot.dataset.recordId = String(item.recordId);
+    const fields = detailFieldsMap && detailFieldsMap.get(String(item.recordId));
+    if (fields && fields.length) renderDetailFieldsInto(slot, fields);
+    return slot;
+  };
+
+  // レコードのフィールド値を表示用文字列に変換する。
+  // 配列（チェックボックス等）は join、{name}配列（ユーザー選択等）は name を join。
+  // 添付ファイル等の複雑な型は空文字を返して呼び出し側でスキップさせる。
+  const extractFieldDisplayValue = (fieldValue) => {
+    if (!fieldValue) return '';
+    const value = fieldValue.value;
+    if (value === null || value === undefined || value === '') return '';
+    if (Array.isArray(value)) {
+      return value
+        .map((entry) => (entry && typeof entry === 'object') ? (entry.name || entry.code || '') : String(entry))
+        .filter(Boolean)
+        .join(', ');
+    }
+    if (typeof value === 'object') return '';
+    return String(value);
+  };
+
+  // フィールドラベル（コード→表示名）をアプリのフォーム設定から取得し、モーダル表示中はキャッシュする。
+  const fetchFieldLabels = async () => {
+    if (_fieldLabelsCache) return _fieldLabelsCache;
+    try {
+      const resp = await kintone.api(kintone.api.url('/k/v1/app/form/fields', true), 'GET', { app: kintone.app.getId() });
+      _fieldLabelsCache = (resp && resp.properties) || {};
+    } catch (error) {
+      console.warn('フィールドラベルの取得に失敗しました', error);
+      _fieldLabelsCache = {};
+    }
+    return _fieldLabelsCache;
+  };
+
+  // config.resultDetailFields（カンマ区切りのフィールドコード）が設定されていれば、
+  // 表示中の kintone 結果（アーカイブ以外）のレコードをバッチ取得して各カード/行に追記する。
+  // 失敗しても検索結果自体には影響させない（console.warnのみ）。
+  const loadResultDetailFields = async (listEl, results, config, detailFieldsMap) => {
+    const fieldCodes = parseOptionsList(config && config.resultDetailFields);
+    if (!fieldCodes.length) return;
+
+    const ids = [...new Set(
+      results
+        .filter((item) => item.docType !== 'archive' && item.recordId)
+        .map((item) => String(item.recordId))
+    )];
+    if (!ids.length) return;
+
+    try {
+      const [labelProps, recordsResp] = await Promise.all([
+        fetchFieldLabels(),
+        kintone.api(kintone.api.url('/k/v1/records', true), 'GET', {
+          app: kintone.app.getId(),
+          query: '$id in (' + ids.join(',') + ')',
+          fields: ['$id', ...fieldCodes]
+        })
+      ]);
+
+      const slots = listEl.querySelectorAll('.sim-detail-fields[data-record-id]');
+      (recordsResp.records || []).forEach((record) => {
+        const recordId = record.$id && record.$id.value;
+        if (!recordId) return;
+        const fields = fieldCodes
+          .map((code) => {
+            const display = extractFieldDisplayValue(record[code]);
+            if (!display) return null;
+            const label = (labelProps[code] && labelProps[code].label) || code;
+            return { label, value: display };
+          })
+          .filter(Boolean);
+        if (!fields.length) return;
+
+        detailFieldsMap.set(String(recordId), fields);
+        slots.forEach((slot) => {
+          if (slot.dataset.recordId === String(recordId)) renderDetailFieldsInto(slot, fields);
+        });
+      });
+    } catch (error) {
+      console.warn('検索結果への追加フィールド表示に失敗しました', error);
+    }
+  };
+
   // autoLoad: kintone登録図面のサムネイルを即時取得するか（false時は「プレビュー取得」ボタンを出す）。
   // アーカイブ（Google Drive由来）はまとめて読み込むボタンを別途出すため、ここでは常に未取得状態で始める。
-  const buildHeroCard = (item, apiBaseUrl, debug, autoLoad = true) => {
+  // rank: 検索結果内の順位（1始まり）。表示専用でAPIリクエストには影響しない。
+  // detailFieldsMap: recordId(string)→[{label,value}] の取得済みキャッシュ（renderSimilarList参照）。
+  const buildHeroCard = (item, apiBaseUrl, debug, autoLoad = true, rank, detailFieldsMap) => {
     const card = document.createElement('div');
     card.className = 'sim-hero-card';
     const isArchive = item.docType === 'archive';
@@ -2746,6 +2888,13 @@
     scoreBadge.textContent = formatPercent(item.score);
     thumbBox.appendChild(scoreBadge);
 
+    if (rank) {
+      const rankBadge = document.createElement('div');
+      rankBadge.className = 'sim-hero-rank';
+      rankBadge.textContent = rank + '位';
+      thumbBox.appendChild(rankBadge);
+    }
+
     const link = document.createElement(isArchive ? 'span' : 'a');
     link.className = 'sim-hero-link';
     if (!isArchive) {
@@ -2765,7 +2914,13 @@
 
     card.append(thumbBox, link, meta);
 
-    if (isArchive) card.appendChild(buildArchiveBadge());
+    if (isArchive) {
+      card.appendChild(buildArchiveBadge());
+      const driveLink = buildDriveLink(item);
+      if (driveLink) card.appendChild(driveLink);
+    } else {
+      card.appendChild(buildDetailFieldsSlot(item, detailFieldsMap));
+    }
 
     const reasonsEl = buildReasonBadges(item.reasons);
     if (reasonsEl) card.appendChild(reasonsEl);
@@ -2775,13 +2930,24 @@
 
     if (debug) card.appendChild(buildDebugDetails(item));
 
+    // kintone登録図面はカード全体クリックでレコードを新規タブで開く。
+    // ただし既存のリンク・ボタン・詳細summaryのクリックは二重発火を防ぐため素通りさせる。
+    if (!isArchive) {
+      card.classList.add('sim-hero-card-clickable');
+      card.addEventListener('click', (e) => {
+        if (e.target.closest('a,button,summary')) return;
+        window.open(link.href, '_blank', 'noopener');
+      });
+    }
+
     return card;
   };
 
   // 上位3件より下位の結果は、まずこの小さい行で表示する（プレビュー未取得の暫定表示）。
   // kintone登録図面は「プレビュー取得」クリックで、アーカイブは一括読み込みボタン経由で、
   // その結果1件だけ buildHeroCard の大きいカードに差し替わる（expandToHeroCard参照）。
-  const buildResultRow = (item, apiBaseUrl, debug) => {
+  // rank/detailFieldsMap は buildHeroCard と同じ意味（プレビュー取得でカードに展開する際にそのまま引き継ぐ）。
+  const buildResultRow = (item, apiBaseUrl, debug, rank, detailFieldsMap) => {
     const row = document.createElement('div');
     row.className = 'sim-item';
     const isArchive = item.docType === 'archive';
@@ -2801,7 +2967,7 @@
       loadBtn.className = 'sim-thumb-load';
       loadBtn.textContent = 'プレビュー取得';
       loadBtn.addEventListener('click', () => {
-        row.replaceWith(buildHeroCard(item, apiBaseUrl, debug, true));
+        row.replaceWith(buildHeroCard(item, apiBaseUrl, debug, true, rank, detailFieldsMap));
       });
       thumbBox.appendChild(loadBtn);
     }
@@ -2826,7 +2992,13 @@
 
     body.append(link, meta);
 
-    if (isArchive) body.appendChild(buildArchiveBadge());
+    if (isArchive) {
+      body.appendChild(buildArchiveBadge());
+      const driveLink = buildDriveLink(item);
+      if (driveLink) body.appendChild(driveLink);
+    } else {
+      body.appendChild(buildDetailFieldsSlot(item, detailFieldsMap));
+    }
 
     const reasonsEl = buildReasonBadges(item.reasons);
     if (reasonsEl) body.appendChild(reasonsEl);
@@ -2836,6 +3008,12 @@
 
     const scoreBox = document.createElement('div');
     scoreBox.className = 'sim-scorebox';
+    if (rank) {
+      const rankLabel = document.createElement('div');
+      rankLabel.className = 'sim-rank';
+      rankLabel.textContent = rank + '位';
+      scoreBox.appendChild(rankLabel);
+    }
     const score = document.createElement('div');
     score.className = 'sim-score ' + scoreBandClass(item.score);
     score.textContent = formatPercent(item.score);
@@ -2886,7 +3064,7 @@
     return empty;
   };
 
-  // options: { debug: 内訳等の開発者向け表示, emptyActions: 0件時に出すボタン配列 }
+  // options: { debug: 内訳等の開発者向け表示, emptyActions: 0件時に出すボタン配列, config: プラグイン設定 }
   const renderSimilarList = (listEl, statusEl, confidenceEl, data, apiBaseUrl, options = {}) => {
     const results = Array.isArray(data && data.results) ? data.results : [];
     listEl.textContent = '';
@@ -2900,6 +3078,9 @@
 
     statusEl.textContent = results.length + '件の候補が見つかりました。';
 
+    // 表示順: ①低確度の注意書き（最上部固定）→②一括アクションボタン群→③結果グリッド
+    // （末尾の「さらに表示」は runSimilarSearch 側で listEl に追加する）。
+
     // 確度が低いときは注意書きを添える
     const level = data && data.matchConfidence && data.matchConfidence.level;
     if (level === 'low') {
@@ -2909,6 +3090,10 @@
       listEl.appendChild(note);
     }
 
+    // kintone結果（アーカイブ以外）の追加フィールド表示に使う取得済みキャッシュ。
+    // buildHeroCard/buildResultRow に共有参照として渡し、行→カード展開後も表示が消えないようにする。
+    const detailFieldsMap = new Map();
+
     // 上位 THUMBNAIL_AUTO_COUNT 件は大きいカード＋サムネイル自動取得、それより下位は
     // 小さい行で暫定表示する（プレビュー取得/一括取得のトリガーで、その1件だけ大きい
     // カードに差し替わる＝expand）。未取得のまま全件を大きくすると縦に長くなりすぎるため。
@@ -2917,19 +3102,23 @@
     // アーカイブ結果の現在の要素（行 or カード）を保持し、一括取得ボタンから
     // 差し替え・サムネイル取得先の特定に使う。
     const archiveTargets = [];
+    // 上位3件より下位の kintone結果（アーカイブ以外）の行を保持し、「残りのプレビューを表示」
+    // ボタンから一括でカードに展開するのに使う。
+    const kintoneRowTargets = [];
     results.forEach((item, index) => {
       const isArchive = item.docType === 'archive';
+      const rank = index + 1;
       const autoLoad = index < THUMBNAIL_AUTO_COUNT;
       let el = autoLoad
-        ? buildHeroCard(item, apiBaseUrl, options.debug, true)
-        : buildResultRow(item, apiBaseUrl, options.debug);
+        ? buildHeroCard(item, apiBaseUrl, options.debug, true, rank, detailFieldsMap)
+        : buildResultRow(item, apiBaseUrl, options.debug, rank, detailFieldsMap);
       heroGrid.appendChild(el);
 
       if (isArchive && item.driveFileId) {
         archiveTargets.push({
           getThumbBox: () => {
             if (el.classList.contains('sim-item')) {
-              const heroCard = buildHeroCard(item, apiBaseUrl, options.debug, true);
+              const heroCard = buildHeroCard(item, apiBaseUrl, options.debug, true, rank, detailFieldsMap);
               el.replaceWith(heroCard);
               el = heroCard;
             }
@@ -2937,21 +3126,59 @@
           }
         });
       }
-    });
-    listEl.appendChild(heroGrid);
 
-    // Google Drive由来のアーカイブ結果が1件でもあれば、まとめてサムネイル取得できる
-    // ボタンを出す（自動取得はしない。都度Google認証が走ると体感が悪化するため）。
+      if (!isArchive && !autoLoad) {
+        kintoneRowTargets.push({
+          expand: () => {
+            if (el.classList.contains('sim-item')) {
+              const heroCard = buildHeroCard(item, apiBaseUrl, options.debug, true, rank, detailFieldsMap);
+              el.replaceWith(heroCard);
+              el = heroCard;
+            }
+          }
+        });
+      }
+    });
+
+    // Google Drive由来のアーカイブ結果や、下位のkintone結果が1件でもあれば一括操作ボタンを出す。
+    // 2つとも出る場合は横並びにする。
+    const actionButtons = [];
     if (archiveTargets.length) {
       const loadBtn = document.createElement('button');
       loadBtn.type = 'button';
       loadBtn.className = 'btn-secondary';
-      loadBtn.style.cssText = 'margin-bottom:12px;';
       loadBtn.textContent = '🔓 Googleドライブのサムネイルを表示（' + archiveTargets.length + '件）';
       loadBtn.addEventListener('click', () => loadArchiveDriveThumbnails(archiveTargets, apiBaseUrl, loadBtn, options.config || {}, options.trackObjectUrl));
-      listEl.insertBefore(loadBtn, listEl.firstChild);
+      actionButtons.push(loadBtn);
+    }
+    if (kintoneRowTargets.length) {
+      const expandBtn = document.createElement('button');
+      expandBtn.type = 'button';
+      expandBtn.className = 'btn-secondary';
+      expandBtn.textContent = '残りのプレビューを表示（' + kintoneRowTargets.length + '件）';
+      expandBtn.addEventListener('click', () => {
+        kintoneRowTargets.forEach((target) => target.expand());
+        expandBtn.remove();
+      });
+      actionButtons.push(expandBtn);
+    }
+    if (actionButtons.length) {
+      const actionsRow = document.createElement('div');
+      actionsRow.className = 'sim-actions-row';
+      actionButtons.forEach((btn) => actionsRow.appendChild(btn));
+      listEl.appendChild(actionsRow);
+    }
+
+    listEl.appendChild(heroGrid);
+
+    // resultDetailFields が設定されていれば、表示中のkintone結果へ非同期で追加フィールドを追記する。
+    if (options.config) {
+      loadResultDetailFields(listEl, results, options.config, detailFieldsMap);
     }
   };
+
+  // 一括サムネイル取得の並列度。Google Drive/APIへの同時リクエスト数を抑えつつ体感を速くする。
+  const ARCHIVE_THUMB_CONCURRENCY = 3;
 
   // Google連携ポップアップ（トークンのみ）→ 対象PDFをDriveから取得 → /render-thumbnail でPNG化、
   // という流れで、表示中のアーカイブ結果のサムネイルをまとめて置き換える。何も永続化しない。
@@ -2968,11 +3195,15 @@
       return;
     }
 
-    triggerBtn.textContent = 'サムネイルを読み込み中... 0 / ' + targets.length;
+    // getThumbBox() は行→カード展開のDOM置換を伴うため、まず全件分を直列に済ませてから
+    // 箱の配列を確定し、fetch部分だけを並列化する（DOM置換自体の競合を避けるため）。
+    const boxes = targets.map((target) => target.getThumbBox());
+
+    triggerBtn.textContent = 'サムネイルを読み込み中... 0 / ' + boxes.length;
     let done = 0;
     let failed = 0;
-    for (const target of targets) {
-      const box = target.getThumbBox();
+
+    const loadOne = async (box) => {
       const fileId = box.dataset.driveFileId;
       const resourceKey = box.dataset.driveResourceKey || '';
       box.textContent = '';
@@ -3000,8 +3231,21 @@
         box.textContent = '📁';
       }
       done += 1;
-      triggerBtn.textContent = 'サムネイルを読み込み中... ' + done + ' / ' + targets.length;
-    }
+      triggerBtn.textContent = 'サムネイルを読み込み中... ' + done + ' / ' + boxes.length;
+    };
+
+    // 共有インデックスを複数ワーカーが消費するシンプルなワーカープール（並列度3）。
+    let nextIndex = 0;
+    const runWorker = async () => {
+      while (nextIndex < boxes.length) {
+        const box = boxes[nextIndex];
+        nextIndex += 1;
+        await loadOne(box);
+      }
+    };
+    const workerCount = Math.min(ARCHIVE_THUMB_CONCURRENCY, boxes.length) || 1;
+    await Promise.all(Array.from({ length: workerCount }, runWorker));
+
     triggerBtn.textContent = failed
       ? '読み込み完了（' + failed + '件失敗）'
       : 'サムネイル読み込み済み';
@@ -3048,6 +3292,22 @@
           debug: isDebugEnabled(config),
           emptyActions: emptyActions ? emptyActions() : undefined
         });
+
+        // 件数が limit に達しているときだけ「さらに表示」を出す（＝もっとある可能性がある場合）。
+        // 未達なら、それ以上の候補は存在しないということなので出さない。
+        const results = Array.isArray(data && data.results) ? data.results : [];
+        if (payload.limit && results.length >= payload.limit) {
+          const moreBtn = document.createElement('button');
+          moreBtn.type = 'button';
+          moreBtn.className = 'btn-secondary';
+          moreBtn.style.cssText = 'margin-top:12px;';
+          moreBtn.textContent = 'さらに表示（+10件）';
+          moreBtn.addEventListener('click', () => {
+            payload.limit += 10;
+            runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl });
+          });
+          listEl.appendChild(moreBtn);
+        }
       })
       .catch((error) => {
         stopStatus();
