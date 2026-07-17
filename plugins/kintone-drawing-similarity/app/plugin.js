@@ -585,9 +585,12 @@
   const THUMBNAIL_AUTO_COUNT = 3;
 
   // 一覧では上位3件だけ自動でサムネイルを取得し、残りはボタンを押したときだけ取得する。
-  // サムネイルはAPI側で都度レンダリングするだけでどこにも保存されない（kintoneが正本のまま）。
-  // thumbToken: 認証有効時に /thumbnail が要求する HMAC トークン（/similar の結果に同梱）
-  const loadThumbnail = (thumbBox, apiBaseUrl, fileKey, thumbToken) => {
+  // サムネイルはブラウザのkintoneセッションでファイルを取得し、/render-thumbnail で
+  // PNG化するだけでどこにも保存されない（kintoneが正本のまま）。サーバー側のkintone
+  // 接続は不要（/thumbnail は旧プラグイン互換のため残るが、新プラグインは使わない）。
+  // config: apiKeyHeader に渡すプラグイン設定。trackObjectUrl: 発行したblob URLを
+  // モーダルclose時に解放するための追跡関数（呼び出し側は必ず渡すこと）。
+  const loadThumbnail = async (thumbBox, apiBaseUrl, fileKey, config, trackObjectUrl) => {
     if (!apiBaseUrl || !fileKey) {
       thumbBox.textContent = '画像なし';
       return;
@@ -598,14 +601,7 @@
     skeleton.className = 'sim-skeleton';
     thumbBox.appendChild(skeleton);
 
-    const img = document.createElement('img');
-    img.className = 'sim-thumb-img';
-    img.alt = '';
-    img.addEventListener('load', () => {
-      thumbBox.textContent = '';
-      thumbBox.appendChild(img);
-    }, { once: true });
-    img.addEventListener('error', () => {
+    const showRetry = () => {
       thumbBox.textContent = '';
       const retry = document.createElement('button');
       retry.type = 'button';
@@ -613,20 +609,45 @@
       retry.textContent = '再取得';
       retry.addEventListener('click', (e) => {
         e.stopPropagation();
-        loadThumbnail(thumbBox, apiBaseUrl, fileKey, thumbToken);
+        loadThumbnail(thumbBox, apiBaseUrl, fileKey, config, trackObjectUrl);
       });
       thumbBox.appendChild(retry);
+    };
+
+    let blobUrl;
+    try {
+      const blob = await downloadKintoneFile(fileKey);
+      const pdfBase64 = await toBase64(blob);
+      const res = await fetch(apiBaseUrl + '/render-thumbnail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config && config.apiKey) },
+        body: JSON.stringify({ pdf_base64: pdfBase64 })
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      blobUrl = URL.createObjectURL(await res.blob());
+      if (trackObjectUrl) blobUrl = trackObjectUrl(blobUrl);
+    } catch {
+      showRetry();
+      return;
+    }
+
+    const img = document.createElement('img');
+    img.className = 'sim-thumb-img';
+    img.alt = '';
+    img.addEventListener('load', () => {
+      thumbBox.textContent = '';
+      thumbBox.appendChild(img);
     }, { once: true });
-    img.src = apiBaseUrl + '/thumbnail?fileKey=' + encodeURIComponent(fileKey) +
-      (thumbToken ? '&token=' + encodeURIComponent(thumbToken) : '');
+    img.addEventListener('error', showRetry, { once: true });
+    img.src = blobUrl;
   };
 
-  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad, thumbToken, boxClassName) => {
+  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad, config, trackObjectUrl, boxClassName) => {
     const thumbBox = document.createElement('div');
     thumbBox.className = boxClassName || 'sim-thumb';
 
     if (autoLoad) {
-      loadThumbnail(thumbBox, apiBaseUrl, fileKey, thumbToken);
+      loadThumbnail(thumbBox, apiBaseUrl, fileKey, config, trackObjectUrl);
       return thumbBox;
     }
 
@@ -634,7 +655,7 @@
     loadBtn.type = 'button';
     loadBtn.className = 'sim-thumb-load';
     loadBtn.textContent = 'プレビュー取得';
-    loadBtn.addEventListener('click', () => loadThumbnail(thumbBox, apiBaseUrl, fileKey, thumbToken));
+    loadBtn.addEventListener('click', () => loadThumbnail(thumbBox, apiBaseUrl, fileKey, config, trackObjectUrl));
     thumbBox.appendChild(loadBtn);
     return thumbBox;
   };
@@ -778,25 +799,41 @@
                   permanentFileName = files[0].name || permanentFileName;
                 }
               }
-              // Register similarity index in the background — do not await so navigation is not blocked
-              fetch(apiBaseUrl + '/index', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-                body: JSON.stringify({
-                  appId: pending.appId,
-                  recordId,
-                  tenantId: pending.tenantId,
-                  drawingNo: pending.drawingNo,
-                  productName: getFieldValue(record, config.productNameField) || pending.productName,
-                  material: getFieldValue(record, config.materialField) || pending.material,
-                  dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
-                  tags,
-                  shapeTags: shapeTagsForSync || '',
-                  fileKey: permanentFileKey,
-                  fileName: permanentFileName,
-                  limit: 10
-                })
-              }).catch(() => {});
+              // Register similarity index. We now await this instead of firing-and-forgetting,
+              // because the body now includes the full PDF (pdf_base64, potentially several MB)
+              // instead of just a fileKey — if navigation continues immediately after submit,
+              // the browser is much more likely to abort the in-flight upload before it
+              // completes. Awaiting just means kintone keeps showing its own "saving" state a
+              // little longer (fast when the API is warm, up to roughly a minute on a cold
+              // start). If it's still interrupted or fails, the existing bulk-index flow
+              // ("un-indexed records") picks it up later.
+              try {
+                let pdfBase64;
+                if (permanentFileKey) {
+                  const blob = await downloadKintoneFile(permanentFileKey);
+                  pdfBase64 = await toBase64(blob);
+                }
+                const indexRes = await fetch(apiBaseUrl + '/index', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+                  body: JSON.stringify({
+                    appId: pending.appId,
+                    recordId,
+                    tenantId: pending.tenantId,
+                    drawingNo: pending.drawingNo,
+                    productName: getFieldValue(record, config.productNameField) || pending.productName,
+                    material: getFieldValue(record, config.materialField) || pending.material,
+                    dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
+                    tags,
+                    shapeTags: shapeTagsForSync || '',
+                    fileKey: permanentFileKey,
+                    fileName: permanentFileName,
+                    ...(pdfBase64 !== undefined ? { pdf_base64: pdfBase64 } : {}),
+                    limit: 10
+                  })
+                });
+                await indexRes.json().catch(() => ({}));
+              } catch { /* 一括図面登録（未登録を登録）で拾える */ }
               return event;
             };
             return doPostSave().catch(() => event);
@@ -1103,6 +1140,8 @@
       };
 
       try {
+        const blob = await downloadKintoneFile(file.fileKey);
+        payload.pdf_base64 = await toBase64(blob);
         const response = await fetch(apiBaseUrl + '/index', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
@@ -2666,7 +2705,10 @@
 
       // 検索インデックス登録は時間がかかる（コールドスタート時は1分弱）ので
       // モーダルをブロックせずバックグラウンドで実行し、完了画面上で状態を反映する。
-      const indexPromise = fetch(apiBaseUrl + '/index', {
+      // pdf_base64 はブラウザのkintoneセッションで取得済みの file をそのまま
+      // 送る（サーバー側のkintone接続を不要にするため）。fileKey/fileName は
+      // 整合性チェック（/index-status）用に従来通り送る。
+      const indexPromise = toBase64(file).then((pdfBase64) => fetch(apiBaseUrl + '/index', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
         body: JSON.stringify({
@@ -2681,9 +2723,10 @@
           shapeTags: shapeTags.join(','),
           fileKey: indexFileKey,
           fileName: indexFileName,
+          pdf_base64: pdfBase64,
           limit: 10
         })
-      }).then(async (indexRes) => {
+      })).then(async (indexRes) => {
         const data = await indexRes.json().catch(() => ({}));
         if (!indexRes.ok) {
           throw new Error(describeApiError(indexRes.status, data.error));
@@ -2877,11 +2920,15 @@
     }
   };
 
-  // autoLoad: kintone登録図面のサムネイルを即時取得するか（false時は「プレビュー取得」ボタンを出す）。
-  // アーカイブ（Google Drive由来）はまとめて読み込むボタンを別途出すため、ここでは常に未取得状態で始める。
-  // rank: 検索結果内の順位（1始まり）。表示専用でAPIリクエストには影響しない。
-  // detailFieldsMap: recordId(string)→[{label,value}] の取得済みキャッシュ（renderSimilarList参照）。
-  const buildHeroCard = (item, apiBaseUrl, debug, autoLoad = true, rank, detailFieldsMap) => {
+  // options:
+  //   debug: 内訳等の開発者向け表示
+  //   autoLoad: kintone登録図面のサムネイルを即時取得するか（false時は「プレビュー取得」ボタンを出す）。
+  //     アーカイブ（Google Drive由来）はまとめて読み込むボタンを別途出すため、ここでは常に未取得状態で始める。
+  //   rank: 検索結果内の順位（1始まり）。表示専用でAPIリクエストには影響しない。
+  //   detailFieldsMap: recordId(string)→[{label,value}] の取得済みキャッシュ（renderSimilarList参照）。
+  //   config/trackObjectUrl: サムネイル取得（loadThumbnail）に必要なプラグイン設定とblob URL追跡関数。
+  const buildHeroCard = (item, apiBaseUrl, options = {}) => {
+    const { debug, autoLoad = true, rank, detailFieldsMap, config, trackObjectUrl } = options;
     const card = document.createElement('div');
     card.className = 'sim-hero-card';
     const isArchive = item.docType === 'archive';
@@ -2896,7 +2943,7 @@
         thumbBox.dataset.driveResourceKey = item.driveResourceKey || '';
       }
     } else {
-      thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, autoLoad, item.thumbToken, 'sim-hero-thumb');
+      thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, autoLoad, config, trackObjectUrl, 'sim-hero-thumb');
     }
 
     const scoreBadge = document.createElement('div');
@@ -2962,8 +3009,9 @@
   // 上位3件より下位の結果は、まずこの小さい行で表示する（プレビュー未取得の暫定表示）。
   // kintone登録図面は「プレビュー取得」クリックで、アーカイブは一括読み込みボタン経由で、
   // その結果1件だけ buildHeroCard の大きいカードに差し替わる（expandToHeroCard参照）。
-  // rank/detailFieldsMap は buildHeroCard と同じ意味（プレビュー取得でカードに展開する際にそのまま引き継ぐ）。
-  const buildResultRow = (item, apiBaseUrl, debug, rank, detailFieldsMap) => {
+  // options は buildHeroCard と同じ意味（プレビュー取得でカードに展開する際にそのまま引き継ぐ）。
+  const buildResultRow = (item, apiBaseUrl, options = {}) => {
+    const { debug, rank, detailFieldsMap, config, trackObjectUrl } = options;
     const row = document.createElement('div');
     row.className = 'sim-item';
     const isArchive = item.docType === 'archive';
@@ -2983,7 +3031,7 @@
       loadBtn.className = 'sim-thumb-load';
       loadBtn.textContent = 'プレビュー取得';
       loadBtn.addEventListener('click', () => {
-        row.replaceWith(buildHeroCard(item, apiBaseUrl, debug, true, rank, detailFieldsMap));
+        row.replaceWith(buildHeroCard(item, apiBaseUrl, { debug, autoLoad: true, rank, detailFieldsMap, config, trackObjectUrl }));
       });
       thumbBox.appendChild(loadBtn);
     }
@@ -3125,16 +3173,22 @@
       const isArchive = item.docType === 'archive';
       const rank = index + 1;
       const autoLoad = index < THUMBNAIL_AUTO_COUNT;
+      // buildHeroCard/buildResultRow に共通で渡すオプション（config/trackObjectUrl は
+      // サムネイル取得=loadThumbnail に必要）。
+      const cardOptions = {
+        debug: options.debug, rank, detailFieldsMap,
+        config: options.config, trackObjectUrl: options.trackObjectUrl
+      };
       let el = autoLoad
-        ? buildHeroCard(item, apiBaseUrl, options.debug, true, rank, detailFieldsMap)
-        : buildResultRow(item, apiBaseUrl, options.debug, rank, detailFieldsMap);
+        ? buildHeroCard(item, apiBaseUrl, { ...cardOptions, autoLoad: true })
+        : buildResultRow(item, apiBaseUrl, cardOptions);
       heroGrid.appendChild(el);
 
       if (isArchive && item.driveFileId) {
         archiveTargets.push({
           getThumbBox: () => {
             if (el.classList.contains('sim-item')) {
-              const heroCard = buildHeroCard(item, apiBaseUrl, options.debug, true, rank, detailFieldsMap);
+              const heroCard = buildHeroCard(item, apiBaseUrl, { ...cardOptions, autoLoad: true });
               el.replaceWith(heroCard);
               el = heroCard;
             }
@@ -3147,7 +3201,7 @@
         kintoneRowTargets.push({
           expand: () => {
             if (el.classList.contains('sim-item')) {
-              const heroCard = buildHeroCard(item, apiBaseUrl, options.debug, true, rank, detailFieldsMap);
+              const heroCard = buildHeroCard(item, apiBaseUrl, { ...cardOptions, autoLoad: true });
               el.replaceWith(heroCard);
               el = heroCard;
             }

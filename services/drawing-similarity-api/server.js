@@ -3003,12 +3003,37 @@ const server = createServer(async (request, response) => {
         throw createStepError('fileKey is required', step, 400);
       }
 
-      step = 'fetch_kintone_file';
-      indexLog('fetch kintone file start', { recordId: body.recordId });
-      const pdfBuffer = await fetchKintoneFile(body.fileKey).catch((error) => {
-        throw attachStep(error, step);
-      });
-      indexLog('fetch kintone file done', { bytes: pdfBuffer.length });
+      // pdf_base64 があればプラグインがブラウザのkintoneセッションで取得したバイト列を
+      // そのまま使い、サーバー側からのkintone接続はスキップする（テナント追加が
+      // APIキー発行のみで完結するようにするため）。fileKey は引き続き必須で受け取り、
+      // Qdrant payload の file_key に保存する（/index-status の整合性チェックが
+      // file_key 比較で「要更新」を検知する仕組みは不変）。
+      // pdf_base64 が無い場合は旧プラグイン（クライアント取得非対応）互換のため
+      // サーバー側の kintone 接続で取得する。
+      let pdfBuffer;
+      if (body.pdf_base64) {
+        step = 'decode_pdf_base64';
+        indexLog('decode pdf_base64 start', { recordId: body.recordId });
+        pdfBuffer = Buffer.from(String(body.pdf_base64), 'base64');
+        if (!pdfBuffer.length) {
+          throw createStepError('Empty PDF content', step, 400);
+        }
+        indexLog('decode pdf_base64 done', { bytes: pdfBuffer.length });
+      } else {
+        step = 'fetch_kintone_file';
+        if (!kintoneBaseUrl || !kintoneApiToken) {
+          throw createStepError(
+            'pdf_base64 is required when kintone connection is not configured',
+            step,
+            400
+          );
+        }
+        indexLog('fetch kintone file start', { recordId: body.recordId });
+        pdfBuffer = await fetchKintoneFile(body.fileKey).catch((error) => {
+          throw attachStep(error, step);
+        });
+        indexLog('fetch kintone file done', { bytes: pdfBuffer.length });
+      }
 
       step = 'pdf_render';
       indexLog('pdf render start', { bytes: pdfBuffer.length, dpi: renderDpi });
