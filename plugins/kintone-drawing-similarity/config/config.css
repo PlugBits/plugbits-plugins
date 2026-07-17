@@ -278,6 +278,27 @@
   font-size: 12px;
 }
 
+/* --- Advanced settings (collapsible) --- */
+.pb-advanced {
+  margin-bottom: 16px;
+}
+
+.pb-advanced-summary {
+  color: #2563eb;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  user-select: none;
+}
+
+.pb-advanced-summary:hover {
+  text-decoration: underline;
+}
+
+.pb-advanced-body {
+  margin-top: 12px;
+}
+
 /* --- Action bar (sticky) --- */
 .pb-actions {
   position: sticky;

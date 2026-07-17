@@ -2,6 +2,11 @@
   'use strict';
 
   const PLUGIN_ID = kintone.$PLUGIN_ID;
+
+  // 既定のAPIサーバー。全テナント共通のため通常はユーザー入力不要
+  //（開発・検証時のみ「詳細設定」から上書きできる）。
+  const DEFAULT_API_BASE_URL = 'https://drawing-similarity-api-939943665629.asia-northeast1.run.app';
+
   const editableTextFields = ['apiBaseUrl', 'apiKey', 'tagSpaceId', 'processOptions', 'resultDetailFields'];
   const textFields = [...editableTextFields, 'tenantId'];
   const selectFields = ['drawingNoField', 'productNameField', 'pdfFileField', 'materialField', 'dimensionField', 'tagField', 'shapeTagField', 'processField'];
@@ -58,6 +63,23 @@
     }
   });
 
+  // API Base URL: 既定値と同じ、または未設定の場合は入力欄を空のまま表示する
+  //（placeholderで既定URLを見せる）。既定と異なる値が保存されている場合のみ
+  // その値を表示し、詳細設定を開いた状態にして上書き中であることを示す。
+  const apiBaseUrlEl = getElement('apiBaseUrl');
+  if (apiBaseUrlEl) {
+    const savedApiBaseUrl = (config.apiBaseUrl || '').trim();
+    if (savedApiBaseUrl && savedApiBaseUrl !== DEFAULT_API_BASE_URL) {
+      apiBaseUrlEl.value = savedApiBaseUrl;
+      const advancedDetails = getElement('advancedSettings');
+      if (advancedDetails) {
+        advancedDetails.open = true;
+      }
+    } else {
+      apiBaseUrlEl.value = '';
+    }
+  }
+
   getElement('tenantId').value = deriveTenantId();
 
   // 一括登録ボタンの表示トグル（既定: 表示）
@@ -88,12 +110,8 @@
   };
   if (testBtn) {
     testBtn.addEventListener('click', async () => {
-      const baseUrl = (getElement('apiBaseUrl').value || '').trim().replace(/\/+$/, '');
+      const baseUrl = ((getElement('apiBaseUrl').value || '').trim() || DEFAULT_API_BASE_URL).replace(/\/+$/, '');
       const apiKey = (getElement('apiKey').value || '').trim();
-      if (!baseUrl) {
-        setTestStatus('err', 'API Base URLを入力してください');
-        return;
-      }
       testBtn.disabled = true;
       setTestStatus('pending', '接続しています...（サーバー起動中は1分ほどかかることがあります）');
       try {
@@ -165,10 +183,9 @@
     nextConfig.showDebugInfo = getElement('showDebugInfo') && getElement('showDebugInfo').checked ? 'true' : 'false';
     nextConfig.showArchiveButton = getElement('showArchiveButton') && getElement('showArchiveButton').checked ? 'true' : 'false';
 
-    if (!nextConfig.apiBaseUrl) {
-      window.alert('API Base URLを入力してください。');
-      return;
-    }
+    // 未入力の場合は既定URLを実効値として保存する（プラグイン本体は常にURLが
+    // 入っている前提で動作するため、plugin.js側の変更は不要）。
+    nextConfig.apiBaseUrl = nextConfig.apiBaseUrl || DEFAULT_API_BASE_URL;
 
     kintone.plugin.app.setConfig(nextConfig);
   });
