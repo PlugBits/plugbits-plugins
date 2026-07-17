@@ -45,8 +45,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - name: Install poppler (pdftoppm)
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils
+      - name: Install poppler & imagemagick
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq poppler-utils imagemagick
       - name: Run server integration tests
         run: npm test
         working-directory: services/drawing-similarity-api

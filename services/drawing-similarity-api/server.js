@@ -306,7 +306,7 @@ const buildGoogleOAuthPopupHtml = () => `<!doctype html>
     statusEl.textContent = 'ファイルを選択してください...';
     gapi.load('picker', function () {
       var view = new google.picker.DocsView(google.picker.ViewId.DOCS)
-        .setMimeTypes('application/pdf')
+        .setMimeTypes('application/pdf,image/tiff')
         .setIncludeFolders(true)
         .setSelectFolderEnabled(false);
       var builder = new google.picker.PickerBuilder()
@@ -2281,15 +2281,44 @@ const runCommand = (command, args) => new Promise((resolve, reject) => {
   });
 });
 
+// 入力バッファの先頭マジックバイトから 'pdf' | 'tiff' | 'unknown' を判定する。
+// TIFFは元から画像なので、入口の変換だけ分岐すればOCR・埋め込み以降のパイプラインはPDFと共通のまま動く。
+const detectDocumentFormat = (buffer) => {
+  if (!buffer || buffer.length < 4) {
+    return 'unknown';
+  }
+  if (buffer[0] === 0x25 && buffer[1] === 0x50 && buffer[2] === 0x44 && buffer[3] === 0x46) {
+    // %PDF
+    return 'pdf';
+  }
+  if (
+    (buffer[0] === 0x49 && buffer[1] === 0x49 && buffer[2] === 0x2a && buffer[3] === 0x00) ||
+    (buffer[0] === 0x4d && buffer[1] === 0x4d && buffer[2] === 0x00 && buffer[3] === 0x2a)
+  ) {
+    // II*\0 (little-endian) or MM\0* (big-endian)
+    return 'tiff';
+  }
+  return 'unknown';
+};
+
+// PDFに加えてTIFFも受け付ける（kintone添付にTIF形式の図面があるため）。
+// TIFFはImageMagick `convert` で1ページ目のみPNG化する（dpi指定はTIFFでは無意味なので使わない）。
 const convertPdfFirstPageToPng = async (pdfBuffer, dpi = renderDpi) => {
+  const format = detectDocumentFormat(pdfBuffer);
   const workDir = await mkdtemp(join(tmpdir(), 'drawing-similarity-'));
-  const pdfPath = join(workDir, 'source.pdf');
   const outputBase = join(workDir, 'page');
   const imagePath = outputBase + '.png';
 
   try {
-    await writeFile(pdfPath, pdfBuffer);
-    await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-r', String(dpi), pdfPath, outputBase]);
+    if (format === 'tiff') {
+      const tiffPath = join(workDir, 'source.tif');
+      await writeFile(tiffPath, pdfBuffer);
+      await runCommand('convert', [tiffPath + '[0]', imagePath]);
+    } else {
+      const pdfPath = join(workDir, 'source.pdf');
+      await writeFile(pdfPath, pdfBuffer);
+      await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-r', String(dpi), pdfPath, outputBase]);
+    }
     return {
       pngBuffer: await readFile(imagePath),
       imagePath
@@ -2302,15 +2331,23 @@ const convertPdfFirstPageToPng = async (pdfBuffer, dpi = renderDpi) => {
 const thumbnailMaxWidth = Number(process.env.THUMBNAIL_MAX_WIDTH || 480);
 
 // 縮小PNGをその場でレンダリングして返すだけで、どこにも保存しない（kintoneを正本のまま保つ）。
+// PDFに加えてTIFFも受け付ける（1ページ目をImageMagick `convert` で縮小PNG化する）。
 const convertPdfFirstPageToThumbnailPng = async (pdfBuffer, maxWidth = thumbnailMaxWidth) => {
+  const format = detectDocumentFormat(pdfBuffer);
   const workDir = await mkdtemp(join(tmpdir(), 'drawing-similarity-thumb-'));
-  const pdfPath = join(workDir, 'source.pdf');
   const outputBase = join(workDir, 'thumb');
   const imagePath = outputBase + '.png';
 
   try {
-    await writeFile(pdfPath, pdfBuffer);
-    await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-scale-to-x', String(maxWidth), '-scale-to-y', '-1', pdfPath, outputBase]);
+    if (format === 'tiff') {
+      const tiffPath = join(workDir, 'source.tif');
+      await writeFile(tiffPath, pdfBuffer);
+      await runCommand('convert', [tiffPath + '[0]', '-resize', String(maxWidth) + 'x', imagePath]);
+    } else {
+      const pdfPath = join(workDir, 'source.pdf');
+      await writeFile(pdfPath, pdfBuffer);
+      await runCommand('pdftoppm', ['-f', '1', '-singlefile', '-png', '-scale-to-x', String(maxWidth), '-scale-to-y', '-1', pdfPath, outputBase]);
+    }
     return readFile(imagePath);
   } finally {
     await rm(workDir, { recursive: true, force: true });

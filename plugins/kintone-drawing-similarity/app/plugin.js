@@ -989,6 +989,10 @@
     return { records, total };
   };
 
+  // 一括登録（初回大量登録）の並列度。Cloud Runが自動スケールするため多重化で
+  // 初回大量登録の所要時間を短縮する。上げすぎるとkintoneのファイルAPI負荷が増えるため3に抑える。
+  const BULK_INDEX_CONCURRENCY = 3;
+
   // options.onlyRecordIds: 指定した recordId のみ処理（未登録のみ登録などに使用）
   const runBulkIndex = async (overlay, config, apiBaseUrl, options = {}) => {
     const cancel = { requested: false };
@@ -1064,11 +1068,10 @@
     state.processed = 0;
     updateBulkModal(overlay, state);
 
-    for (const record of records) {
-      if (cancel.requested) {
-        break;
-      }
-
+    // 1レコード分の登録処理（skip判定・fetch・成功/失敗カウント・進捗更新）。
+    // state更新はシングルスレッドのイベントループ上で行われるため複数ワーカーから
+    // 呼ばれても競合しない（updateBulkModal は全ワーカーから呼ばれても表示は壊れない）。
+    const processOneRecord = async (record) => {
       const recordId = record['$id'].value;
       const fileField = config.pdfFileField ? record[config.pdfFileField] : null;
       const files = fileField && Array.isArray(fileField.value) ? fileField.value : [];
@@ -1077,7 +1080,7 @@
         state.skip += 1;
         state.processed += 1;
         updateBulkModal(overlay, state);
-        continue;
+        return;
       }
 
       const file = files[0];
@@ -1117,7 +1120,20 @@
 
       state.processed += 1;
       updateBulkModal(overlay, state);
-    }
+    };
+
+    // 共有インデックスを複数ワーカーが消費するワーカープール（並列度 BULK_INDEX_CONCURRENCY）。
+    // cancel.requested はワーカーのwhile条件でチェックするが、実行中の1件は完走させる。
+    let nextIndex = 0;
+    const runWorker = async () => {
+      while (nextIndex < records.length && !cancel.requested) {
+        const record = records[nextIndex];
+        nextIndex += 1;
+        await processOneRecord(record);
+      }
+    };
+    const workerCount = Math.min(BULK_INDEX_CONCURRENCY, records.length) || 1;
+    await Promise.all(Array.from({ length: workerCount }, runWorker));
 
     state.phase = cancel.requested ? 'cancelled' : 'done';
     updateBulkModal(overlay, state);
@@ -1360,7 +1376,7 @@
     subEl.textContent = 'NASやクラウド同期フォルダも通常のフォルダと同様に選択できます';
     const noteEl = document.createElement('div');
     noteEl.className = 'drop-note';
-    noteEl.textContent = '選択したフォルダ内のPDFファイルのみが対象です（原本はそのまま・kintoneには送信されません）';
+    noteEl.textContent = '選択したフォルダ内のPDF・TIFファイルが対象です（原本はそのまま・kintoneには送信されません）';
     const folderInput = document.createElement('input');
     folderInput.type = 'file';
     folderInput.webkitdirectory = true;
@@ -1406,14 +1422,14 @@
     });
 
     folderInput.addEventListener('change', () => {
-      const files = Array.from(folderInput.files || []).filter((f) => /\.pdf$/i.test(f.name));
+      const files = Array.from(folderInput.files || []).filter((f) => /\.(pdf|tiff?)$/i.test(f.name));
       selection = { source: 'local', files, accessToken: null };
       if (!files.length) {
-        statusEl.textContent = 'このフォルダにPDFファイルが見つかりませんでした。';
+        statusEl.textContent = 'このフォルダにPDF・TIFファイルが見つかりませんでした。';
         startBtn.disabled = true;
         return;
       }
-      statusEl.textContent = files.length + ' 件のPDFが見つかりました。';
+      statusEl.textContent = files.length + ' 件のPDF・TIFが見つかりました。';
       startBtn.disabled = false;
     });
 
@@ -1863,7 +1879,7 @@
       title.textContent = '図面を登録';
 
       const dropWrap = buildDropzone({
-        main: 'PDFをここにドロップ',
+        main: 'PDF / TIF をここにドロップ',
         sub: 'またはクリックしてファイルを選択',
         note: '※ OCRで図番・品名などを自動読み取りします',
         onFile: (file) => handleFile(file)
@@ -3414,7 +3430,7 @@
     subEl.textContent = sub;
     const fileInput = document.createElement('input');
     fileInput.type = 'file';
-    fileInput.accept = '.pdf,application/pdf';
+    fileInput.accept = '.pdf,.tif,.tiff,application/pdf,image/tiff';
     fileInput.className = 'file-input';
     dropWrap.append(icon, mainEl, subEl, fileInput);
     if (note) {
@@ -3426,8 +3442,8 @@
 
     const acceptFiles = (files) => {
       const file = files && files[0];
-      if (!file || !(file.type === 'application/pdf' || file.name.toLowerCase().endsWith('.pdf'))) {
-        window.alert('PDFファイルを選択してください。');
+      if (!file || !(file.type === 'application/pdf' || file.type === 'image/tiff' || /\.(pdf|tiff?)$/i.test(file.name))) {
+        window.alert('PDFまたはTIFファイルを選択してください。');
         return;
       }
       if (files.length > 1) {
@@ -3563,9 +3579,9 @@
       title.textContent = '手元の図面で類似検索';
 
       const dropWrap = buildDropzone({
-        main: 'PDFをここにドロップ',
+        main: 'PDF / TIF をここにドロップ',
         sub: 'またはクリックしてファイルを選択（kintoneには登録されません）',
-        note: '※ PDFの1ページ目を使って検索します',
+        note: '※ 図面の1ページ目を使って検索します',
         onFile: showResultsState
       });
 
