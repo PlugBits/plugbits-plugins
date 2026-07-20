@@ -125,14 +125,15 @@ const formatEndpointError = (error) => {
 // 上限なしだと巨大ボディで OOM・OCR課金の乱用が可能になる。
 const MAX_JSON_BODY_BYTES = Number(process.env.MAX_JSON_BODY_BYTES || 30 * 1024 * 1024);
 
-const readJson = async (request) => {
+// リクエストボディを Buffer として読む（JSON経路・バイナリ直送経路の共通部分）。
+// MAX_JSON_BODY_BYTES を超えたら 413 を throw する（destroy() するとレスポンスを
+// 返す前に接続が切れるので、読むのを止めて throw する。残りのボディは捨てられる）。
+const readRawBody = async (request) => {
   const chunks = [];
   let total = 0;
   for await (const chunk of request) {
     total += chunk.length;
     if (total > MAX_JSON_BODY_BYTES) {
-      // destroy() するとレスポンスを返す前に接続が切れるので、読むのを止めて
-      // 413 を throw する（残りのボディは捨てられる）。
       const error = new Error(
         'Request body too large (max ' + Math.round(MAX_JSON_BODY_BYTES / 1024 / 1024) + 'MB)'
       );
@@ -141,14 +142,24 @@ const readJson = async (request) => {
     }
     chunks.push(chunk);
   }
-  const text = Buffer.concat(chunks).toString('utf8');
-  const parsed = text ? JSON.parse(text) : {};
-  // Phase 2: 認証済みテナントの強制はここで一元適用する。各ハンドラに任せると
-  // 新規エンドポイントでの適用漏れ＝テナント越えの温床になる。
+  return Buffer.concat(chunks);
+};
+
+// Phase 2: 認証済みテナントの強制はここで一元適用する。各ハンドラ・各ボディ形式
+// （JSON / バイナリ直送の x-index-meta 等）に任せると、新規エンドポイントや
+// 新しいボディ形式での適用漏れ＝テナント越えの温床になる。
+const applyForcedTenant = (request, parsed) => {
   if (request._forcedTenantId) {
     parsed.tenantId = request._forcedTenantId;
   }
   return parsed;
+};
+
+const readJson = async (request) => {
+  const buffer = await readRawBody(request);
+  const text = buffer.toString('utf8');
+  const parsed = text ? JSON.parse(text) : {};
+  return applyForcedTenant(request, parsed);
 };
 
 const sendJson = (response, status, payload) => {
@@ -3051,8 +3062,47 @@ const server = createServer(async (request, response) => {
     let step = 'start';
     indexLog('start');
     try {
-      step = 'payload';
-      const body = await readJson(request);
+      // バイナリ直送: Content-Type: application/octet-stream の場合、ボディは
+      // PDFの生バイト列そのもので、メタデータ（recordId等）は x-index-meta ヘッダー
+      // で渡される。一括登録の数千件連続実行で「Blob→base64文字列(+33%)→
+      // JSON.stringifyでさらに1コピー」という巨大な一時文字列を積み続けることで
+      // 起きるブラウザの Out of Memory を防ぐための経路（Blobをそのままボディにすれば
+      // JS側の大文字列割り当てがゼロになる）。従来の application/json 経路は不変。
+      const contentType = String(request.headers['content-type'] || '').toLowerCase();
+      const isBinaryBody = contentType.startsWith('application/octet-stream');
+
+      let body;
+      let binaryPdfBuffer = null;
+      if (isBinaryBody) {
+        step = 'read_binary_body';
+        indexLog('read binary body start');
+        binaryPdfBuffer = await readRawBody(request);
+        indexLog('read binary body done', { bytes: binaryPdfBuffer.length });
+
+        step = 'parse_index_meta';
+        const metaHeaderRaw = request.headers['x-index-meta'];
+        const metaHeader = Array.isArray(metaHeaderRaw) ? metaHeaderRaw[0] : metaHeaderRaw;
+        let meta;
+        try {
+          if (!metaHeader) {
+            throw new Error('missing x-index-meta header');
+          }
+          meta = JSON.parse(decodeURIComponent(metaHeader));
+          if (!meta || typeof meta !== 'object') {
+            throw new Error('x-index-meta is not a JSON object');
+          }
+        } catch {
+          throw createStepError('invalid or missing x-index-meta header', step, 400);
+        }
+        // テナント強制は readJson と同じ applyForcedTenant を通す（最重要:
+        // ここを忘れるとバイナリ直送経路だけテナント分離が破れる）。
+        body = applyForcedTenant(request, meta);
+        step = 'payload';
+      } else {
+        step = 'payload';
+        body = await readJson(request);
+      }
+
       indexLog('payload received', {
         recordId: body.recordId,
         tenantId: body.tenantId || 'default'
@@ -3073,7 +3123,13 @@ const server = createServer(async (request, response) => {
       // pdf_base64 が無い場合は旧プラグイン（クライアント取得非対応）互換のため
       // サーバー側の kintone 接続で取得する。
       let pdfBuffer;
-      if (body.pdf_base64) {
+      if (binaryPdfBuffer) {
+        step = 'read_binary_body';
+        pdfBuffer = binaryPdfBuffer;
+        if (!pdfBuffer.length) {
+          throw createStepError('Empty PDF content', step, 400);
+        }
+      } else if (body.pdf_base64) {
         step = 'decode_pdf_base64';
         indexLog('decode pdf_base64 start', { recordId: body.recordId });
         pdfBuffer = Buffer.from(String(body.pdf_base64), 'base64');

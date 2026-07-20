@@ -1199,12 +1199,22 @@
       };
 
       try {
+        // バイナリ直送: 一括登録は数千件を連続処理するため、1件ごとに
+        // 「PDF Blob → base64文字列（+33%）→ JSON.stringifyでさらに1コピー」という
+        // 大きな一時文字列を作ると、ブラウザタブが Out of Memory でクラッシュする
+        // （実運用の5000件・3並列で約1450件処理時点で発生）。Blobをそのまま
+        // リクエストボディにすればJS側の大文字列割り当てがゼロになる。
         const blob = await downloadKintoneFile(file.fileKey);
-        payload.pdf_base64 = await toBase64(blob);
         const response = await fetch(apiBaseUrl + '/index', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-          body: JSON.stringify(payload)
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            // メタデータはヘッダーで送る（base64/JSON文字列化による大きな一時割り当てを避け、
+            // Blobをそのままボディにする。数千件連続でもブラウザのメモリが増えない）
+            'X-Index-Meta': encodeURIComponent(JSON.stringify(payload)),
+            ...apiKeyHeader(config.apiKey)
+          },
+          body: blob
         });
         const data = await response.json();
         if (!response.ok) {
