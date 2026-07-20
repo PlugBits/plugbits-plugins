@@ -2301,6 +2301,11 @@ const detectDocumentFormat = (buffer) => {
   return 'unknown';
 };
 
+// 大判スキャンTIFの元解像度をそのままPNG化するとImageMagickの資源上限に達したり
+// （record 4956 で実際に発生）、下流（OCR・埋め込み）に不必要に巨大なPNGが流れたり
+// するため、長辺がこれを超える場合のみ縮小する。OCR・埋め込みはこの解像度で十分。
+const TIFF_MAX_RENDER_PX = 3500;
+
 // PDFに加えてTIFFも受け付ける（kintone添付にTIF形式の図面があるため）。
 // TIFFはImageMagick `convert` で1ページ目のみPNG化する（dpi指定はTIFFでは無意味なので使わない）。
 const convertPdfFirstPageToPng = async (pdfBuffer, dpi = renderDpi) => {
@@ -2313,7 +2318,10 @@ const convertPdfFirstPageToPng = async (pdfBuffer, dpi = renderDpi) => {
     if (format === 'tiff') {
       const tiffPath = join(workDir, 'source.tif');
       await writeFile(tiffPath, pdfBuffer);
-      await runCommand('convert', [tiffPath + '[0]', imagePath]);
+      // '>' は「縮小のみ」指定（小さい画像を拡大しない）。execFileベースの runCommand
+      // なのでシェル解釈されず、'>' がリダイレクトとして扱われる心配もない。
+      const maxRenderSpec = TIFF_MAX_RENDER_PX + 'x' + TIFF_MAX_RENDER_PX + '>';
+      await runCommand('convert', [tiffPath + '[0]', '-resize', maxRenderSpec, imagePath]);
     } else {
       const pdfPath = join(workDir, 'source.pdf');
       await writeFile(pdfPath, pdfBuffer);
@@ -2816,7 +2824,13 @@ const server = createServer(async (request, response) => {
         sendJson(response, 400, { error: 'Empty PDF content' });
         return;
       }
-      const thumbBuffer = await convertPdfFirstPageToThumbnailPng(pdfBuffer);
+      // max_width は任意項目。プレビュー用途（等倍に近い大きめ表示）などで既定の
+      // サムネイル幅より大きい画像が欲しい呼び出し元向け。無効値・未指定は既定幅にフォールバック。
+      const requestedMaxWidth = Number(body.max_width);
+      const maxWidth = Number.isFinite(requestedMaxWidth)
+        ? Math.min(2000, Math.max(16, Math.round(requestedMaxWidth)))
+        : thumbnailMaxWidth;
+      const thumbBuffer = await convertPdfFirstPageToThumbnailPng(pdfBuffer, maxWidth);
       sendBinary(response, 200, 'image/png', thumbBuffer, { 'Cache-Control': 'no-store' });
     } catch (error) {
       sendJson(response, error.status || 502, { error: error.message });
