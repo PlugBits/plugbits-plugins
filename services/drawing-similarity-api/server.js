@@ -2872,20 +2872,39 @@ const server = createServer(async (request, response) => {
   // 状態を持たないユーティリティ。Drive認証・Qdrant・永続化には一切関与しない。
   if (request.method === 'POST' && url.pathname === '/render-thumbnail') {
     try {
-      const body = await readJson(request);
-      const pdfBase64 = String(body.pdf_base64 || '');
-      if (!pdfBase64) {
-        sendJson(response, 400, { error: 'pdf_base64 is required' });
-        return;
+      // バイナリ直送: Content-Type: application/octet-stream の場合、ボディは
+      // PDF/TIFの生バイト列そのもの（/index と同じ方式）。base64化（+33%膨張）と
+      // JSON.stringifyでの追加コピーを避けるための経路。従来の application/json
+      // （pdf_base64）経路は後方互換のため不変。このエンドポイントは状態を持たない
+      // 変換専用のユーティリティなので、x-index-meta 等のテナントメタは不要。
+      const contentType = String(request.headers['content-type'] || '').toLowerCase();
+      const isBinaryBody = contentType.startsWith('application/octet-stream');
+
+      let pdfBuffer;
+      let requestedMaxWidthRaw;
+      if (isBinaryBody) {
+        pdfBuffer = await readRawBody(request);
+        // バイナリ経路では JSON ボディが無いため、max_width はURLクエリで受け取る。
+        // searchParams.get() は未指定時に null を返し、Number(null) は 0（＝有効値扱い）に
+        // なってしまうため、undefined に正規化して「未指定→既定幅」を JSON経路と揃える。
+        requestedMaxWidthRaw = url.searchParams.get('max_width') ?? undefined;
+      } else {
+        const body = await readJson(request);
+        const pdfBase64 = String(body.pdf_base64 || '');
+        if (!pdfBase64) {
+          sendJson(response, 400, { error: 'pdf_base64 is required' });
+          return;
+        }
+        pdfBuffer = Buffer.from(pdfBase64, 'base64');
+        requestedMaxWidthRaw = body.max_width;
       }
-      const pdfBuffer = Buffer.from(pdfBase64, 'base64');
       if (!pdfBuffer.length) {
         sendJson(response, 400, { error: 'Empty PDF content' });
         return;
       }
       // max_width は任意項目。プレビュー用途（等倍に近い大きめ表示）などで既定の
       // サムネイル幅より大きい画像が欲しい呼び出し元向け。無効値・未指定は既定幅にフォールバック。
-      const requestedMaxWidth = Number(body.max_width);
+      const requestedMaxWidth = Number(requestedMaxWidthRaw);
       const maxWidth = Number.isFinite(requestedMaxWidth)
         ? Math.min(2000, Math.max(16, Math.round(requestedMaxWidth)))
         : thumbnailMaxWidth;
