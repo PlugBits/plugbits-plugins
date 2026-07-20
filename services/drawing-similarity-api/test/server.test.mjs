@@ -545,6 +545,36 @@ test('render-thumbnail: max_width が不正でも既定幅で200', async () => {
   assert.equal(res.headers.get('content-type'), 'image/png');
 });
 
+// バイナリ直送: base64化（+33%膨張）とJSON.stringifyの追加コピーを避けるため、
+// /index と同じ方式で Content-Type: application/octet-stream のボディに生バイト列を
+// そのまま送れる（プラグイン側のTIFプレビュー高速化用）。max_width はJSONボディが
+// 無いため URLクエリパラメータで受け取る。
+test('render-thumbnail: バイナリ直送でもPNG化できる', async () => {
+  const res = await fetch(api.url + '/render-thumbnail?max_width=100', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: TIFF_A
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/png');
+  const buf = Buffer.from(await res.arrayBuffer());
+  assert.deepEqual(buf.subarray(0, 4), Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'PNGマジックバイトで始まる');
+  // PNG IHDR: バイトオフセット 16-19 がビッグエンディアンの幅
+  assert.equal(buf.readUInt32BE(16), 100);
+});
+
+test('render-thumbnail: バイナリ直送で max_width 未指定なら既定幅で200', async () => {
+  const res = await fetch(api.url + '/render-thumbnail', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: TIFF_A
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/png');
+  const buf = Buffer.from(await res.arrayBuffer());
+  assert.deepEqual(buf.subarray(0, 4), Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'PNGマジックバイトで始まる');
+});
+
 test('similar: TIFファイルでもアップロード検索が実検索になる（TIFF→PNG変換）', async () => {
   const res = await postJson(api.url, '/similar', {
     appId: '1', tenantId: 'tenant-a',

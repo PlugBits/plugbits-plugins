@@ -226,8 +226,11 @@
   // PDF/TIFプレビューパネル（モーダル左ペイン）の共通ヘルパー。
   // trackUrl に createModalShell の trackObjectUrl を渡すと close 時に blob URL を解放する。
   // options.apiBaseUrl / options.config はTIFプレビュー生成（/render-thumbnail呼び出し）に使う。
+  // options.cacheKey はkintoneのfileKey等、内容に対して不変な識別子。渡された場合のみ
+  // レンダリング結果をモジュールスコープのキャッシュに載せ、blob URLはtrackUrlではなく
+  // キャッシュが所有する（渡さない場合＝ローカルのドラッグ&ドロップはキャッシュしない）。
   const buildPreviewPanel = (name, trackUrl, options = {}) => {
-    const { apiBaseUrl, config } = options;
+    const { apiBaseUrl, config, cacheKey } = options;
     const panel = document.createElement('div');
     panel.className = 'preview-panel';
     const label = document.createElement('div');
@@ -263,20 +266,40 @@
     // PNGに変換してから<img>で表示する。マルチページTIFはサーバー側の既存仕様により
     // 1ページ目のみが対象（本プレビューも同様に1ページ目だけを表示する）。
     const showTiffPreview = async (blobOrFile) => {
+      // cacheKeyがある場合（kintoneのfileKeyなど内容不変の識別子）は、同じ図面を
+      // 開き直すたびにダウンロード・サーバー変換をやり直さずに済むようキャッシュを使う。
+      const thumbCacheKey = cacheKey ? (cacheKey + ':1600') : null;
+      const cachedUrl = thumbCacheKey ? getCachedThumbUrl(thumbCacheKey) : null;
+      if (cachedUrl) {
+        const cachedImg = document.createElement('img');
+        cachedImg.className = 'preview-image';
+        cachedImg.alt = name || '';
+        cachedImg.src = cachedUrl;
+        replacePlaceholderWith(cachedImg);
+        return;
+      }
+
       placeholder.textContent = 'プレビューを生成しています...';
       try {
         if (!apiBaseUrl) {
           throw new Error('apiBaseUrl not configured');
         }
-        const pdfBase64 = await toBase64(blobOrFile);
-        const res = await fetch(apiBaseUrl + '/render-thumbnail', {
+        // バイナリ直送: base64化（+33%膨張）とJSON.stringifyの追加コピーを避ける
+        // （/index と同じ方式）。max_width はJSONボディが無いためURLクエリで渡す。
+        const res = await fetch(apiBaseUrl + '/render-thumbnail?max_width=1600', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config && config.apiKey) },
-          body: JSON.stringify({ pdf_base64: pdfBase64, max_width: 1600 })
+          headers: { 'Content-Type': 'application/octet-stream', ...apiKeyHeader(config && config.apiKey) },
+          body: blobOrFile
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
         let blobUrl = URL.createObjectURL(await res.blob());
-        if (trackUrl) blobUrl = trackUrl(blobUrl);
+        // キャッシュする場合はキャッシュが所有するため、モーダルのtrackUrlには渡さない。
+        // キャッシュしない場合（cacheKey無し＝ローカルのドラッグ&ドロップ）は従来通り追跡する。
+        if (thumbCacheKey) {
+          putCachedThumbUrl(thumbCacheKey, blobUrl);
+        } else if (trackUrl) {
+          blobUrl = trackUrl(blobUrl);
+        }
         const img = document.createElement('img');
         img.className = 'preview-image';
         img.alt = name || '';
@@ -632,6 +655,32 @@
     spaceEl.appendChild(container);
   };
 
+  // レンダリング済みサムネイルのキャッシュ（キー: fileKey等 + ':' + 幅）。
+  // kintoneのfileKeyは内容に対して不変なので、同じ図面を開き直すたびに
+  // ダウンロード・サーバー変換をやり直す必要はない。上限を超えたら最も
+  // 使われていないものから解放する（blob URLはキャッシュが所有し、モーダルの
+  // trackObjectUrl による解放対象にはしない）。
+  const THUMB_CACHE_MAX = 40;
+  const _thumbCache = new Map();
+  const getCachedThumbUrl = (key) => {
+    if (!_thumbCache.has(key)) return null;
+    const url = _thumbCache.get(key);
+    // Mapの反復順=挿入順を使ってLRUを模倣するため、ヒット時は削除して
+    // 末尾に付け直す（＝最近使用扱いにする）。
+    _thumbCache.delete(key);
+    _thumbCache.set(key, url);
+    return url;
+  };
+  const putCachedThumbUrl = (key, blobUrl) => {
+    _thumbCache.set(key, blobUrl);
+    while (_thumbCache.size > THUMB_CACHE_MAX) {
+      const oldestKey = _thumbCache.keys().next().value;
+      const oldestUrl = _thumbCache.get(oldestKey);
+      _thumbCache.delete(oldestKey);
+      try { URL.revokeObjectURL(oldestUrl); } catch (_) { /* 無視 */ }
+    }
+  };
+
   const THUMBNAIL_AUTO_COUNT = 3;
 
   // 一覧では上位3件だけ自動でサムネイルを取得し、残りはボタンを押したときだけ取得する。
@@ -645,6 +694,20 @@
       thumbBox.textContent = '画像なし';
       return;
     }
+
+    // レンダリング済みキャッシュがあれば、ダウンロード・変換を一切せず即表示する。
+    const cacheKey = fileKey + ':default';
+    const cachedUrl = getCachedThumbUrl(cacheKey);
+    if (cachedUrl) {
+      thumbBox.textContent = '';
+      const cachedImg = document.createElement('img');
+      cachedImg.className = 'sim-thumb-img';
+      cachedImg.alt = '';
+      cachedImg.src = cachedUrl;
+      thumbBox.appendChild(cachedImg);
+      return;
+    }
+
     // 読み込み中はシマー（スケルトン）を表示し、失敗時は再取得ボタンを出す。
     thumbBox.textContent = '';
     const skeleton = document.createElement('div');
@@ -666,16 +729,18 @@
 
     let blobUrl;
     try {
+      // バイナリ直送: base64化（+33%膨張）とJSON.stringifyの追加コピーを避ける
+      // （/index と同じ方式）。レンダリング結果はキャッシュが所有するため、
+      // モーダルのtrackObjectUrlには渡さない（閉じても再利用できるように残す）。
       const blob = await downloadKintoneFile(fileKey);
-      const pdfBase64 = await toBase64(blob);
       const res = await fetch(apiBaseUrl + '/render-thumbnail', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config && config.apiKey) },
-        body: JSON.stringify({ pdf_base64: pdfBase64 })
+        headers: { 'Content-Type': 'application/octet-stream', ...apiKeyHeader(config && config.apiKey) },
+        body: blob
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       blobUrl = URL.createObjectURL(await res.blob());
-      if (trackObjectUrl) blobUrl = trackObjectUrl(blobUrl);
+      putCachedThumbUrl(cacheKey, blobUrl);
     } catch {
       showRetry();
       return;
@@ -1319,11 +1384,11 @@
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-  // Googleドライブのファイルをアクセストークン付きでダウンロードしBase64化する。
+  // Googleドライブのファイルをアクセストークン付きでダウンロードしBlobで返す。
   // resourceKey: 共有リンク経由等の一部ファイルは fileId だけでは files.get が404になり、
   // Drive APIのリソースキー要件（X-Goog-Drive-Resource-Keys ヘッダー）を満たす必要がある。
   // https://developers.google.com/workspace/drive/api/guides/resource-keys
-  const fetchDriveFileBase64 = async (fileId, accessToken, resourceKey) => {
+  const fetchDriveFileBlob = async (fileId, accessToken, resourceKey) => {
     const url = 'https://www.googleapis.com/drive/v3/files/' + encodeURIComponent(fileId) + '?alt=media';
     const headers = { Authorization: 'Bearer ' + accessToken };
     if (resourceKey) {
@@ -1334,7 +1399,7 @@
     for (let attempt = 0; attempt <= delaysMs.length; attempt++) {
       const response = await fetch(url, { headers });
       if (response.ok) {
-        return toBase64(await response.blob());
+        return response.blob();
       }
       lastStatus = response.status;
       if (response.status !== 404 || attempt === delaysMs.length) {
@@ -1344,6 +1409,11 @@
     }
     throw new Error('Google Driveからのダウンロードに失敗しました（HTTP ' + lastStatus + '）');
   };
+
+  // /archive-index 取込経路（pdf_base64のJSON送信）向けのbase64版。中身は
+  // fetchDriveFileBlob → toBase64 の合成。
+  const fetchDriveFileBase64 = async (fileId, accessToken, resourceKey) =>
+    toBase64(await fetchDriveFileBlob(fileId, accessToken, resourceKey));
 
   // driveAccessToken を渡すと files は Google Drive の {id, name}[]、
   // 渡さない場合は従来通りローカルの File オブジェクト配列として処理する。
@@ -2049,7 +2119,7 @@
       const layout = document.createElement('div');
       layout.className = 'form-layout';
 
-      const preview = buildPreviewPanel(fileMeta.name || '', trackObjectUrl, { apiBaseUrl, config });
+      const preview = buildPreviewPanel(fileMeta.name || '', trackObjectUrl, { apiBaseUrl, config, cacheKey: fileMeta.fileKey });
       const previewPanel = preview.panel;
 
       const formPanel = document.createElement('div');
@@ -3358,7 +3428,9 @@
   // Google連携ポップアップ（トークンのみ）→ 対象PDFをDriveから取得 → /render-thumbnail でPNG化、
   // という流れで、表示中のアーカイブ結果のサムネイルをまとめて置き換える。何も永続化しない。
   // targets: [{ getThumbBox }]（行のままなら大きいカードに差し替えてから箱を返す）。
-  const loadArchiveDriveThumbnails = async (targets, apiBaseUrl, triggerBtn, config, trackObjectUrl) => {
+  // レンダリング結果は _thumbCache が所有するため、呼び出し元のtrackObjectUrlはもう使わない
+  // （引数は既存呼び出し元との互換のため残し、未使用であることを明示するため _ 接頭辞にする）。
+  const loadArchiveDriveThumbnails = async (targets, apiBaseUrl, triggerBtn, config, _trackObjectUrl) => {
     triggerBtn.disabled = true;
     triggerBtn.textContent = 'Googleと連携しています...';
     let accessToken;
@@ -3381,20 +3453,39 @@
     const loadOne = async (box) => {
       const fileId = box.dataset.driveFileId;
       const resourceKey = box.dataset.driveResourceKey || '';
+
+      // レンダリング済みキャッシュがあれば、ダウンロード・変換を一切せず即表示する。
+      const cacheKey = 'gdrive:' + fileId + ':default';
+      const cachedUrl = getCachedThumbUrl(cacheKey);
+      if (cachedUrl) {
+        box.textContent = '';
+        const cachedImg = document.createElement('img');
+        cachedImg.className = 'sim-thumb-img';
+        cachedImg.alt = '';
+        cachedImg.src = cachedUrl;
+        box.appendChild(cachedImg);
+        done += 1;
+        triggerBtn.textContent = 'サムネイルを読み込み中... ' + done + ' / ' + boxes.length;
+        return;
+      }
+
       box.textContent = '';
       const skeleton = document.createElement('div');
       skeleton.className = 'sim-skeleton';
       box.appendChild(skeleton);
       try {
-        const pdf_base64 = await fetchDriveFileBase64(fileId, accessToken, resourceKey);
+        // バイナリ直送: base64化（+33%膨張）とJSON.stringifyの追加コピーを避ける
+        // （/index と同じ方式）。レンダリング結果はキャッシュが所有するため、
+        // trackObjectUrlには渡さない。
+        const blob = await fetchDriveFileBlob(fileId, accessToken, resourceKey);
         const res = await fetch(apiBaseUrl + '/render-thumbnail', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-          body: JSON.stringify({ pdf_base64 })
+          headers: { 'Content-Type': 'application/octet-stream', ...apiKeyHeader(config.apiKey) },
+          body: blob
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        let blobUrl = URL.createObjectURL(await res.blob());
-        if (trackObjectUrl) blobUrl = trackObjectUrl(blobUrl);
+        const blobUrl = URL.createObjectURL(await res.blob());
+        putCachedThumbUrl(cacheKey, blobUrl);
         const img = document.createElement('img');
         img.className = 'sim-thumb-img';
         img.alt = '';
@@ -3524,7 +3615,11 @@
     const layout = document.createElement('div');
     layout.className = 'form-layout';
 
-    const preview = buildPreviewPanel(fileMeta ? (fileMeta.name || '') : '自分の図面', shell.trackObjectUrl, { apiBaseUrl, config });
+    const preview = buildPreviewPanel(
+      fileMeta ? (fileMeta.name || '') : '自分の図面',
+      shell.trackObjectUrl,
+      { apiBaseUrl, config, cacheKey: fileMeta ? fileMeta.fileKey : undefined }
+    );
     const previewPanel = preview.panel;
     if (fileMeta) {
       downloadKintoneFile(fileMeta.fileKey)
