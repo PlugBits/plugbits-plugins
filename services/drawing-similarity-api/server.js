@@ -755,7 +755,7 @@ const buildOcrTextGemini = async (pngBuffer) => {
     throw err;
   }
   const base64 = pngBuffer.toString('base64');
-  const res = await fetch(
+  const res = await fetchAiWithRetry(
     `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=` + GEMINI_API_KEY,
     {
       method: 'POST',
@@ -767,7 +767,8 @@ const buildOcrTextGemini = async (pngBuffer) => {
         ]}],
         generationConfig: GEMINI_OCR_GENERATION_CONFIG
       })
-    }
+    },
+    'gemini-ocr'
   );
 
   if (!res.ok) {
@@ -938,6 +939,51 @@ const getGeminiAccessToken = async () => {
   return _geminiTokenCache.token;
 };
 
+// Gemini/Vertex AIのレート制限（429）・一時的な5xx向けのリトライ付きfetch。
+// 一括登録の連続実行で散発する429は少し待てば通るため、エクスポネンシャル
+// バックオフ（±25%ジッタ付き）で再試行する。Retry-Afterヘッダーがあれば優先
+// （最大30秒にクランプ）。4xx（429以外）は再試行しない。
+const AI_RETRY_DELAYS_MS = [2000, 4000, 8000, 16000];
+const AI_RETRY_MAX_DELAY_MS = 30000;
+const AI_RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+
+const jitterDelay = (baseMs) => {
+  const jitterFactor = 1 + (Math.random() * 0.5 - 0.25); // ±25%
+  return Math.round(baseMs * jitterFactor);
+};
+
+const fetchAiWithRetry = async (url, fetchOptions, label) => {
+  const maxAttempts = AI_RETRY_DELAYS_MS.length + 1; // 初回 + リトライ4回 = 5回
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let res;
+    try {
+      res = await fetch(url, fetchOptions);
+    } catch (e) {
+      if (attempt === maxAttempts) throw e;
+      const delayMs = jitterDelay(AI_RETRY_DELAYS_MS[attempt - 1]);
+      console.warn('[ai-retry] ' + label + ' network error (' + e.message + ') — retrying in ' + delayMs + 'ms (attempt ' + attempt + '/' + maxAttempts + ')');
+      await sleep(delayMs);
+      continue;
+    }
+
+    if (res.ok || !AI_RETRYABLE_STATUS.has(res.status) || attempt === maxAttempts) {
+      return res;
+    }
+
+    const retryAfterHeader = res.headers.get('retry-after');
+    const retryAfterSec = retryAfterHeader ? Number(retryAfterHeader) : NaN;
+    const delayMs = Number.isFinite(retryAfterSec) && retryAfterSec >= 0
+      ? Math.min(retryAfterSec * 1000, AI_RETRY_MAX_DELAY_MS)
+      : jitterDelay(AI_RETRY_DELAYS_MS[attempt - 1]);
+    console.warn('[ai-retry] ' + label + ' HTTP ' + res.status + ' — retrying in ' + delayMs + 'ms (attempt ' + attempt + '/' + maxAttempts + ')');
+    // レスポンスボディを消費しておく（次の試行で新しいfetchを行うため、このresは破棄する）
+    await res.text().catch(() => {});
+    await sleep(delayMs);
+  }
+  // ループは必ず return/throw で抜けるため、ここには到達しない
+  throw new Error('fetchAiWithRetry: unreachable');
+};
+
 const buildOcrTextVertexAI = async (pngBuffer) => {
   if (!VERTEX_PROJECT_ID) {
     const err = new Error('GOOGLE_CLOUD_PROJECT (or VERTEX_PROJECT_ID) must be set for Vertex AI OCR');
@@ -953,7 +999,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
     : `${VERTEX_LOCATION}-aiplatform.googleapis.com`;
   const endpoint = `https://${vertexHost}/v1/projects/${VERTEX_PROJECT_ID}/locations/${VERTEX_LOCATION}/publishers/google/models/${VERTEX_MODEL}:generateContent`;
 
-  const res = await fetch(endpoint, {
+  const res = await fetchAiWithRetry(endpoint, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken },
     body: JSON.stringify({
@@ -963,7 +1009,7 @@ const buildOcrTextVertexAI = async (pngBuffer) => {
       ]}],
       generationConfig: GEMINI_OCR_GENERATION_CONFIG
     })
-  });
+  }, 'vertex-ocr');
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '');
@@ -994,15 +1040,17 @@ const callGeminiVision = async (pngBuffer, prompt, maxOutputTokens = 256) => {
 
   let res;
   if (GEMINI_API_KEY) {
-    res = await fetch(
+    res = await fetchAiWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=` + GEMINI_API_KEY,
-      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody }
+      { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: reqBody },
+      'gemini-vision'
     );
   } else {
     const accessToken = await getGeminiAccessToken();
-    res = await fetch(
+    res = await fetchAiWithRetry(
       `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent`,
-      { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken }, body: reqBody }
+      { method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + accessToken }, body: reqBody },
+      'gemini-vision'
     );
   }
 
