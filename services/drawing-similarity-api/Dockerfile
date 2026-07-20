@@ -5,6 +5,18 @@ RUN apt-get update \
   && apt-get install -y --no-install-recommends python3 python3-venv poppler-utils tesseract-ocr tesseract-ocr-jpn imagemagick \
   && rm -rf /var/lib/apt/lists/*
 
+# 大判スキャンTIFの実運用一括登録が既定のImageMagick資源上限（memory 256MiB等）で
+# `convert ... cache resources exhausted` になって失敗したため（record 4956）、
+# 資源上限を引き上げる。Dockerコンテナ内で完結する変換専用ユースケースのため許容範囲。
+RUN sed -i \
+  -e 's/\(name="memory"[^\/]*value="\)[^"]*/\11GiB/' \
+  -e 's/\(name="map"[^\/]*value="\)[^"]*/\12GiB/' \
+  -e 's/\(name="disk"[^\/]*value="\)[^"]*/\14GiB/' \
+  -e 's/\(name="area"[^\/]*value="\)[^"]*/\11GP/' \
+  -e 's/\(name="width"[^\/]*value="\)[^"]*/\164KP/' \
+  -e 's/\(name="height"[^\/]*value="\)[^"]*/\164KP/' \
+  /etc/ImageMagick-6/policy.xml
+
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 ENV TORCH_NUM_THREADS=1

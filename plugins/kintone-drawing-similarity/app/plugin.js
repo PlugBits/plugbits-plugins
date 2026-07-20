@@ -220,9 +220,14 @@
     return { host, shadow, overlay, modal, content, closeModal, trackObjectUrl };
   };
 
-  // PDFプレビューパネル（モーダル左ペイン）の共通ヘルパー。
+  // ファイル名（または File.name）拡張子でTIFかどうかを判定する。
+  const isTiffFileName = (fileName) => /\.tiff?$/i.test(String(fileName || ''));
+
+  // PDF/TIFプレビューパネル（モーダル左ペイン）の共通ヘルパー。
   // trackUrl に createModalShell の trackObjectUrl を渡すと close 時に blob URL を解放する。
-  const buildPreviewPanel = (name, trackUrl) => {
+  // options.apiBaseUrl / options.config はTIFプレビュー生成（/render-thumbnail呼び出し）に使う。
+  const buildPreviewPanel = (name, trackUrl, options = {}) => {
+    const { apiBaseUrl, config } = options;
     const panel = document.createElement('div');
     panel.className = 'preview-panel';
     const label = document.createElement('div');
@@ -234,20 +239,65 @@
     placeholder.textContent = 'プレビューを読み込み中...';
     panel.appendChild(placeholder);
 
-    const showBlob = (blobOrFile) => {
+    const replacePlaceholderWith = (el) => {
+      if (placeholder.parentNode === panel) {
+        panel.replaceChild(el, placeholder);
+      } else {
+        panel.appendChild(el);
+      }
+    };
+
+    const showMessage = (message) => { placeholder.textContent = message; };
+
+    const showPdfEmbed = (blobOrFile) => {
       let blobUrl = URL.createObjectURL(blobOrFile);
       if (trackUrl) blobUrl = trackUrl(blobUrl);
       const embed = document.createElement('embed');
       embed.src = blobUrl;
       embed.type = 'application/pdf';
       embed.className = 'preview-embed';
-      if (placeholder.parentNode === panel) {
-        panel.replaceChild(embed, placeholder);
-      } else {
-        panel.appendChild(embed);
+      replacePlaceholderWith(embed);
+    };
+
+    // TIFはブラウザの<embed>で直接表示できないため、サーバーの/render-thumbnailで
+    // PNGに変換してから<img>で表示する。マルチページTIFはサーバー側の既存仕様により
+    // 1ページ目のみが対象（本プレビューも同様に1ページ目だけを表示する）。
+    const showTiffPreview = async (blobOrFile) => {
+      placeholder.textContent = 'プレビューを生成しています...';
+      try {
+        if (!apiBaseUrl) {
+          throw new Error('apiBaseUrl not configured');
+        }
+        const pdfBase64 = await toBase64(blobOrFile);
+        const res = await fetch(apiBaseUrl + '/render-thumbnail', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config && config.apiKey) },
+          body: JSON.stringify({ pdf_base64: pdfBase64, max_width: 1600 })
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        let blobUrl = URL.createObjectURL(await res.blob());
+        if (trackUrl) blobUrl = trackUrl(blobUrl);
+        const img = document.createElement('img');
+        img.className = 'preview-image';
+        img.alt = name || '';
+        img.src = blobUrl;
+        replacePlaceholderWith(img);
+      } catch {
+        showMessage('プレビューを表示できません（TIF変換エラー）');
       }
     };
-    const showMessage = (message) => { placeholder.textContent = message; };
+
+    const isTiffBlob = (blobOrFile) =>
+      (blobOrFile && blobOrFile.type === 'image/tiff') ||
+      isTiffFileName((blobOrFile && blobOrFile.name) || name);
+
+    const showBlob = (blobOrFile) => {
+      if (isTiffBlob(blobOrFile)) {
+        showTiffPreview(blobOrFile);
+      } else {
+        showPdfEmbed(blobOrFile);
+      }
+    };
     return { panel, showBlob, showMessage };
   };
 
@@ -1552,6 +1602,7 @@
     '  background: #fff; border-bottom: 1px solid var(--pb-line); flex-shrink: 0;',
     '  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }',
     '.preview-embed { flex: 1; width: 100%; border: none; display: block; min-height: 0; }',
+    '.preview-image { flex: 1; min-height: 0; width: 100%; object-fit: contain; }',
     '.preview-placeholder { flex: 1; display: flex; align-items: center; justify-content: center;',
     '  color: var(--pb-faint); font-size: 13px; }',
     '.form-panel { flex: 0 0 60%; overflow-y: auto; padding: 20px 24px 28px; }',
@@ -1950,7 +2001,7 @@
       const layout = document.createElement('div');
       layout.className = 'form-layout';
 
-      const preview = buildPreviewPanel(file ? file.name : '', trackObjectUrl);
+      const preview = buildPreviewPanel(file ? file.name : '', trackObjectUrl, { apiBaseUrl, config });
       if (file) preview.showBlob(file); else preview.showMessage('プレビューなし');
       const previewPanel = preview.panel;
 
@@ -1988,7 +2039,7 @@
       const layout = document.createElement('div');
       layout.className = 'form-layout';
 
-      const preview = buildPreviewPanel(fileMeta.name || '', trackObjectUrl);
+      const preview = buildPreviewPanel(fileMeta.name || '', trackObjectUrl, { apiBaseUrl, config });
       const previewPanel = preview.panel;
 
       const formPanel = document.createElement('div');
@@ -2017,7 +2068,10 @@
 
       let currentFile = null;
       downloadKintoneFile(fileMeta.fileKey).then((blob) => {
-        currentFile = new File([blob], fileMeta.name || 'drawing.pdf', { type: 'application/pdf' });
+        // ファイル名がTIFの場合はtypeもimage/tiffにする（application/pdf固定だと
+        // buildPreviewPanel のTIF判定がblob.typeでは効かず、拡張子判定頼りになってしまう）。
+        const fileType = isTiffFileName(fileMeta.name) ? 'image/tiff' : 'application/pdf';
+        currentFile = new File([blob], fileMeta.name || 'drawing.pdf', { type: fileType });
         preview.showBlob(currentFile);
         recalcBtn.disabled = false;
       }).catch((error) => {
@@ -2348,7 +2402,7 @@
       layout.className = 'form-layout';
 
       // Left: PDF preview
-      const preview = buildPreviewPanel(file ? file.name : '', trackObjectUrl);
+      const preview = buildPreviewPanel(file ? file.name : '', trackObjectUrl, { apiBaseUrl, config });
       if (file) preview.showBlob(file); else preview.showMessage('プレビューなし');
       const previewPanel = preview.panel;
 
@@ -3460,7 +3514,7 @@
     const layout = document.createElement('div');
     layout.className = 'form-layout';
 
-    const preview = buildPreviewPanel(fileMeta ? (fileMeta.name || '') : '自分の図面', shell.trackObjectUrl);
+    const preview = buildPreviewPanel(fileMeta ? (fileMeta.name || '') : '自分の図面', shell.trackObjectUrl, { apiBaseUrl, config });
     const previewPanel = preview.panel;
     if (fileMeta) {
       downloadKintoneFile(fileMeta.fileKey)
@@ -3610,7 +3664,7 @@
       const layout = document.createElement('div');
       layout.className = 'form-layout';
 
-      const preview = buildPreviewPanel(file.name || '', trackObjectUrl);
+      const preview = buildPreviewPanel(file.name || '', trackObjectUrl, { apiBaseUrl, config });
       preview.showBlob(file);
       const previewPanel = preview.panel;
 

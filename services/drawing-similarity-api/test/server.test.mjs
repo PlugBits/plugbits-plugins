@@ -526,6 +526,25 @@ test('render-thumbnail: TIFの1ページ目もPNG化して返す', async () => {
   assert.deepEqual(buf.subarray(0, 4), Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'PNGマジックバイトで始まる');
 });
 
+test('render-thumbnail: max_width を指定するとその幅でPNG化される', async () => {
+  const res = await postJson(api.url, '/render-thumbnail', {
+    pdf_base64: TIFF_A.toString('base64'), max_width: 100
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/png');
+  const buf = Buffer.from(await res.arrayBuffer());
+  // PNG IHDR: バイトオフセット 16-19 がビッグエンディアンの幅
+  assert.equal(buf.readUInt32BE(16), 100);
+});
+
+test('render-thumbnail: max_width が不正でも既定幅で200', async () => {
+  const res = await postJson(api.url, '/render-thumbnail', {
+    pdf_base64: TIFF_A.toString('base64'), max_width: 'abc'
+  });
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/png');
+});
+
 test('similar: TIFファイルでもアップロード検索が実検索になる（TIFF→PNG変換）', async () => {
   const res = await postJson(api.url, '/similar', {
     appId: '1', tenantId: 'tenant-a',
