@@ -163,6 +163,137 @@
     { at: 45, text: 'もう少しお待ちください...' }
   ];
 
+  // === バックグラウンドの検索登録（/index、約14秒）の進行を画面右下に常駐表示する ===
+  // 新規/更新の kintone レコード保存はモーダル内で即完了させ、重い検索インデックス登録は
+  // バックグラウンドで実行する。進行状況は画面右下の常駐パネル（Gmail の「送信中...」方式）
+  // に出す。kintone のアプリ内移動（一覧⇄詳細）はページを破棄しないため、パネルと
+  // fetch はそのまま生存する。フルページ遷移（タブを閉じる・リロード・別アプリへの移動）は
+  // beforeunload でブラウザ標準の確認ダイアログを出して抑止する。
+  // 強制終了された場合の保険は既存の「一括図面登録 → 未登録を登録」。
+  const PENDING_INDEX_CSS = [
+    ':host { all: initial; }',
+    '* { box-sizing: border-box; }',
+    '.pb-pending-panel { position: fixed; right: 16px; bottom: 16px; z-index: 2147483000;',
+    '  width: 300px; max-width: calc(100vw - 32px); background: #fff; border-radius: 12px;',
+    '  box-shadow: 0 20px 50px rgba(15,23,42,.22), 0 4px 12px rgba(15,23,42,.10);',
+    '  border: 1px solid #e6e9ef; overflow: hidden; color: #0f172a;',
+    '  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;',
+    '  animation: pb-pending-in .16s ease-out; }',
+    '@keyframes pb-pending-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }',
+    '.pb-pending-header { padding: 10px 12px; border-bottom: 1px solid #e6e9ef; font-size: 12.5px; font-weight: 700; }',
+    '.pb-pending-list { list-style: none; margin: 0; padding: 4px; max-height: 220px; overflow-y: auto; }',
+    '.pb-pending-row { display: flex; align-items: flex-start; gap: 6px; padding: 6px 8px;',
+    '  font-size: 12.5px; line-height: 1.4; color: #334155; border-radius: 8px; }',
+    '.pb-pending-row.fail { color: #b45309; }',
+    '.pb-pending-row .pb-pending-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }',
+    '.pb-pending-row .pb-pending-close { flex: 0 0 auto; border: none; background: transparent;',
+    '  color: #94a3b8; cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px; }',
+    '.pb-pending-row .pb-pending-close:hover { color: #334155; }',
+    '.pb-pending-note { padding: 7px 12px; font-size: 10.5px; color: #64748b; border-top: 1px solid #e6e9ef; }'
+  ].join('\n');
+
+  // 常駐ホストは初回呼び出し時に1回だけ作る（createModalShell と同様に closed Shadow DOM）。
+  let _pendingIndexUi = null;
+  const ensurePendingIndexUi = () => {
+    if (_pendingIndexUi) return _pendingIndexUi;
+    const host = document.createElement('div');
+    host.id = 'pb-pending-host';
+    document.body.appendChild(host);
+    const shadow = host.attachShadow({ mode: 'closed' });
+    const style = document.createElement('style');
+    style.textContent = PENDING_INDEX_CSS;
+    const panel = document.createElement('div');
+    panel.className = 'pb-pending-panel';
+    panel.hidden = true;
+    const header = document.createElement('div');
+    header.className = 'pb-pending-header';
+    header.textContent = '検索インデックスの登録状況';
+    const list = document.createElement('ul');
+    list.className = 'pb-pending-list';
+    const note = document.createElement('div');
+    note.className = 'pb-pending-note';
+    note.textContent = '完了までこのタブを閉じないでください。';
+    panel.append(header, list, note);
+    shadow.append(style, panel);
+    _pendingIndexUi = { panel, list };
+    return _pendingIndexUi;
+  };
+
+  // 処理中件数が1以上の間だけ beforeunload を登録し、0になったら解除する
+  // （タブを閉じる・リロード・別アプリへの移動＝フルページ遷移をブラウザ標準の確認で抑止する）。
+  let _pendingActiveCount = 0;
+  const _pendingBeforeUnloadHandler = (e) => {
+    e.preventDefault();
+    e.returnValue = '';
+    return '';
+  };
+  const _syncPendingGuard = () => {
+    if (_pendingActiveCount > 0) {
+      window.addEventListener('beforeunload', _pendingBeforeUnloadHandler);
+    } else {
+      window.removeEventListener('beforeunload', _pendingBeforeUnloadHandler);
+    }
+  };
+
+  // 呼ぶと右下パネルに進行中の行を1つ追加し、beforeunloadガードを有効化する。
+  // 戻り値の done()/fail(message) で行の表示を更新し、全処理が終わればガードを解除する。
+  const trackPendingIndex = (label) => {
+    const { panel, list } = ensurePendingIndexUi();
+    panel.hidden = false;
+    _pendingActiveCount += 1;
+    _syncPendingGuard();
+
+    const row = document.createElement('li');
+    row.className = 'pb-pending-row';
+    const text = document.createElement('span');
+    text.className = 'pb-pending-text';
+    text.textContent = '🔄 検索登録中: ' + label;
+    row.appendChild(text);
+    list.appendChild(row);
+
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      _pendingActiveCount = Math.max(0, _pendingActiveCount - 1);
+      _syncPendingGuard();
+    };
+
+    const maybeAutoHide = () => {
+      if (_pendingActiveCount === 0 && !list.querySelector('.pb-pending-row.fail')) {
+        setTimeout(() => {
+          if (_pendingActiveCount === 0 && !list.querySelector('.pb-pending-row.fail')) {
+            panel.hidden = true;
+            list.textContent = '';
+          }
+        }, 4000);
+      }
+    };
+
+    return {
+      done: () => {
+        finish();
+        text.textContent = '✓ 完了: ' + label;
+        maybeAutoHide();
+      },
+      fail: (message) => {
+        finish();
+        row.classList.add('fail');
+        text.textContent = '⚠ 失敗: ' + label + (message ? '（' + message + '）' : '');
+        const closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.className = 'pb-pending-close';
+        closeBtn.setAttribute('aria-label', '閉じる');
+        closeBtn.textContent = '×';
+        closeBtn.addEventListener('click', () => {
+          row.remove();
+          if (!list.children.length) panel.hidden = true;
+        });
+        row.appendChild(closeBtn);
+      }
+    };
+  };
+
   // --- モーダルシェル（Shadow DOM / Esc・フォーカス・aria 対応） ---
   // options.onClose: モーダルを閉じた後に呼ばれるフック
   const createModalShell = (options = {}) => {
@@ -914,41 +1045,48 @@
                   permanentFileName = files[0].name || permanentFileName;
                 }
               }
-              // Register similarity index. We now await this instead of firing-and-forgetting,
-              // because the body now includes the full PDF (pdf_base64, potentially several MB)
-              // instead of just a fileKey — if navigation continues immediately after submit,
-              // the browser is much more likely to abort the in-flight upload before it
-              // completes. Awaiting just means kintone keeps showing its own "saving" state a
-              // little longer (fast when the API is warm, up to roughly a minute on a cold
-              // start). If it's still interrupted or fails, the existing bulk-index flow
-              // ("un-indexed records") picks it up later.
-              try {
-                let pdfBase64;
-                if (permanentFileKey) {
-                  const blob = await downloadKintoneFile(permanentFileKey);
-                  pdfBase64 = await toBase64(blob);
+              // 検索インデックス登録（/index、約14秒）はバックグラウンドで実行する。
+              // ここでawaitすると保存後の画面遷移を長時間ブロックしてしまうため、待たずに
+              // trackPendingIndex に委ね、進行・結果は画面右下の常駐パネルに出す
+              // （kintoneは保存後に詳細画面へ遷移するが、SPAでページは破棄されないため
+              // パネルとこのfetchは生存し、離脱ガードも効く）。
+              const tracker = trackPendingIndex('図番 ' + (pending.drawingNo || ''));
+              (async () => {
+                try {
+                  let pdfBase64;
+                  if (permanentFileKey) {
+                    const blob = await downloadKintoneFile(permanentFileKey);
+                    pdfBase64 = await toBase64(blob);
+                  }
+                  const indexRes = await fetch(apiBaseUrl + '/index', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+                    body: JSON.stringify({
+                      appId: pending.appId,
+                      recordId,
+                      tenantId: pending.tenantId,
+                      drawingNo: pending.drawingNo,
+                      productName: getFieldValue(record, config.productNameField) || pending.productName,
+                      material: getFieldValue(record, config.materialField) || pending.material,
+                      dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
+                      tags,
+                      shapeTags: shapeTagsForSync || '',
+                      fileKey: permanentFileKey,
+                      fileName: permanentFileName,
+                      ...(pdfBase64 !== undefined ? { pdf_base64: pdfBase64 } : {}),
+                      limit: 10
+                    })
+                  });
+                  const data = await indexRes.json().catch(() => ({}));
+                  if (!indexRes.ok) {
+                    throw new Error(data.error || 'HTTP ' + indexRes.status);
+                  }
+                  tracker.done();
+                } catch (error) {
+                  // 一括図面登録（未登録を登録）で拾える
+                  tracker.fail(error.message);
                 }
-                const indexRes = await fetch(apiBaseUrl + '/index', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-                  body: JSON.stringify({
-                    appId: pending.appId,
-                    recordId,
-                    tenantId: pending.tenantId,
-                    drawingNo: pending.drawingNo,
-                    productName: getFieldValue(record, config.productNameField) || pending.productName,
-                    material: getFieldValue(record, config.materialField) || pending.material,
-                    dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
-                    tags,
-                    shapeTags: shapeTagsForSync || '',
-                    fileKey: permanentFileKey,
-                    fileName: permanentFileName,
-                    ...(pdfBase64 !== undefined ? { pdf_base64: pdfBase64 } : {}),
-                    limit: 10
-                  })
-                });
-                await indexRes.json().catch(() => ({}));
-              } catch { /* 一括図面登録（未登録を登録）で拾える */ }
+              })();
               return event;
             };
             return doPostSave().catch(() => event);
@@ -1310,6 +1448,408 @@
 
     state.phase = cancel.requested ? 'cancelled' : 'done';
     updateBulkModal(overlay, state);
+  };
+
+  // === 複数PDF一括登録（レコード自動作成つき） ===
+  // 手元のPDF/TIFを複数選択し、OCR解析→レコード作成→検索登録までをまとめて実行する。
+  // 1回の実行につき最大 BULK_PDF_MAX_PER_RUN 枚（完了後に再実行すれば続きから処理できる）。
+  const BULK_PDF_MAX_PER_RUN = 100;
+  // /analyze と /index はどちらも重い処理のため、通常の一括登録（BULK_INDEX_CONCURRENCY=3）
+  // より控えめな並列度にする。
+  const BULK_PDF_CONCURRENCY = 2;
+
+  const createBulkPdfModal = () => {
+    const overlay = document.createElement('div');
+    overlay.id = 'pb-bulk-pdf-overlay';
+    overlay.className = 'pb-bulk-overlay';
+    overlay.innerHTML = [
+      '<div class="pb-bulk-modal">',
+      '<h2 class="pb-bulk-title">複数PDF登録</h2>',
+      '<div class="pb-bulk-phase">準備中...</div>',
+      '<div class="pb-bulk-bar-wrap"><div class="pb-bulk-bar-fill"></div></div>',
+      '<div class="pb-bulk-counts">',
+      '<span class="pb-bulk-total">合計 <b>-</b></span>',
+      '<span class="pb-bulk-success">成功 <b>0</b></span>',
+      '<span class="pb-bulk-skip">登録済みスキップ <b>0</b></span>',
+      '<span class="pb-bulk-manual">要手動 <b>0</b></span>',
+      '<span class="pb-bulk-fail">失敗 <b>0</b></span>',
+      '</div>',
+      '<ul class="pb-bulk-errors"></ul>',
+      '<div class="pb-bulk-actions">',
+      '<button class="pb-bulk-cancel pb-similarity-button secondary" type="button">キャンセル</button>',
+      '</div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(overlay);
+    return overlay;
+  };
+
+  const updateBulkPdfModal = (overlay, state) => {
+    const phaseEl = overlay.querySelector('.pb-bulk-phase');
+    const fill = overlay.querySelector('.pb-bulk-bar-fill');
+    const cancelBtn = overlay.querySelector('.pb-bulk-cancel');
+
+    if (state.phase === 'process') {
+      phaseEl.textContent = '処理中... ' + state.processed + ' / ' + state.total + ' 件';
+      fill.style.width = state.total > 0 ? Math.round(state.processed / state.total * 100) + '%' : '5%';
+    } else if (state.phase === 'done') {
+      phaseEl.textContent = '完了しました。';
+      fill.style.width = '100%';
+    } else if (state.phase === 'cancelled') {
+      phaseEl.textContent = 'キャンセルしました（実行中だった1件は完了しています）。';
+    } else if (state.phase === 'error') {
+      phaseEl.textContent = 'エラー: ' + (state.errorMessage || '不明なエラー');
+    }
+
+    const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
+    cancelBtn.textContent = isDone ? '閉じる' : 'キャンセル';
+
+    overlay.querySelector('.pb-bulk-total b').textContent = state.total > 0 ? state.total + '件' : '-';
+    overlay.querySelector('.pb-bulk-success b').textContent = state.success;
+    overlay.querySelector('.pb-bulk-skip b').textContent = state.skip;
+    overlay.querySelector('.pb-bulk-manual b').textContent = state.manual;
+    overlay.querySelector('.pb-bulk-fail b').textContent = state.fail;
+
+    const errorsList = overlay.querySelector('.pb-bulk-errors');
+    errorsList.textContent = '';
+    // 1回の実行が最大100件のため、全件表示して問題ない
+    (state.entries || []).forEach((entry) => {
+      const li = document.createElement('li');
+      li.className = 'pb-bulk-error-item';
+      li.textContent = entry.fileName + ': ' + entry.message;
+      errorsList.appendChild(li);
+    });
+  };
+
+  // 1ファイル分の処理（analyze→重複チェック→アップロード→レコード作成→/indexバイナリ直送をawait）。
+  // 成功=検索登録まで完了した状態。呼び出し側の state を直接更新する。
+  const processOneBulkPdf = async (file, config, apiBaseUrl, appId, tenantId, commonFieldValues, state) => {
+    const fileName = file.name;
+    const drawingNoField = config.drawingNoField || '';
+    const productNameField = config.productNameField || '';
+    const materialField = config.materialField || '';
+    const dimensionField = config.dimensionField || '';
+    const shapeTagField = config.shapeTagField || '';
+    const pdfFileField = config.pdfFileField || '';
+
+    try {
+      const base64 = await toBase64(file);
+      const analyzeRes = await fetch(apiBaseUrl + '/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+        body: JSON.stringify({ pdf_base64: base64 })
+      });
+      const analyzeData = await analyzeRes.json();
+      if (!analyzeRes.ok) throw new Error(analyzeData.error || 'HTTP ' + analyzeRes.status);
+
+      const drawingNo = String(analyzeData.drawingNo || '').trim();
+      if (!drawingNo) {
+        state.manual += 1;
+        state.entries.push({ fileName, message: '図番を読み取れませんでした' });
+        return;
+      }
+
+      const existing = await findRecordByDrawingNo(drawingNo, drawingNoField, appId);
+      if (existing) {
+        state.skip += 1;
+        state.entries.push({ fileName, message: '図番 ' + drawingNo + ' は登録済みのためスキップしました' });
+        return;
+      }
+
+      const fileKey = await uploadFileToKintone(file);
+      const shapeTags = Array.isArray(analyzeData.extracted && analyzeData.extracted.shapeTags)
+        ? analyzeData.extracted.shapeTags
+        : [];
+
+      const recordFields = {};
+      if (drawingNoField) recordFields[drawingNoField] = { value: drawingNo };
+      if (productNameField) recordFields[productNameField] = { value: analyzeData.productName || '' };
+      if (materialField) recordFields[materialField] = { value: analyzeData.material || '' };
+      if (dimensionField) recordFields[dimensionField] = { value: analyzeData.dimension || '' };
+      if (shapeTagField) recordFields[shapeTagField] = { value: shapeTags.join(',') };
+      if (pdfFileField) recordFields[pdfFileField] = { value: [{ fileKey }] };
+      Object.entries(commonFieldValues || {}).forEach(([code, value]) => {
+        recordFields[code] = { value };
+      });
+
+      const created = await kintone.api(kintone.api.url('/k/v1/record', true), 'POST', {
+        app: appId, record: recordFields
+      });
+      const recordId = created.id;
+
+      // ファイル添付でfileKeyは消費されているため、/indexには永続fileKeyを読み直して渡す。
+      let indexFileKey = fileKey;
+      let indexFileName = file.name;
+      if (pdfFileField) {
+        try {
+          const updated = await kintone.api(kintone.api.url('/k/v1/record', true), 'GET', {
+            app: appId, id: recordId
+          });
+          const files = updated.record[pdfFileField] && updated.record[pdfFileField].value;
+          if (files && files.length > 0) {
+            indexFileKey = files[0].fileKey || indexFileKey;
+            indexFileName = files[0].name || indexFileName;
+          }
+        } catch (_) { /* 読み直し失敗時は元のfileKeyを使う */ }
+      }
+
+      // /indexはバイナリ直送。手元のfileをそのまま送る（アップロード済みと同一バイト列のため
+      // 再ダウンロード不要）。1件の成功＝検索登録まで完了した状態とするためawaitする。
+      const indexRes = await fetch(apiBaseUrl + '/index', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Index-Meta': encodeURIComponent(JSON.stringify({
+            appId: String(appId),
+            recordId: String(recordId),
+            tenantId,
+            drawingNo,
+            productName: analyzeData.productName || '',
+            material: analyzeData.material || '',
+            dimension: analyzeData.dimension || '',
+            tags: '',
+            shapeTags: shapeTags.join(','),
+            fileKey: indexFileKey,
+            fileName: indexFileName,
+            limit: 10
+          })),
+          ...apiKeyHeader(config.apiKey)
+        },
+        body: file
+      });
+      const indexData = await indexRes.json().catch(() => ({}));
+      if (!indexRes.ok) {
+        throw new Error(indexData.error || 'HTTP ' + indexRes.status + (indexData.step ? ' [' + indexData.step + ']' : ''));
+      }
+
+      state.success += 1;
+    } catch (error) {
+      state.fail += 1;
+      state.entries.push({ fileName, message: error.message });
+    }
+  };
+
+  // commonFieldValues: 対応タイプの必須フィールドについて、全レコード共通で設定する値（{code: value}）
+  const runBulkPdfRegister = async (overlay, config, apiBaseUrl, files, commonFieldValues) => {
+    const cancel = { requested: false };
+    const state = {
+      phase: 'process',
+      total: files.length,
+      processed: 0,
+      success: 0,
+      skip: 0,
+      manual: 0,
+      fail: 0,
+      entries: []
+    };
+
+    overlay.querySelector('.pb-bulk-cancel').addEventListener('click', () => {
+      const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
+      if (isDone) { overlay.remove(); return; }
+      cancel.requested = true;
+    });
+
+    updateBulkPdfModal(overlay, state);
+
+    const appId = kintone.app.getId();
+    const tenantId = deriveTenantId();
+
+    // 実行中は離脱ガードを有効化する（複数PDF登録全体を1つの処理として扱う。
+    // 個々のファイルごとに登録すると、途中でパネルの表示が入れ替わって分かりにくいため）。
+    const tracker = trackPendingIndex('複数PDF登録（' + files.length + '件）');
+    let trackerSettled = false;
+    const settleTracker = (ok, message) => {
+      if (trackerSettled) return;
+      trackerSettled = true;
+      if (ok) tracker.done(); else tracker.fail(message);
+    };
+
+    const processOne = async (file) => {
+      await processOneBulkPdf(file, config, apiBaseUrl, appId, tenantId, commonFieldValues, state);
+      state.processed += 1;
+      updateBulkPdfModal(overlay, state);
+    };
+
+    let nextIndex = 0;
+    const runWorker = async () => {
+      while (nextIndex < files.length && !cancel.requested) {
+        const file = files[nextIndex];
+        nextIndex += 1;
+        await processOne(file);
+      }
+    };
+    const workerCount = Math.min(BULK_PDF_CONCURRENCY, files.length) || 1;
+
+    try {
+      await Promise.all(Array.from({ length: workerCount }, runWorker));
+      state.phase = cancel.requested ? 'cancelled' : 'done';
+      updateBulkPdfModal(overlay, state);
+      settleTracker(state.fail === 0);
+    } catch (error) {
+      state.phase = 'error';
+      state.errorMessage = error.message;
+      updateBulkPdfModal(overlay, state);
+      settleTracker(false, error.message);
+    }
+  };
+
+  // ファイル選択（複数選択 / フォルダ選択）→ 全レコード共通の必須項目入力 → 確認 → 実行、の2段階。
+  const openBulkPdfRegisterModal = (config, apiBaseUrl) => {
+    if (!config.pdfFileField) {
+      window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
+      return;
+    }
+    const shell = createModalShell();
+    shell.host.id = 'pb-bulk-pdf-select-host';
+    const { content } = shell;
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('h2');
+    title.textContent = '複数PDF登録';
+    const sub = document.createElement('div');
+    sub.className = 'modal-sub';
+    sub.textContent = '手元のPDF/TIFからレコード作成と検索登録をまとめて実行します';
+    titleWrap.append(title, sub);
+    header.appendChild(titleWrap);
+
+    const formPanel = document.createElement('div');
+    formPanel.className = 'form-panel';
+
+    const zone = document.createElement('div');
+    zone.className = 'dropzone';
+    const icon = document.createElement('div');
+    icon.className = 'drop-icon';
+    icon.textContent = '📄';
+    const mainEl = document.createElement('div');
+    mainEl.className = 'drop-main';
+    mainEl.textContent = 'PDF / TIF を複数選択';
+    const subEl = document.createElement('div');
+    subEl.className = 'drop-sub';
+    subEl.textContent = 'クリックしてファイルを選択（複数選択可）';
+    const noteEl = document.createElement('div');
+    noteEl.className = 'drop-note';
+    noteEl.textContent = '1回の実行につき最大' + BULK_PDF_MAX_PER_RUN + '枚まで';
+    const filesInput = document.createElement('input');
+    filesInput.type = 'file';
+    filesInput.multiple = true;
+    filesInput.accept = '.pdf,.tif,.tiff,application/pdf,image/tiff';
+    filesInput.className = 'file-input';
+    zone.append(icon, mainEl, subEl, filesInput, noteEl);
+    formPanel.appendChild(zone);
+
+    const orEl = document.createElement('div');
+    orEl.className = 'status-line';
+    orEl.style.cssText = 'justify-content:center; margin-top:14px;';
+    orEl.textContent = 'または';
+    formPanel.appendChild(orEl);
+
+    const folderZone = document.createElement('div');
+    folderZone.className = 'dropzone';
+    const fIcon = document.createElement('div');
+    fIcon.className = 'drop-icon';
+    fIcon.textContent = '📁';
+    const fMain = document.createElement('div');
+    fMain.className = 'drop-main';
+    fMain.textContent = 'フォルダを選択';
+    const fSub = document.createElement('div');
+    fSub.className = 'drop-sub';
+    fSub.textContent = 'フォルダ内のPDF・TIFをまとめて選択します';
+    const folderInput = document.createElement('input');
+    folderInput.type = 'file';
+    folderInput.webkitdirectory = true;
+    folderInput.multiple = true;
+    folderInput.className = 'file-input';
+    folderZone.append(fIcon, fMain, fSub, folderInput);
+    formPanel.appendChild(folderZone);
+
+    const statusEl = document.createElement('div');
+    statusEl.className = 'status-line';
+    formPanel.appendChild(statusEl);
+
+    const requiredSectionWrap = document.createElement('div');
+    formPanel.appendChild(requiredSectionWrap);
+
+    const actions = document.createElement('div');
+    actions.className = 'form-actions';
+    const startBtn = document.createElement('button');
+    startBtn.className = 'btn-primary';
+    startBtn.type = 'button';
+    startBtn.textContent = '登録開始';
+    startBtn.disabled = true;
+    actions.appendChild(startBtn);
+    formPanel.appendChild(actions);
+
+    content.append(header, formPanel);
+
+    let selectedFiles = [];
+    let requiredFieldsUi = null;
+    let requiredFieldsBlocking = false;
+    let requiredFieldsReady = false;
+
+    const refreshStartButton = () => {
+      startBtn.disabled = !selectedFiles.length || !requiredFieldsReady || requiredFieldsBlocking;
+    };
+
+    const applySelection = (rawFiles) => {
+      const filtered = rawFiles.filter((f) => /\.(pdf|tiff?)$/i.test(f.name));
+      if (!filtered.length) {
+        statusEl.textContent = 'PDF・TIFファイルが見つかりませんでした。';
+        selectedFiles = [];
+        refreshStartButton();
+        return;
+      }
+      let notice = '';
+      if (filtered.length > BULK_PDF_MAX_PER_RUN) {
+        notice = ' 最初の' + BULK_PDF_MAX_PER_RUN + '枚のみ処理します（完了後にもう一度実行すると続きから処理できます）。';
+      }
+      selectedFiles = filtered.slice(0, BULK_PDF_MAX_PER_RUN);
+      statusEl.textContent = selectedFiles.length + ' 件のPDF・TIFが選択されました。' + notice;
+      refreshStartButton();
+    };
+
+    filesInput.addEventListener('change', () => applySelection(Array.from(filesInput.files || [])));
+    folderInput.addEventListener('change', () => applySelection(Array.from(folderInput.files || [])));
+    zone.addEventListener('click', (e) => { if (e.target !== filesInput) filesInput.click(); });
+    folderZone.addEventListener('click', (e) => { if (e.target !== folderInput) folderInput.click(); });
+
+    // 必須フィールドの検出（対応外タイプが必須にあれば開始不可にする）
+    (async () => {
+      try {
+        const requiredFields = await getUnmappedRequiredFields(config);
+        if (requiredFields.length) {
+          const sectionLabel = document.createElement('div');
+          sectionLabel.className = 'section-label';
+          sectionLabel.textContent = 'このアプリの必須項目（全レコード共通の値）';
+          requiredSectionWrap.appendChild(sectionLabel);
+          requiredFieldsUi = buildRequiredFieldInputs(requiredFields);
+          requiredSectionWrap.appendChild(requiredFieldsUi.element);
+          if (requiredFieldsUi.hasUnsupported) {
+            requiredFieldsBlocking = true;
+            const warn = document.createElement('div');
+            warn.className = 'field-note warn';
+            warn.textContent = '必須フィールド「' + requiredFieldsUi.unsupportedLabels.join('」「') +
+              '」はプラグインから設定できないため、複数PDF登録は開始できません。通常の図面登録（1件ずつ）をご利用ください。';
+            requiredSectionWrap.appendChild(warn);
+          }
+        }
+      } catch (_) { /* 取得失敗時は必須項目チェックをスキップする */ }
+      requiredFieldsReady = true;
+      refreshStartButton();
+    })();
+
+    startBtn.addEventListener('click', () => {
+      if (!selectedFiles.length || requiredFieldsBlocking) return;
+      if (requiredFieldsUi && !requiredFieldsUi.validate()) return;
+      if (!window.confirm(selectedFiles.length + '件のPDFからレコードを作成し、検索登録まで実行します。よろしいですか？')) {
+        return;
+      }
+      const commonFieldValues = requiredFieldsUi ? requiredFieldsUi.getValues() : {};
+      shell.closeModal();
+      const overlay = createBulkPdfModal();
+      runBulkPdfRegister(overlay, config, apiBaseUrl, selectedFiles, commonFieldValues);
+    });
   };
 
   // === 過去図面アーカイブ取り込み（kintoneには登録せず、フォルダ内PDFを検索対象に追加） ===
@@ -2467,7 +3007,7 @@
     };
 
     // --- State: Form ---
-    const showFormState = (file, analyzeResult, availableTags, fieldValues, reuseFileKey) => {
+    const showFormState = (file, analyzeResult, availableTags, fieldValues, reuseFileKey, requiredFields) => {
       clear();
       modal.classList.add('wide');
       let drawingNoInput, productNameInput, materialInput, dimensionInput;
@@ -2624,6 +3164,25 @@
         getTagValues = getValues;
       }
 
+      // このアプリの必須項目（プラグインが自動設定しないフィールド）。新規登録時のみ渡される。
+      // 対応外タイプの必須項目がある場合は保存時にkintoneの作成画面へリダイレクトするフォールバックになる。
+      let requiredFieldsUi = null;
+      if (requiredFields && requiredFields.length) {
+        const sectionLabel = document.createElement('div');
+        sectionLabel.className = 'section-label';
+        sectionLabel.textContent = 'このアプリの必須項目';
+        formPanel.appendChild(sectionLabel);
+        requiredFieldsUi = buildRequiredFieldInputs(requiredFields);
+        formPanel.appendChild(requiredFieldsUi.element);
+        if (requiredFieldsUi.hasUnsupported) {
+          const warn = document.createElement('div');
+          warn.className = 'field-note warn';
+          warn.textContent = '必須フィールド「' + requiredFieldsUi.unsupportedLabels.join('」「') +
+            '」はプラグインから設定できないため、保存時にkintoneの作成画面へ移動します。';
+          formPanel.appendChild(warn);
+        }
+      }
+
       // Actions
       const actions = document.createElement('div');
       actions.className = 'form-actions';
@@ -2648,6 +3207,11 @@
           return;
         }
         drawingNoInput.classList.remove('error');
+        // 対応タイプの必須項目は保存前に埋まっていることを確認する
+        // （対応外タイプはリダイレクトフォールバックでkintone側の必須チェックに任せる）
+        if (requiredFieldsUi && !requiredFieldsUi.validate()) {
+          return;
+        }
         submitBtn.disabled = true;
         try {
           await doRegister(
@@ -2658,10 +3222,13 @@
             dimensionInput.value.trim(),
             getProcessValues(),
             getTagValues(),
-            reuseFileKey
+            reuseFileKey,
+            requiredFieldsUi ? requiredFieldsUi.getValues() : {},
+            requiredFieldsUi ? requiredFieldsUi.hasUnsupported : false
           );
         } catch (error) {
           showDoneState(false, '登録に失敗しました。', error.message);
+          submitBtn.disabled = false;
         }
       });
 
@@ -2707,8 +3274,9 @@
     };
 
     // --- State: Done ---
-    // indexPromise を渡すと「検索インデックス登録」の進行/結果をライブ表示する
-    const showDoneState = (success, message, detail, indexPromise) => {
+    // backgroundNote を渡すと、バックグラウンドで実行中の検索インデックス登録について
+    // 一言添える（実際の進行/結果は右下の常駐パネル・trackPendingIndex が受け持つ）。
+    const showDoneState = (success, message, detail, backgroundNote) => {
       clear();
       modal.classList.remove('wide');
       const title = document.createElement('h2');
@@ -2728,26 +3296,12 @@
         det.textContent = detail;
         resultWrap.appendChild(det);
       }
-      if (indexPromise) {
-        const indexStatus = document.createElement('div');
-        indexStatus.className = 'status-line';
-        indexStatus.style.cssText = 'justify-content:center; margin-top:14px;';
-        const spinnerEl = document.createElement('div');
-        spinnerEl.className = 'pb-spinner';
-        spinnerEl.style.cssText = 'width:16px; height:16px; border-width:2px;';
-        const statusText = document.createElement('span');
-        statusText.textContent = '検索インデックスを登録中...（閉じても処理は続きます）';
-        indexStatus.append(spinnerEl, statusText);
-        resultWrap.appendChild(indexStatus);
-        indexPromise.then((data) => {
-          spinnerEl.remove();
-          statusText.textContent = '✓ 検索インデックスの登録が完了しました' +
-            (data && data.vector ? '（' + data.vector.provider + ' ' + data.vector.size + 'd）' : '');
-        }).catch((error) => {
-          spinnerEl.remove();
-          indexStatus.style.color = '#b45309';
-          statusText.textContent = '⚠ 検索インデックス登録に失敗しました。「図面を登録/更新」から再登録してください。（' + error.message + '）';
-        });
+      if (backgroundNote) {
+        const note = document.createElement('div');
+        note.className = 'status-line';
+        note.style.cssText = 'justify-content:center; margin-top:14px; text-align:center;';
+        note.textContent = backgroundNote;
+        resultWrap.appendChild(note);
       }
       const actions = document.createElement('div');
       actions.className = 'form-actions';
@@ -2787,15 +3341,23 @@
         showDoneState(false, 'OCR解析に失敗しました。', error.message);
         return;
       }
-      const [availableTags, fieldValues] = await Promise.all([
+      // 必須項目セクションは「新規登録」の入口（既存レコードの詳細画面からの更新ではない）
+      // でのみ取得する。更新時はレコードにすでに値があり、空欄での再入力を強制すると
+      // 既存の値を消しかねないため（Part3設計）。
+      const isUpdateEntry = !!(existingContext && existingContext.recordId);
+      const [availableTags, fieldValues, requiredFields] = await Promise.all([
         fetchExistingTags(apiBaseUrl, tenantId, config.apiKey),
-        fetchFieldValueSuggestions(apiBaseUrl, tenantId, config.apiKey)
+        fetchFieldValueSuggestions(apiBaseUrl, tenantId, config.apiKey),
+        isUpdateEntry ? Promise.resolve([]) : getUnmappedRequiredFields(config)
       ]);
-      showFormState(file, analyzeResult, availableTags, fieldValues, reuseFileKey);
+      showFormState(file, analyzeResult, availableTags, fieldValues, reuseFileKey, requiredFields);
     };
 
     // --- Registration ---
-    const doRegister = async (file, drawingNo, productName, material, dimension, processes, tagValues, reuseFileKey) => {
+    const doRegister = async (
+      file, drawingNo, productName, material, dimension, processes, tagValues, reuseFileKey,
+      requiredFieldValues, hasUnsupportedRequired
+    ) => {
       const tags = tagValues.tags;
       const shapeTags = tagValues.shapeTags;
       let fileKey;
@@ -2819,8 +3381,12 @@
       if (tagsField) recordFields[tagsField] = { value: tags.join(',') };
       if (shapeTagField) recordFields[shapeTagField] = { value: shapeTags.join(',') };
       if (pdfFileField) recordFields[pdfFileField] = { value: [{ fileKey }] };
+      Object.entries(requiredFieldValues || {}).forEach(([code, value]) => {
+        recordFields[code] = { value };
+      });
 
       let recordId;
+      let isNewRecord = false;
       try {
         if (existingContext && existingContext.recordId) {
           recordId = existingContext.recordId;
@@ -2835,8 +3401,9 @@
             await kintone.api(kintone.api.url('/k/v1/record', true), 'PUT', {
               app: appId, id: recordId, record: recordFields
             });
-          } else {
-            // New record: redirect to kintone create form so user can fill required fields
+          } else if (hasUnsupportedRequired) {
+            // 対応外タイプの必須フィールドがあるため、従来どおりkintoneの作成画面へ
+            // リダイレクトし、そちらで必須項目を入力してもらう。
             const pending = {
               appId: String(appId),
               tenantId,
@@ -2854,6 +3421,15 @@
             showRegisteringState(undefined, '新規図面のため、kintoneの編集画面へ移動します...');
             setTimeout(() => { window.location.href = '/k/' + appId + '/edit'; }, 800);
             return;
+          } else {
+            // 新規レコードはモーダル内でkintone REST APIから直接作成する
+            // （従来のリダイレクト→保存イベント内で/indexをawaitするフローは廃止）。
+            isNewRecord = true;
+            if (drawingNoField) recordFields[drawingNoField] = { value: drawingNo };
+            const created = await kintone.api(kintone.api.url('/k/v1/record', true), 'POST', {
+              app: appId, record: recordFields
+            });
+            recordId = created.id;
           }
         }
       } catch (error) {
@@ -2861,7 +3437,7 @@
       }
       kintoneRecordChanged = true;
 
-      // PUT でファイルを添付すると一時 fileKey は消費されるため、/index には
+      // ファイル添付（POST/PUTいずれも）で一時 fileKey は消費されるため、/index には
       // レコードを読み直して得た永続 fileKey を渡す（消費済みキーだと 404 になる）。
       let indexFileKey = fileKey;
       let indexFileName = file ? file.name : '';
@@ -2878,38 +3454,49 @@
         } catch (_) { /* 読み直しに失敗した場合は元の fileKey を使う */ }
       }
 
-      // 検索インデックス登録は時間がかかる（コールドスタート時は1分弱）ので
-      // モーダルをブロックせずバックグラウンドで実行し、完了画面上で状態を反映する。
-      // pdf_base64 はブラウザのkintoneセッションで取得済みの file をそのまま
-      // 送る（サーバー側のkintone接続を不要にするため）。fileKey/fileName は
-      // 整合性チェック（/index-status）用に従来通り送る。
-      const indexPromise = toBase64(file).then((pdfBase64) => fetch(apiBaseUrl + '/index', {
+      // kintoneレコードの保存はここまでで完了。検索インデックス登録（/index、コールド
+      // スタート時は1分弱）はモーダルをブロックせずバックグラウンドで実行する。
+      // 完了画面はすぐに表示し、進行・結果は画面右下の常駐パネル（trackPendingIndex）が
+      // 引き受ける。bodyは手元の file をそのままバイナリ直送する
+      // （アップロード済みのバイト列と同一のため、kintoneからのダウンロードは不要）。
+      showDoneState(
+        true,
+        '図番 ' + drawingNo + ' を保存しました。',
+        'record ' + recordId,
+        '検索登録はバックグラウンドで実行中です（右下の表示をご確認ください）'
+      );
+
+      const tracker = trackPendingIndex('図番 ' + drawingNo + (isNewRecord ? '' : '（更新）'));
+      fetch(apiBaseUrl + '/index', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-        body: JSON.stringify({
-          appId: String(appId),
-          recordId: String(recordId),
-          tenantId,
-          drawingNo,
-          productName,
-          material,
-          dimension,
-          tags: tags.join(','),
-          shapeTags: shapeTags.join(','),
-          fileKey: indexFileKey,
-          fileName: indexFileName,
-          pdf_base64: pdfBase64,
-          limit: 10
-        })
-      })).then(async (indexRes) => {
+        headers: {
+          'Content-Type': 'application/octet-stream',
+          'X-Index-Meta': encodeURIComponent(JSON.stringify({
+            appId: String(appId),
+            recordId: String(recordId),
+            tenantId,
+            drawingNo,
+            productName,
+            material,
+            dimension,
+            tags: tags.join(','),
+            shapeTags: shapeTags.join(','),
+            fileKey: indexFileKey,
+            fileName: indexFileName,
+            limit: 10
+          })),
+          ...apiKeyHeader(config.apiKey)
+        },
+        body: file
+      }).then(async (indexRes) => {
         const data = await indexRes.json().catch(() => ({}));
         if (!indexRes.ok) {
           throw new Error(describeApiError(indexRes.status, data.error));
         }
-        return data;
+        tracker.done();
+      }).catch((error) => {
+        tracker.fail(error.message);
       });
-
-      showDoneState(true, '図番 ' + drawingNo + ' を保存しました。', 'record ' + recordId, indexPromise);
     };
 
     if (existingContext && existingContext.fileMeta) {
@@ -3045,6 +3632,129 @@
       _fieldLabelsCache = {};
     }
     return _fieldLabelsCache;
+  };
+
+  // === 新規登録（モーダル内REST API作成）向け：プラグインが自動設定しない必須フィールドの検出 ===
+
+  // kintoneのシステム系フィールドタイプ（自動採番・作成者・更新者・ステータス等）は
+  // ユーザーが値を入力する対象ではないため、必須項目の検出から除外する。
+  const SYSTEM_FIELD_TYPES = new Set([
+    'RECORD_NUMBER', 'CREATOR', 'CREATED_TIME', 'MODIFIER', 'UPDATED_TIME',
+    'STATUS', 'STATUS_ASSIGNEE', 'CATEGORY', 'SUBTABLE', 'GROUP', 'LABEL',
+    'SPACER', 'HR', 'REFERENCE_TABLE'
+  ]);
+
+  // プラグインが入力欄を出せるフィールドタイプ。DROP_DOWN/RADIO_BUTTONはoptionsも使う。
+  const SUPPORTED_REQUIRED_FIELD_TYPES = new Set([
+    'SINGLE_LINE_TEXT', 'MULTI_LINE_TEXT', 'NUMBER', 'DATE', 'DROP_DOWN', 'RADIO_BUTTON'
+  ]);
+
+  // アプリのフォーム定義（fetchFieldLabelsのキャッシュを再利用）から、必須（required）かつ
+  // configで自動設定されないフィールド（drawingNoField等）・システム系タイプを除いた
+  // {code,label,type,options} の配列を返す。
+  const getUnmappedRequiredFields = async (config) => {
+    const properties = await fetchFieldLabels();
+    const mappedCodes = new Set([
+      config.drawingNoField, config.productNameField, config.materialField,
+      config.dimensionField, config.processField, config.tagField,
+      config.shapeTagField, config.pdfFileField
+    ].filter(Boolean));
+
+    return Object.keys(properties || {})
+      .map((code) => properties[code])
+      .filter((field) => field && field.required === true)
+      .filter((field) => !mappedCodes.has(field.code))
+      .filter((field) => !SYSTEM_FIELD_TYPES.has(field.type))
+      .map((field) => ({
+        code: field.code,
+        label: field.label || field.code,
+        type: field.type,
+        options: field.options
+          ? Object.values(field.options)
+            .sort((a, b) => Number(a.index) - Number(b.index))
+            .map((o) => o.label)
+          : []
+      }));
+  };
+
+  // Part2の必須フィールド入力UI。対応タイプ（テキスト/数値/日付/選択）のみ入力欄を作る。
+  // 対応外タイプが1つでもあれば hasUnsupported=true を返し、呼び出し側でフォールバック判定に使う。
+  // validate() は空欄をエラー表示しつつ全項目が埋まっているかを返す。
+  const buildRequiredFieldInputs = (fields) => {
+    const element = document.createElement('div');
+    let hasUnsupported = false;
+    const unsupportedLabels = [];
+    const inputs = [];
+
+    fields.forEach((field) => {
+      const group = document.createElement('div');
+      group.className = 'field-group';
+      const label = document.createElement('label');
+      label.className = 'field-label';
+      label.textContent = field.label + ' *';
+      group.appendChild(label);
+
+      if (!SUPPORTED_REQUIRED_FIELD_TYPES.has(field.type)) {
+        hasUnsupported = true;
+        unsupportedLabels.push(field.label);
+        const note = document.createElement('div');
+        note.className = 'field-note warn';
+        note.textContent = 'このタイプ（' + field.type + '）はプラグインから設定できません。';
+        group.appendChild(note);
+        element.appendChild(group);
+        return;
+      }
+
+      let input;
+      if (field.type === 'MULTI_LINE_TEXT') {
+        input = document.createElement('textarea');
+        input.className = 'field-input';
+        input.rows = 3;
+      } else if (field.type === 'DROP_DOWN' || field.type === 'RADIO_BUTTON') {
+        input = document.createElement('select');
+        input.className = 'field-input';
+        const blank = document.createElement('option');
+        blank.value = '';
+        blank.textContent = '選択してください';
+        input.appendChild(blank);
+        (field.options || []).forEach((opt) => {
+          const optionEl = document.createElement('option');
+          optionEl.value = opt;
+          optionEl.textContent = opt;
+          input.appendChild(optionEl);
+        });
+      } else {
+        input = document.createElement('input');
+        input.className = 'field-input';
+        input.type = field.type === 'NUMBER' ? 'number' : field.type === 'DATE' ? 'date' : 'text';
+      }
+      group.appendChild(input);
+      element.appendChild(group);
+      inputs.push({ code: field.code, el: input });
+    });
+
+    return {
+      element,
+      hasUnsupported,
+      unsupportedLabels,
+      getValues: () => {
+        const values = {};
+        inputs.forEach(({ code, el }) => { values[code] = String(el.value || '').trim(); });
+        return values;
+      },
+      validate: () => {
+        let ok = true;
+        inputs.forEach(({ el }) => {
+          if (String(el.value || '').trim()) {
+            el.classList.remove('error');
+          } else {
+            el.classList.add('error');
+            ok = false;
+          }
+        });
+        return ok;
+      }
+    };
   };
 
   // config.resultDetailFields（カンマ区切りのフィールドコード）が設定されていれば、
@@ -4248,6 +4958,14 @@
         onClick: () => {
           if (document.getElementById('pb-index-status-host') || document.getElementById('pb-bulk-overlay')) return;
           openIndexStatusModal(config, apiBaseUrl, { bulkMode: true });
+        }
+      });
+      menuItems.push({
+        label: '複数PDF登録',
+        description: '手元のPDF/TIFからレコード作成と検索登録をまとめて実行',
+        onClick: () => {
+          if (document.getElementById('pb-bulk-pdf-select-host') || document.getElementById('pb-bulk-pdf-overlay')) return;
+          openBulkPdfRegisterModal(config, apiBaseUrl);
         }
       });
     }
