@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
-import { createHash, createHmac, createSign, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, createSign, timingSafeEqual, randomBytes, createCipheriv } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -2052,7 +2052,11 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     shape_centroid_y: context.shape?.centroidY ?? null,
     shape_edge_density: context.shape?.edgeDensity ?? null,
     shape_vertical_profile_json: context.shape?.verticalProfile ? safeJsonStringify(context.shape.verticalProfile) : '',
-    shape_horizontal_profile_json: context.shape?.horizontalProfile ? safeJsonStringify(context.shape.horizontalProfile) : ''
+    shape_horizontal_profile_json: context.shape?.horizontalProfile ? safeJsonStringify(context.shape.horizontalProfile) : '',
+    // 暗号化サムネイル。thumbKeyが無い/暗号化に失敗したリクエストでは一切追加しない
+    // （フィールド自体が無ければ既存動作と完全に同じ）。thumb_ver は将来の暗号形式
+    // 変更に備えたバージョンタグ（現状は常に1）。
+    ...(context.thumbEnc ? { thumb_enc: context.thumbEnc, thumb_ver: THUMB_ENC_VERSION } : {})
   };
 
   try {
@@ -2174,7 +2178,10 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
       body: JSON.stringify({
         vector: queryVector,
         limit,
-        with_payload: true,
+        // 候補は最大100件×回転パターン分と多く、thumb_enc（サムネイル暗号文、~30KB）を
+        // 検索のたびに引きずるとレスポンスが不必要に重くなるため除外する。
+        // /similar の結果にサムネイルは含まれない（別途 POST /thumbs で取得する）。
+        with_payload: { exclude: ['thumb_enc'] },
         filter: {
           must: [
             {
@@ -2435,6 +2442,48 @@ const convertPdfFirstPageToThumbnailPng = async (pdfBuffer, maxWidth = thumbnail
     return readFile(imagePath);
   } finally {
     await rm(workDir, { recursive: true, force: true });
+  }
+};
+
+// --- 暗号化サムネイルのQdrant保存 ---
+// ギャラリー・検索結果カードのサムネイル表示を高速化しつつ「サーバーに復号可能な
+// 図面を保存しない」原則を守るため、登録時にプラグインから送られてくるテナント
+// 専用鍵（kintoneプラグイン設定にのみ保存され、サーバーは永続化しない）でサムネイルを
+// 暗号化してQdrant payloadに保存する。復号はブラウザ（WebCrypto）が行い、サーバーは
+// 保存時に暗号化した後は暗号文を返すだけ。鍵が無ければ従来どおり（サムネイル保存なし）。
+const THUMB_ENC_VERSION = 1;
+const thumbEncMaxWidth = Number(process.env.THUMB_ENC_MAX_WIDTH || 300);
+
+// 保存形式: base64( iv(12バイト) || ciphertext || authTag(16バイト) )
+// WebCrypto の AES-GCM decrypt は「ciphertext末尾にtagが連結された形」を期待するため、
+// ブラウザ側は先頭12バイトをIVとして分離し、残りをそのまま decrypt に渡せる。
+//
+// 戻り値: 成功時は base64 文字列、鍵が無い/不正/暗号化失敗時は null。
+// 鍵が不正（32バイトでない等）でも例外を投げない — サムネイルは派生データであり
+// 登録そのものを止める価値がないため、呼び出し側は null を「保存スキップ」として扱う。
+const encryptThumbnail = (pngBuffer, thumbKeyBase64) => {
+  if (!thumbKeyBase64) {
+    return null;
+  }
+  let key;
+  try {
+    key = Buffer.from(String(thumbKeyBase64), 'base64');
+  } catch {
+    return null;
+  }
+  if (key.length !== 32) {
+    console.warn('[index] invalid thumbKey length=' + key.length + ' (expected 32 bytes) — skipping thumbnail encryption');
+    return null;
+  }
+  try {
+    const iv = randomBytes(12);
+    const cipher = createCipheriv('aes-256-gcm', key, iv);
+    const ciphertext = Buffer.concat([cipher.update(pngBuffer), cipher.final()]);
+    const authTag = cipher.getAuthTag();
+    return Buffer.concat([iv, ciphertext, authTag]).toString('base64');
+  } catch (error) {
+    console.warn('[index] thumbnail encryption failed: ' + error.message + ' — skipping thumbnail');
+    return null;
   }
 };
 
@@ -2983,6 +3032,53 @@ const server = createServer(async (request, response) => {
     return;
   }
 
+  // 暗号化サムネイルの一括取得。ギャラリー・検索結果カードの表示用に thumb_enc
+  // （暗号文）だけを軽量に返す。サーバーは復号鍵を持たないため復号はしない・できない
+  // ——ブラウザ（WebCrypto）側でテナント専用鍵を使って復号する。
+  if (request.method === 'POST' && url.pathname === '/thumbs') {
+    try {
+      const body = await readJson(request);
+      const tenantId = body.tenantId || 'default';
+      const recordIds = Array.isArray(body.recordIds)
+        ? body.recordIds.map((id) => String(id)).filter(Boolean).slice(0, 50)
+        : [];
+      if (!recordIds.length) {
+        sendJson(response, 400, { error: 'recordIds is required' });
+        return;
+      }
+      if (!isQdrantConfigured()) {
+        sendJson(response, 200, { thumbs: [] });
+        return;
+      }
+      // ポイントIDはテナントで名前空間化された sha256(tenantId:recordId)（toPointId、
+      // 回転0相当）を使う。thumb_enc は全回転ポイントの payload に複製保存されているため、
+      // 代表ポイント（回転0）だけ引けば十分。強制テナントと異なる recordId を指定しても
+      // 別テナントのポイントIDとは一致しないため、他テナントのサムネイルは返らない。
+      const pointIds = recordIds.map((recordId) => toPointId(tenantId, recordId));
+      const data = await qdrantRequest(
+        '/collections/' + encodeURIComponent(qdrantCollection) + '/points',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            ids: pointIds,
+            with_payload: { include: ['record_id', 'thumb_enc'] }
+          })
+        }
+      );
+      const points = Array.isArray(data.result) ? data.result : [];
+      const thumbs = points
+        .filter((point) => point.payload?.thumb_enc)
+        .map((point) => ({
+          recordId: point.payload.record_id,
+          thumbEnc: point.payload.thumb_enc
+        }));
+      sendJson(response, 200, { thumbs });
+    } catch (error) {
+      sendJson(response, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
   if (request.method === 'POST' && url.pathname === '/similar') {
     try {
       const body = await readJson(request);
@@ -3254,6 +3350,25 @@ const server = createServer(async (request, response) => {
         edgeDensity: shape.edgeDensity
       });
 
+      step = 'thumbnail';
+      // thumbKey（テナント専用鍵。サーバーは保存しない）が送られてきた場合のみ、
+      // 幅300pxのPNGサムネイルをAES-256-GCMで暗号化してQdrant payloadに保存する。
+      // 復号はブラウザ（WebCrypto）側でのみ行う。thumbKeyが無ければ従来どおり
+      // サムネイルは一切保存しない。thumbKeyの値そのものはログに出さない。
+      let thumbEnc = null;
+      if (body.thumbKey) {
+        indexLog('thumbnail encrypt start');
+        try {
+          const thumbPngBuffer = await convertPdfFirstPageToThumbnailPng(pdfBuffer, thumbEncMaxWidth);
+          thumbEnc = encryptThumbnail(thumbPngBuffer, body.thumbKey);
+        } catch (error) {
+          // サムネイルは派生データであり登録を止める価値がないため、失敗しても
+          // 登録自体は続行する。
+          indexError('thumbnail encrypt failed', { error: error.message });
+        }
+        indexLog('thumbnail encrypt done', { encrypted: Boolean(thumbEnc) });
+      }
+
       step = 'extraction';
       indexLog('extraction start');
       const extracted = extractOcrFields(ocr.text, body);
@@ -3314,7 +3429,8 @@ const server = createServer(async (request, response) => {
         extracted,
         shape,
         shapeComment,
-        shapeTags
+        shapeTags,
+        thumbEnc
       });
 
       sendJson(response, 202, {

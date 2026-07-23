@@ -10,7 +10,7 @@ import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn, execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes, createDecipheriv } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
@@ -685,6 +685,69 @@ test('google/oauth/popup: mode=token ではPickerを起動せずトークン取�
   assert.match(html, /tokenOnly/, 'mode=tokenの分岐ロジックが埋め込まれている');
 });
 
+// ---- 暗号化サムネイル（Qdrant保存） ----
+// 以降のテストは mock.state.points の総数を前提にしないので、ここで新規に
+// /index を呼んでも Suite 1 の他テストを壊さない（総数を前提にする唯一のテストは
+// 「delete: レコード削除でテナント名前空間のポイントが消える」で、既にこの位置より前）。
+
+test('index: thumbKey付きで登録するとQdrant payloadにthumb_encが暗号化保存される（ラウンドトリップ）', async () => {
+  const thumbKey = randomBytes(32);
+  const res = await postJson(api.url, '/index', {
+    appId: '1', recordId: 'thumb-1', tenantId: 'tenant-thumb',
+    drawingNo: 'DWG-THUMB-001', fileKey: 'file-a', fileName: 'a.pdf',
+    thumbKey: thumbKey.toString('base64')
+  });
+  assert.equal(res.status, 202, await res.text());
+
+  const stored = [...mock.state.points.values()].find((p) => p.payload.record_id === 'thumb-1');
+  assert.ok(stored, 'ポイントが作成される');
+  assert.ok(stored.payload.thumb_enc, 'thumb_enc が保存される');
+  assert.equal(stored.payload.thumb_ver, 1);
+
+  // 保存形式: base64( iv(12バイト) || ciphertext || authTag(16バイト) )
+  const raw = Buffer.from(stored.payload.thumb_enc, 'base64');
+  const iv = raw.subarray(0, 12);
+  const authTag = raw.subarray(raw.length - 16);
+  const ciphertext = raw.subarray(12, raw.length - 16);
+  const decipher = createDecipheriv('aes-256-gcm', thumbKey, iv);
+  decipher.setAuthTag(authTag);
+  const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+  assert.deepEqual(decrypted.subarray(0, 4), Buffer.from([0x89, 0x50, 0x4e, 0x47]), 'PNGマジックバイトで始まる有効なPNG');
+});
+
+test('index: thumbKeyなしでは従来どおりthumb_encがpayloadに含まれない', async () => {
+  const res = await postJson(api.url, '/index', {
+    appId: '1', recordId: 'thumb-2', tenantId: 'tenant-thumb',
+    drawingNo: 'DWG-THUMB-002', fileKey: 'file-a', fileName: 'a.pdf'
+  });
+  assert.equal(res.status, 202, await res.text());
+  const stored = [...mock.state.points.values()].find((p) => p.payload.record_id === 'thumb-2');
+  assert.ok(stored, 'ポイントが作成される');
+  assert.equal(stored.payload.thumb_enc, undefined, 'thumbKey未指定ではthumb_encが追加されない');
+  assert.equal(stored.payload.thumb_ver, undefined);
+});
+
+test('thumbs: thumb_encを持つrecordIdだけthumbEncが返り、持たないrecordIdは含まれない', async () => {
+  const res = await postJson(api.url, '/thumbs', {
+    tenantId: 'tenant-thumb', recordIds: ['thumb-1', 'thumb-2', 'thumb-nonexistent']
+  });
+  const text = await res.text();
+  assert.equal(res.status, 200, text);
+  const data = JSON.parse(text);
+  assert.equal(data.thumbs.length, 1, 'thumb_encを持つのはthumb-1のみ');
+  assert.equal(data.thumbs[0].recordId, 'thumb-1');
+  assert.ok(data.thumbs[0].thumbEnc, 'thumbEncが返る');
+});
+
+test('similar: 検索リクエストのwith_payloadがexclude形式になっている（thumb_encを引きずらない）', async () => {
+  const res = await postJson(api.url, '/similar', {
+    tenantId: 'tenant-thumb', pdf_base64: PDF_A.toString('base64'), limit: 10
+  });
+  assert.equal(res.status, 200, await res.text());
+  const lastSearch = mock.state.captured.searches.at(-1);
+  assert.deepEqual(lastSearch.with_payload, { exclude: ['thumb_enc'] });
+});
+
 // ================================================================
 // Suite 2: 認証ON（キー検証・強制テナント・サムネトークン）
 // ================================================================
@@ -854,6 +917,37 @@ test('index: バイナリ直送でもキーのテナントに強制される', a
   const stored = [...authMock.state.points.values()].find((p) => p.payload.file_key === 'file-bin-auth');
   assert.ok(stored, 'バイナリ直送でもポイントが作成される');
   assert.equal(stored.payload.tenant_id, 'tenant-a', 'メタの tenantId ではなくキーのテナントが保存される');
+});
+
+test('auth: thumbs はキーのテナントに強制され、他テナントのrecordIdを指定しても返らない', async () => {
+  const thumbKey = randomBytes(32);
+  const indexRes = await postJson(authApi.url, '/index', {
+    appId: '1', recordId: 'thumb-auth-1', tenantId: '無視される値',
+    drawingNo: 'DWG-THUMB-AUTH-1', fileKey: 'file-a', fileName: 'a.pdf',
+    thumbKey: thumbKey.toString('base64')
+  }, { 'X-API-Key': 'key-a' }); // key-a のテナントは tenant-a
+  assert.equal(indexRes.status, 202, await indexRes.text());
+
+  // key-a（tenant-a）自身なら、攻撃者が別テナントを body に指定してもキーのテナントで取得できる
+  const res = await postJson(authApi.url, '/thumbs', {
+    tenantId: 'tenant-b',
+    recordIds: ['thumb-auth-1']
+  }, { 'X-API-Key': 'key-a' });
+  const text = await res.text();
+  assert.equal(res.status, 200, text);
+  const data = JSON.parse(text);
+  assert.equal(data.thumbs.length, 1);
+  assert.equal(data.thumbs[0].recordId, 'thumb-auth-1');
+
+  // legacy-key は tenant-b に強制されるため、tenant-a のポイントID(sha256(tenant-a:thumb-auth-1))とは
+  // 一致せず、同じ recordId を指定しても他テナントのサムネイルは返らない
+  const crossRes = await postJson(authApi.url, '/thumbs', {
+    recordIds: ['thumb-auth-1']
+  }, { 'X-API-Key': 'legacy-key' });
+  const crossText = await crossRes.text();
+  assert.equal(crossRes.status, 200, crossText);
+  const crossData = JSON.parse(crossText);
+  assert.equal(crossData.thumbs.length, 0, '他テナントのキーでは返らない');
 });
 
 // ================================================================
