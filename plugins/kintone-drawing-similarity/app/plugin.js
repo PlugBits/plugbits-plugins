@@ -52,6 +52,10 @@
 
   const apiKeyHeader = (key) => key ? { 'X-API-Key': key } : {};
 
+  // 高速サムネイル（暗号化保存）が有効なテナントの復号鍵。無効・未生成なら空文字
+  //（＝機能オフ。/index に thumbKey を同梱しない、/thumbs によるバッチ取得もしない）。
+  const getThumbKey = (config) => (config && config.fastThumbs === 'true' && config.thumbEncKey) ? config.thumbEncKey : '';
+
   // --- ヘッダーボタン（アイコン付き・SaaS 風） ---
   const PB_ICONS = {
     search: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"></circle><path d="m21 21-4.3-4.3"></path></svg>',
@@ -795,6 +799,77 @@
     }
   };
 
+  // 高速サムネイル（暗号化保存）: recordId のキャッシュキー接頭辞。fileKeyベースの
+  // 通常サムネイルキャッシュと同じ _thumbCache に同居させる（LRU上限も共有）。
+  const THUMB_ENC_CACHE_PREFIX = 'thumbenc:';
+
+  // 高速サムネイル: /thumbs で暗号化サムネイルをまとめて取得し、WebCrypto(AES-GCM)で
+  // 復号してblob URLに変換する。recordId(文字列)→blobURL のMapを返す。
+  // 取得・復号のどの失敗も静かに握りつぶし、そのrecordIdは結果に含めない
+  // （呼び出し側は該当recordIdだけ従来の都度変換にフォールバックする）。
+  // getThumbKey(config) が空（機能オフ・鍵未生成）なら、リクエストを一切発生させず
+  // 空のMapを即座に返す。
+  const fetchDecryptedThumbs = async (apiBaseUrl, config, recordIds) => {
+    const result = new Map();
+    const thumbKey = getThumbKey(config);
+    const ids = Array.isArray(recordIds) ? recordIds.filter((id) => id !== undefined && id !== null && id !== '') : [];
+    if (!thumbKey || !apiBaseUrl || !ids.length) {
+      return result;
+    }
+
+    // キャッシュ済み（このセッションで既に復号済み）のrecordIdは/thumbsのリクエスト
+    // から除外し、そのままMapに詰める。
+    const idsToFetch = [];
+    ids.forEach((recordId) => {
+      const cachedUrl = getCachedThumbUrl(THUMB_ENC_CACHE_PREFIX + recordId);
+      if (cachedUrl) {
+        result.set(String(recordId), cachedUrl);
+      } else {
+        idsToFetch.push(String(recordId));
+      }
+    });
+    if (!idsToFetch.length) {
+      return result;
+    }
+
+    let cryptoKey;
+    try {
+      const keyBytes = Uint8Array.from(atob(thumbKey), (c) => c.charCodeAt(0));
+      cryptoKey = await crypto.subtle.importKey('raw', keyBytes, 'AES-GCM', false, ['decrypt']);
+    } catch {
+      return result; // 鍵の形式が不正（想定外）。全件フォールバックさせる。
+    }
+
+    try {
+      const res = await fetch(apiBaseUrl + '/thumbs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
+        body: JSON.stringify({ tenantId: deriveTenantId(), recordIds: idsToFetch })
+      });
+      if (!res.ok) {
+        return result;
+      }
+      const data = await res.json();
+      const thumbs = Array.isArray(data.thumbs) ? data.thumbs : [];
+      await Promise.all(thumbs.map(async (thumb) => {
+        try {
+          // 形式: base64( iv(12バイト) || ciphertext || authTag(16バイト) )。
+          // WebCryptoのAES-GCM decryptは「ciphertext末尾にtagが連結された形」を
+          // 期待するため、先頭12バイトをivとして分離し、残りをそのまま渡す。
+          const combined = Uint8Array.from(atob(thumb.thumbEnc), (c) => c.charCodeAt(0));
+          const iv = combined.slice(0, 12);
+          const ciphertext = combined.slice(12);
+          const plainBuffer = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, cryptoKey, ciphertext);
+          const blobUrl = URL.createObjectURL(new Blob([plainBuffer], { type: 'image/png' }));
+          putCachedThumbUrl(THUMB_ENC_CACHE_PREFIX + thumb.recordId, blobUrl);
+          result.set(String(thumb.recordId), blobUrl);
+        } catch { /* この1件だけ復号失敗。呼び出し側で従来表示にフォールバックする */ }
+      }));
+    } catch { /* 通信失敗。全件フォールバックさせる */ }
+
+    return result;
+  };
+
   const THUMBNAIL_AUTO_COUNT = 3;
 
   // 一覧では上位3件だけ自動でサムネイルを取得し、残りはボタンを押したときだけ取得する。
@@ -871,9 +946,20 @@
     img.src = blobUrl;
   };
 
-  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad, config, trackObjectUrl, boxClassName) => {
+  // presetThumbUrl: 高速サムネイル（暗号化保存）で復号済みのblob URLがあれば渡す。
+  // その場合はダウンロード・/render-thumbnail 変換を一切行わず、即座に表示する。
+  const buildThumbnailBox = (apiBaseUrl, fileKey, autoLoad, config, trackObjectUrl, boxClassName, presetThumbUrl) => {
     const thumbBox = document.createElement('div');
     thumbBox.className = boxClassName || 'sim-thumb';
+
+    if (presetThumbUrl) {
+      const img = document.createElement('img');
+      img.className = 'sim-thumb-img';
+      img.alt = '';
+      img.src = presetThumbUrl;
+      thumbBox.appendChild(img);
+      return thumbBox;
+    }
 
     if (autoLoad) {
       loadThumbnail(thumbBox, apiBaseUrl, fileKey, config, trackObjectUrl);
@@ -1040,6 +1126,7 @@
               (async () => {
                 try {
                   const blob = permanentFileKey ? await downloadKintoneFile(permanentFileKey) : null;
+                  const thumbKey = getThumbKey(config);
                   await sendIndexBinary(apiBaseUrl, config.apiKey, {
                     appId: pending.appId,
                     recordId,
@@ -1052,7 +1139,8 @@
                     shapeTags: shapeTagsForSync || '',
                     fileKey: permanentFileKey,
                     fileName: permanentFileName,
-                    limit: 10
+                    limit: 10,
+                    ...(thumbKey ? { thumbKey } : {})
                   }, blob, () => releaseGuard());
                 } catch (error) {
                   // 送信失敗（ガード解除も含む）。保険は既存の「一括図面登録 → 未登録を登録」。
@@ -1356,6 +1444,7 @@
       }
 
       const file = files[0];
+      const thumbKey = getThumbKey(config);
       const payload = {
         appId,
         recordId,
@@ -1371,7 +1460,8 @@
           : '',
         fileKey: file.fileKey,
         fileName: file.name,
-        limit: 10
+        limit: 10,
+        ...(thumbKey ? { thumbKey } : {})
       };
 
       try {
@@ -1592,6 +1682,7 @@
 
       // /indexはバイナリ直送。手元のfileをそのまま送る（アップロード済みと同一バイト列のため
       // 再ダウンロード不要）。1件の成功＝検索登録まで完了した状態とするためawaitする。
+      const thumbKey = getThumbKey(config);
       const indexRes = await fetch(apiBaseUrl + '/index', {
         method: 'POST',
         headers: {
@@ -1608,7 +1699,8 @@
             shapeTags: shapeTags.join(','),
             fileKey: indexFileKey,
             fileName: indexFileName,
-            limit: 10
+            limit: 10,
+            ...(thumbKey ? { thumbKey } : {})
           })),
           ...apiKeyHeader(config.apiKey)
         },
@@ -3660,6 +3752,7 @@
         );
       };
 
+      const thumbKey = getThumbKey(config);
       sendIndexBinary(apiBaseUrl, config.apiKey, {
         appId: String(appId),
         recordId: String(recordId),
@@ -3672,7 +3765,8 @@
         shapeTags: shapeTags.join(','),
         fileKey: indexFileKey,
         fileName: indexFileName,
-        limit: 10
+        limit: 10,
+        ...(thumbKey ? { thumbKey } : {})
       }, file, onUploadComplete).catch((error) => {
         // 送信失敗時のガード解除（onUploadComplete未発火の場合の保険）。
         releaseGuard();
@@ -4010,8 +4104,10 @@
   //   rank: 検索結果内の順位（1始まり）。表示専用でAPIリクエストには影響しない。
   //   detailFieldsMap: recordId(string)→[{label,value}] の取得済みキャッシュ（renderSimilarList参照）。
   //   config/trackObjectUrl: サムネイル取得（loadThumbnail）に必要なプラグイン設定とblob URL追跡関数。
+  //   thumbUrl: 高速サムネイル（暗号化保存）で復号済みのblob URL。あればダウンロード・
+  //     変換を待たずそのまま表示する（autoLoad指定に関わらず優先）。
   const buildHeroCard = (item, apiBaseUrl, options = {}) => {
-    const { debug, autoLoad = true, rank, detailFieldsMap, config, trackObjectUrl } = options;
+    const { debug, autoLoad = true, rank, detailFieldsMap, config, trackObjectUrl, thumbUrl } = options;
     const card = document.createElement('div');
     card.className = 'sim-hero-card';
     const isArchive = item.docType === 'archive';
@@ -4026,7 +4122,7 @@
         thumbBox.dataset.driveResourceKey = item.driveResourceKey || '';
       }
     } else {
-      thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, autoLoad, config, trackObjectUrl, 'sim-hero-thumb');
+      thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, autoLoad, config, trackObjectUrl, 'sim-hero-thumb', thumbUrl);
     }
 
     const scoreBadge = document.createElement('div');
@@ -4247,12 +4343,15 @@
     results.forEach((item, index) => {
       const isArchive = item.docType === 'archive';
       const rank = index + 1;
-      const autoLoad = index < THUMBNAIL_AUTO_COUNT;
+      // 高速サムネイル: 復号済みのblob URLが手元にあれば、順位に関わらず即座に大きい
+      // カードで表示する（ヒットしなければ従来どおり上位3件autoLoad・以下は行表示）。
+      const thumbUrl = !isArchive && options.thumbUrlMap ? options.thumbUrlMap.get(String(item.recordId)) : undefined;
+      const autoLoad = index < THUMBNAIL_AUTO_COUNT || Boolean(thumbUrl);
       // buildHeroCard/buildResultRow に共通で渡すオプション（config/trackObjectUrl は
       // サムネイル取得=loadThumbnail に必要）。
       const cardOptions = {
         debug: options.debug, rank, detailFieldsMap,
-        config: options.config, trackObjectUrl: options.trackObjectUrl
+        config: options.config, trackObjectUrl: options.trackObjectUrl, thumbUrl
       };
       let el = autoLoad
         ? buildHeroCard(item, apiBaseUrl, { ...cardOptions, autoLoad: true })
@@ -4449,14 +4548,33 @@
         }
         return response.json();
       })
-      .then((data) => {
+      .then(async (data) => {
         stopStatus();
         if (onData) onData(data);
+
+        // 高速サムネイル: 有効なテナントのみ、kintone結果（アーカイブ以外）の
+        // recordIdをまとめて復号取得してから描画する。/thumbsは1リクエストのみで
+        // 通常は数百msのため描画前に待っても体感の遅れにはならないが、失敗・遅延に
+        // 備えて2秒でタイムアウトし、従来表示（都度取得）にフォールバックする。
+        let thumbUrlMap = new Map();
+        if (getThumbKey(config)) {
+          const results = Array.isArray(data && data.results) ? data.results : [];
+          const recordIds = results
+            .filter((item) => item.docType !== 'archive' && item.recordId)
+            .map((item) => item.recordId);
+          if (recordIds.length) {
+            const thumbsPromise = fetchDecryptedThumbs(apiBaseUrl, config, recordIds);
+            const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(new Map()), 2000));
+            thumbUrlMap = await Promise.race([thumbsPromise, timeoutPromise]);
+          }
+        }
+
         renderSimilarList(listEl, statusEl, confidenceEl, data, apiBaseUrl, {
           config,
           trackObjectUrl,
           debug: isDebugEnabled(config),
-          emptyActions: emptyActions ? emptyActions() : undefined
+          emptyActions: emptyActions ? emptyActions() : undefined,
+          thumbUrlMap
         });
 
         // 件数が limit に達しているときだけ「さらに表示」を出す（＝もっとある可能性がある場合）。
@@ -5183,7 +5301,9 @@
     let totalCount = 0;
     let loading = false;
 
-    const buildCard = (record) => {
+    // thumbUrlMap: 高速サムネイルで復号済みのblob URL（recordId(string)→URL）。
+    // ヒットしたレコードはキューに積まず即座に表示する。
+    const buildCard = (record, thumbUrlMap) => {
       const recordId = record.$id && record.$id.value;
       const card = document.createElement('div');
       card.className = 'pb-gallery-card';
@@ -5194,8 +5314,11 @@
       });
 
       const file = getFirstFile(record, config.pdfFileField);
+      const thumbUrl = thumbUrlMap ? thumbUrlMap.get(String(recordId)) : undefined;
       let thumbBox;
-      if (file && file.fileKey) {
+      if (thumbUrl) {
+        thumbBox = buildThumbnailBox(apiBaseUrl, file && file.fileKey, false, config, noop, 'pb-gallery-thumb', thumbUrl);
+      } else if (file && file.fileKey) {
         // autoLoad: false でボックスだけ作り、実際の取得はギャラリー側の同時実行数キューに委ねる
         // （20件同時に自動取得するとダウンロード＋サーバー変換が集中するため）。
         thumbBox = buildThumbnailBox(apiBaseUrl, file.fileKey, false, config, noop, 'pb-gallery-thumb');
@@ -5273,7 +5396,7 @@
         query,
         fields,
         totalCount: true
-      }).then((resp) => {
+      }).then(async (resp) => {
         loading = false;
         totalCount = Number(resp.totalCount || 0);
         const records = resp.records || [];
@@ -5287,8 +5410,14 @@
           return;
         }
 
+        // 高速サムネイル: このページの分をまとめて復号取得してから描画する
+        // （機能オフ時は getThumbKey が空のため fetchDecryptedThumbs は即座に空Mapを返し、
+        // 追加リクエストは一切発生しない）。
+        const recordIds = records.map((record) => record.$id && record.$id.value).filter(Boolean);
+        const thumbUrlMap = await fetchDecryptedThumbs(apiBaseUrl, config, recordIds);
+
         records.forEach((record) => {
-          grid.appendChild(buildCard(record));
+          grid.appendChild(buildCard(record, thumbUrlMap));
         });
         offset += records.length;
         renderMoreButton();
