@@ -189,7 +189,10 @@
     '.pb-pending-row .pb-pending-close { flex: 0 0 auto; border: none; background: transparent;',
     '  color: #94a3b8; cursor: pointer; font-size: 13px; line-height: 1; padding: 0 2px; }',
     '.pb-pending-row .pb-pending-close:hover { color: #334155; }',
-    '.pb-pending-note { padding: 7px 12px; font-size: 10.5px; color: #64748b; border-top: 1px solid #e6e9ef; }'
+    '.pb-pending-note { padding: 7px 12px; font-size: 10.5px; color: #64748b; border-top: 1px solid #e6e9ef; }',
+    '.pb-pending-reload { width: 100%; padding: 7px 10px; border: 1px solid #d7dee8; border-radius: 8px;',
+    '  background: #fff; color: #1d4ed8; font-size: 12.5px; font-weight: 600; cursor: pointer; }',
+    '.pb-pending-reload:hover { background: #f8fafc; }'
   ].join('\n');
 
   // 常駐ホストは初回呼び出し時に1回だけ作る（createModalShell と同様に closed Shadow DOM）。
@@ -222,6 +225,17 @@
   // 処理中件数が1以上の間だけ beforeunload を登録し、0になったら解除する
   // （タブを閉じる・リロード・別アプリへの移動＝フルページ遷移をブラウザ標準の確認で抑止する）。
   let _pendingActiveCount = 0;
+  // モーダルclose時にリロードしたいが、バックグラウンドの検索登録が残っている場合の
+  // 持ち越しフラグ。即リロードすると処理中のfetchが死んで未登録になるため
+  //（実際に発生した不具合）、全件完了後にパネル上のボタンでユーザーに委ねる。
+  let _reloadRequestedAfterPending = false;
+  const requestReloadWhenIdle = () => {
+    if (_pendingActiveCount > 0) {
+      _reloadRequestedAfterPending = true;
+      return;
+    }
+    window.location.reload();
+  };
   const _pendingBeforeUnloadHandler = (e) => {
     e.preventDefault();
     e.returnValue = '';
@@ -260,9 +274,26 @@
     };
 
     const maybeAutoHide = () => {
-      if (_pendingActiveCount === 0 && !list.querySelector('.pb-pending-row.fail')) {
+      if (_pendingActiveCount !== 0) return;
+      // 全件完了時: リロードの持ち越し要求（requestReloadWhenIdle）があれば、
+      // ここで初めて「表示を更新する」ボタンを出してユーザーに選ばせる
+      //（勝手にリロードすると編集中の作業を壊しかねないため）。
+      if (_reloadRequestedAfterPending) {
+        _reloadRequestedAfterPending = false;
+        const reloadRow = document.createElement('li');
+        reloadRow.className = 'pb-pending-row';
+        const reloadBtn = document.createElement('button');
+        reloadBtn.type = 'button';
+        reloadBtn.className = 'pb-pending-reload';
+        reloadBtn.textContent = '表示を更新する（再読み込み）';
+        reloadBtn.addEventListener('click', () => window.location.reload());
+        reloadRow.appendChild(reloadBtn);
+        list.appendChild(reloadRow);
+        return; // ボタンを出した場合は自動非表示しない
+      }
+      if (!list.querySelector('.pb-pending-row.fail')) {
         setTimeout(() => {
-          if (_pendingActiveCount === 0 && !list.querySelector('.pb-pending-row.fail')) {
+          if (_pendingActiveCount === 0 && !list.querySelector('.pb-pending-row.fail') && !list.querySelector('.pb-pending-reload')) {
             panel.hidden = true;
             list.textContent = '';
           }
@@ -2576,7 +2607,10 @@
     const shell = createModalShell({
       onClose: () => {
         if (kintoneRecordChanged) {
-          window.location.reload();
+          // バックグラウンドの検索登録が残っている間に即リロードすると、処理中の
+          // fetchが中断されて未登録になる（実際に発生）。残っている場合は全件完了後に
+          // 右下パネルの「表示を更新する」ボタンでユーザーに委ねる。
+          requestReloadWhenIdle();
         }
       }
     });
