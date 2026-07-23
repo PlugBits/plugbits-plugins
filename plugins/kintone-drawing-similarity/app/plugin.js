@@ -5112,13 +5112,213 @@
     run();
   };
 
+  // === 図面プレビューのギャラリービュー ===
+  // カスタマイズビュー（一覧設定で作るHTMLビュー）のHTMLに
+  // <div id="pb-drawing-gallery"></div> を置くだけで、図面サムネイルのカードグリッドを
+  // 描画する。一覧の絞り込み（kintone.app.getQueryCondition）を尊重し、20件ずつページングする。
+  const GALLERY_PAGE_SIZE = 20;
+  const GALLERY_THUMB_CONCURRENCY = 3;
+
+  // 並列度を制限したシンプルなタスクキュー。ここで作るインスタンスはギャラリーの
+  // 1描画セッション（renderDrawingGallery 1回の呼び出し）につき1つで、「さらに表示」で
+  // 追加されたサムネイル取得タスクも同じキューに積む（同時に走るのは最大 limit 件まで）。
+  const createConcurrencyQueue = (limit) => {
+    const pending = [];
+    let active = 0;
+    const pump = () => {
+      while (active < limit && pending.length) {
+        const task = pending.shift();
+        active += 1;
+        Promise.resolve()
+          .then(task)
+          .catch(() => { /* loadThumbnail側で再取得ボタンを出すのでここでは無視 */ })
+          .finally(() => {
+            active -= 1;
+            pump();
+          });
+      }
+    };
+    return (task) => {
+      pending.push(task);
+      pump();
+    };
+  };
+
+  // config: プラグイン設定（pdfFileField/drawingNoField/productNameFieldを使用）。
+  // apiBaseUrl: サムネイル変換API（未設定でもギャラリー自体は表示し、サムネイルだけ「画像なし」になる）。
+  // galleryEl: <div id="pb-drawing-gallery"> 本体。二重描画防止のため呼び出し側でチェック済みの前提。
+  const renderDrawingGallery = (config, apiBaseUrl, galleryEl) => {
+    // 描画済みマーカー。ビュー切替でこの要素ごとDOMが作り直されたときだけ、
+    // 呼び出し側（app.record.index.show）が再度このマーカー無しを検知して呼び直す。
+    galleryEl.dataset.pbRendered = '1';
+    galleryEl.textContent = '';
+    galleryEl.classList.add('pb-gallery-root');
+
+    if (!config.pdfFileField) {
+      const note = document.createElement('div');
+      note.className = 'pb-gallery-note';
+      note.textContent = '図面ギャラリーを表示するには、プラグイン設定で図面PDFの添付ファイルフィールドを指定してください。';
+      galleryEl.appendChild(note);
+      return;
+    }
+
+    const grid = document.createElement('div');
+    grid.className = 'pb-gallery-grid';
+    galleryEl.appendChild(grid);
+
+    const moreWrap = document.createElement('div');
+    moreWrap.className = 'pb-gallery-more-wrap';
+    galleryEl.appendChild(moreWrap);
+
+    // サムネイルはレンダリング済みキャッシュ（_thumbCache）が所有するblob URLを使い回すため、
+    // trackObjectUrl（モーダルclose時の解放用）は何もしない関数を渡せばよい。
+    const noop = () => {};
+    const enqueueThumb = createConcurrencyQueue(GALLERY_THUMB_CONCURRENCY);
+
+    const appId = kintone.app.getId();
+    const fields = ['$id', config.drawingNoField, config.productNameField, config.pdfFileField].filter(Boolean);
+    const baseQuery = kintone.app.getQueryCondition() || '';
+
+    let offset = 0;
+    let totalCount = 0;
+    let loading = false;
+
+    const buildCard = (record) => {
+      const recordId = record.$id && record.$id.value;
+      const card = document.createElement('div');
+      card.className = 'pb-gallery-card';
+      card.addEventListener('click', () => {
+        // 一覧URL（/k/123/ やゲストスペースの /g/1/123/ 等）からの相対で遷移するため、
+        // ドメイン・スペース構成に関わらず壊れない。
+        location.href = location.pathname + 'show#record=' + recordId;
+      });
+
+      const file = getFirstFile(record, config.pdfFileField);
+      let thumbBox;
+      if (file && file.fileKey) {
+        // autoLoad: false でボックスだけ作り、実際の取得はギャラリー側の同時実行数キューに委ねる
+        // （20件同時に自動取得するとダウンロード＋サーバー変換が集中するため）。
+        thumbBox = buildThumbnailBox(apiBaseUrl, file.fileKey, false, config, noop, 'pb-gallery-thumb');
+        enqueueThumb(() => loadThumbnail(thumbBox, apiBaseUrl, file.fileKey, config, noop));
+      } else {
+        thumbBox = document.createElement('div');
+        thumbBox.className = 'pb-gallery-thumb pb-gallery-thumb-empty';
+        thumbBox.textContent = 'ファイルなし';
+      }
+      card.appendChild(thumbBox);
+
+      const drawingNo = config.drawingNoField ? getFieldValue(record, config.drawingNoField) : '';
+      const productName = config.productNameField ? getFieldValue(record, config.productNameField) : '';
+      if (drawingNo || productName) {
+        const caption = document.createElement('div');
+        caption.className = 'pb-gallery-caption';
+        if (drawingNo) {
+          const noEl = document.createElement('div');
+          noEl.className = 'pb-gallery-drawing-no';
+          noEl.textContent = drawingNo;
+          caption.appendChild(noEl);
+        }
+        if (productName) {
+          const nameEl = document.createElement('div');
+          nameEl.className = 'pb-gallery-product-name';
+          nameEl.textContent = productName;
+          caption.appendChild(nameEl);
+        }
+        card.appendChild(caption);
+      }
+
+      return card;
+    };
+
+    // 総件数から残り件数を算出し、「さらに表示」ボタンを出す/隠すを切り替える。
+    const renderMoreButton = () => {
+      moreWrap.textContent = '';
+      const remaining = totalCount - offset;
+      if (remaining <= 0) {
+        return;
+      }
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pb-gallery-more-btn';
+      btn.textContent = 'さらに表示（残り' + remaining + '件）';
+      btn.addEventListener('click', () => {
+        btn.disabled = true;
+        btn.textContent = '読み込み中...';
+        loadPage();
+      });
+      moreWrap.appendChild(btn);
+    };
+
+    const renderLoadError = () => {
+      moreWrap.textContent = '';
+      const err = document.createElement('div');
+      err.className = 'pb-gallery-note pb-gallery-note-error';
+      err.textContent = '図面の取得に失敗しました。';
+      const retryBtn = document.createElement('button');
+      retryBtn.type = 'button';
+      retryBtn.className = 'pb-gallery-more-btn';
+      retryBtn.textContent = '再試行';
+      retryBtn.addEventListener('click', () => loadPage());
+      moreWrap.append(err, retryBtn);
+    };
+
+    const loadPage = () => {
+      if (loading) {
+        return;
+      }
+      loading = true;
+      const query = baseQuery + ' order by $id desc limit ' + GALLERY_PAGE_SIZE + ' offset ' + offset;
+      kintone.api(kintone.api.url('/k/v1/records', true), 'GET', {
+        app: appId,
+        query,
+        fields,
+        totalCount: true
+      }).then((resp) => {
+        loading = false;
+        totalCount = Number(resp.totalCount || 0);
+        const records = resp.records || [];
+
+        if (offset === 0 && !records.length) {
+          moreWrap.textContent = '';
+          const empty = document.createElement('div');
+          empty.className = 'pb-gallery-empty';
+          empty.textContent = 'レコードがありません。';
+          galleryEl.insertBefore(empty, moreWrap);
+          return;
+        }
+
+        records.forEach((record) => {
+          grid.appendChild(buildCard(record));
+        });
+        offset += records.length;
+        renderMoreButton();
+      }).catch((error) => {
+        loading = false;
+        console.warn('[pb] 図面ギャラリーの取得に失敗しました', error);
+        renderLoadError();
+      });
+    };
+
+    loadPage();
+  };
+
   kintone.events.on('app.record.index.show', (event) => {
+    const config = kintone.plugin.app.getConfig(PLUGIN_ID);
+    const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
+
+    // 図面プレビューのギャラリービュー: カスタマイズビューのHTMLに
+    // <div id="pb-drawing-gallery"></div> があれば描画する。kintoneの一覧はビュー切替の
+    // たびにDOMを作り直すのでこのハンドラも毎回発火し直すが、描画済みマーカー
+    // （dataset.pbRendered）が無い＝新しく現れた要素のときだけ改めて描画する。
+    const galleryEl = document.getElementById('pb-drawing-gallery');
+    if (galleryEl && !galleryEl.dataset.pbRendered) {
+      renderDrawingGallery(config, apiBaseUrl, galleryEl);
+    }
+
     if (document.getElementById('pb-list-btns')) {
       return event;
     }
 
-    const config = kintone.plugin.app.getConfig(PLUGIN_ID);
-    const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
     if (!apiBaseUrl) {
       return event;
     }
