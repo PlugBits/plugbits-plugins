@@ -133,7 +133,13 @@ const startMockBackend = () => {
         const tenantFilter = body.filter?.must?.[0]?.match?.value;
         const hits = [...state.points.values()]
           .filter((p) => !tenantFilter || p.payload?.tenant_id === tenantFilter)
-          .map((p, i) => ({ id: p.id, score: 0.99 - i * 0.01, payload: p.payload }));
+          // payload.__mockScore を仕込んだ点はその値をそのままスコアに使う（matchConfidence の
+          // テストで vectorRaw を明示的に制御するため）。無ければ従来どおり挿入順の疑似スコア。
+          .map((p, i) => ({
+            id: p.id,
+            score: p.payload?.__mockScore != null ? Number(p.payload.__mockScore) : 0.99 - i * 0.01,
+            payload: p.payload
+          }));
         return json(200, { result: hits });
       }
       if (sub.startsWith('/points/scroll') && req.method === 'POST') {
@@ -312,6 +318,79 @@ test('similar: pdf_base64 も fileKey も無ければ mock にフォールバッ
   const data = await res.json();
   assert.equal(res.status, 200);
   assert.equal(data.mode, 'mock');
+});
+
+test('similar: 合成スコアの逆転が起きても matchConfidence は最大vectorRawで high と判定する', async () => {
+  const tenantId = 'tenant-confidence-1';
+  // vectorRawは最高(0.99)だが、メタデータの一致が無い候補
+  mock.state.points.set('conf-1-no-match', {
+    id: 9001, vector: [0, 0, 0],
+    payload: {
+      tenant_id: tenantId, record_id: 'conf1-src-1', file_key: 'file-a',
+      drawing_no: 'DWG-UNRELATED', product_name: 'unrelated-part', tags: '',
+      __mockScore: 0.99
+    }
+  });
+  // vectorRawはやや低い(0.98)が、drawingNo/productName/tagsが一致するため
+  // 合成スコアではこちらが1位になる（＝旧実装が誤判定していた「逆転」の再現）
+  mock.state.points.set('conf-1-match', {
+    id: 9002, vector: [0, 0, 0],
+    payload: {
+      tenant_id: tenantId, record_id: 'conf1-src-2', file_key: 'file-a',
+      drawing_no: 'DWG-CONF-MATCH', product_name: 'match-part', tags: 'flange',
+      __mockScore: 0.98
+    }
+  });
+
+  const res = await postJson(api.url, '/similar', {
+    tenantId, recordId: 'conf1-query',
+    pdf_base64: PDF_A.toString('base64'), fileName: 'query.pdf', limit: 10,
+    drawingNo: 'DWG-CONF-MATCH', productName: 'match-part', tags: 'flange'
+  });
+  const text = await res.text();
+  assert.equal(res.status, 200, text);
+  const data = JSON.parse(text);
+
+  // 前提確認: 合成スコア順ではメタデータ一致の候補（vectorRaw=0.98）が1位に来る「逆転」が起きている
+  assert.equal(data.results[0].vectorRaw, 0.98, '合成スコアでは metadata 一致の候補が1位に来る（逆転の前提）');
+  assert.equal(data.results[1].vectorRaw, 0.99);
+
+  // それでも matchConfidence は結果集合全体の最大vectorRaw（0.99）を見て high と判定する
+  assert.equal(data.matchConfidence.level, 'high');
+  assert.equal(data.matchConfidence.topScore, 0.99);
+  assert.equal(data.matchConfidence.secondScore, 0.98);
+  assert.ok(data.matchConfidence.topScore >= data.matchConfidence.secondScore, 'topScoreはsecondScore以上');
+
+  // state は Suite 1 の全テストで共有のため、後続テスト（ポイント総数の検証等）に影響しないよう掃除する
+  mock.state.points.delete('conf-1-no-match');
+  mock.state.points.delete('conf-1-match');
+});
+
+test('similar: 全候補のvectorRawが低い（類似図面なし）場合は matchConfidence.level が low', async () => {
+  const tenantId = 'tenant-confidence-2';
+  mock.state.points.set('conf-2-a', {
+    id: 9101, vector: [0, 0, 0],
+    payload: { tenant_id: tenantId, record_id: 'conf2-src-1', file_key: 'file-a', __mockScore: 0.77 }
+  });
+  mock.state.points.set('conf-2-b', {
+    id: 9102, vector: [0, 0, 0],
+    payload: { tenant_id: tenantId, record_id: 'conf2-src-2', file_key: 'file-a', __mockScore: 0.72 }
+  });
+
+  const res = await postJson(api.url, '/similar', {
+    tenantId, recordId: 'conf2-query',
+    pdf_base64: PDF_A.toString('base64'), fileName: 'query.pdf', limit: 10
+  });
+  const text = await res.text();
+  assert.equal(res.status, 200, text);
+  const data = JSON.parse(text);
+
+  assert.equal(data.matchConfidence.level, 'low');
+  assert.ok(data.matchConfidence.topScore < 0.9, 'topScoreがsimilarScoreFloor(既定0.9)未満');
+
+  // state は Suite 1 の全テストで共有のため、後続テスト（ポイント総数の検証等）に影響しないよう掃除する
+  mock.state.points.delete('conf-2-a');
+  mock.state.points.delete('conf-2-b');
 });
 
 test('thumbnail: 認証OFFではトークン不要', async () => {

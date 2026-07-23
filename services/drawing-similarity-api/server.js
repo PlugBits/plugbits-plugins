@@ -69,6 +69,10 @@ const scoreMetadataWeight = Number(process.env.SCORE_METADATA_WEIGHT || 0.12);
 const scoreShapeWeight = Number(process.env.SCORE_SHAPE_WEIGHT || 0.10);
 const scoreTypeBonus = Number(process.env.SCORE_TYPE_BONUS || 0.05);
 const scoreAiShapeTagBonus = Number(process.env.SCORE_AI_SHAPE_TAG_BONUS || 0.05);
+// 「似た図面が見つからなかった」警告の閾値。結果中の最高vectorRaw（生コサイン値）が
+// これ未満なら matchConfidence.level='low' になる。実測では類似ありが0.99台・
+// 類似なしが0.77台のため、中間の0.9をデフォルトにしている。
+const similarScoreFloor = Number(process.env.SIMILAR_SCORE_FLOOR || 0.9);
 const parseTags = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 let payloadIndexesReady = false;
 
@@ -256,7 +260,8 @@ const getRuntimeInfo = () => ({
     metadataWeight: scoreMetadataWeight,
     shapeWeight: scoreShapeWeight,
     typeBonus: scoreTypeBonus,
-    aiShapeTagBonus: scoreAiShapeTagBonus
+    aiShapeTagBonus: scoreAiShapeTagBonus,
+    similarScoreFloor
   },
   nodeVersion: process.version,
   cwd: process.cwd(),
@@ -2265,16 +2270,28 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
     .slice(0, Math.min(Number(body.limit || 10), 10));
 };
 
+// 「検索の確度」判定。
+//
+// 旧実装は合成スコア（ベクトル+メタデータ+形状）順に並んだ結果の1位・2位の
+// vectorRaw差（マージン）を見ていたが、これは2つの理由で不適切だった。
+// 1. 結果は合成スコアで並ぶため、1位のvectorRawが2位より低い「逆転」が起こり得る。
+//    その場合 margin=0 となり、実際には強い一致でも必ず low 判定になってしまう。
+// 2. この機能は「似た過去図面を複数見つける」ためのものなので、似た図面が
+//    僅差で並ぶのはむしろ成功状態（似た図面が複数ある）であり、マージンの
+//    大小を確度の根拠にするのは向きが逆。
+// そこで、結果集合の中の最高vectorRaw（生コサイン類似度）の絶対値だけで
+// 判定する方式に変更した。実測では「似た図面あり」のケースのTop vectorRawは
+// 0.99台に集中し、「全く似ていない図面で検索」した場合は0.77台に留まるため、
+// 絶対値でも明確に分離できる（閾値は中間の0.9＝similarScoreFloor）。
 const buildMatchConfidence = (results = []) => {
-  const topScore = Number(results[0]?.scoreBreakdown?.vectorRaw || 0);
-  const secondScore = Number(results[1]?.scoreBreakdown?.vectorRaw || 0);
+  const vectorRawScores = results
+    .map((result) => Number(result?.scoreBreakdown?.vectorRaw || 0))
+    .sort((a, b) => b - a);
+  const topScore = vectorRawScores[0] || 0;
+  const secondScore = vectorRawScores[1] || 0;
+  // margin はデバッグ表示用に維持するのみで、level の判定には使わない。
   const margin = Number(Math.max(0, topScore - secondScore).toFixed(4));
-  let level = 'low';
-  if (topScore >= 0.9 && margin >= 0.03) {
-    level = 'high';
-  } else if (topScore >= 0.87 && margin >= 0.015) {
-    level = 'medium';
-  }
+  const level = topScore >= similarScoreFloor ? 'high' : 'low';
   return {
     level,
     topScore: Number(topScore.toFixed(4)),

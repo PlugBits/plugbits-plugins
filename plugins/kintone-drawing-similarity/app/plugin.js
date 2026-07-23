@@ -30,12 +30,6 @@
 
   const formatPercent = (value) => Math.round(Number(value || 0) * 100) + '%';
 
-  const confidenceLabel = (level) => ({
-    high: '高',
-    medium: '中',
-    low: '低'
-  }[level] || '-');
-
   const buildRecordPayload = (event, config) => {
     const file = getFirstFile(event.record, config.pdfFileField);
     return {
@@ -2391,8 +2385,6 @@
     '.sim-confidence[hidden] { display: none; }',
     '.sim-confidence-level { display: inline-flex; align-items: center; gap: 5px; min-height: 24px; padding: 0 10px;',
     '  border-radius: 9999px; font-weight: 700; font-size: 11.5px; }',
-    '.sim-confidence-level.level-high { background: var(--pb-green-soft); color: #166534; }',
-    '.sim-confidence-level.level-medium { background: var(--pb-amber-soft); color: #92400e; }',
     '.sim-confidence-level.level-low { background: #f1f5f9; color: var(--pb-muted); }',
     '.sim-confidence-scores { color: var(--pb-faint);',
     '  font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }',
@@ -3590,22 +3582,26 @@
 
   // === 類似図面検索（Shadow DOM モーダル、左に自分の図面・右に候補） ===
 
+  // 確度表示の方針: high（サーバーが旧版でmediumを返してきた場合も含む）は
+  // 「似た図面が見つかった」通常時であり、わざわざバッジで知らせる情報ではないため
+  // 何も表示しない。low のときだけ「参考程度に見てほしい」注意書きを出す。
+  // 生スコア（Top/2位/差）はどちらの場合も開発者向けデバッグ表示でのみ出す。
   const renderSimilarConfidence = (confidenceEl, confidence, debug) => {
+    confidenceEl.innerHTML = '';
+    confidenceEl.hidden = true;
+
     if (!confidence) {
-      confidenceEl.hidden = true;
-      confidenceEl.textContent = '';
       return;
     }
 
-    confidenceEl.hidden = false;
-    confidenceEl.innerHTML = '';
+    if (confidence.level === 'low') {
+      const note = document.createElement('span');
+      note.className = 'sim-confidence-level level-low';
+      note.textContent = '類似の図面が見つからなかった可能性があります（最も近い候補でも類似度が低め）。参考として候補を表示しています。';
+      confidenceEl.appendChild(note);
+      confidenceEl.hidden = false;
+    }
 
-    const level = document.createElement('span');
-    level.className = 'sim-confidence-level level-' + String(confidence.level || 'low');
-    level.textContent = '検索の確度: ' + confidenceLabel(confidence.level);
-    confidenceEl.appendChild(level);
-
-    // 生スコア（Top/2位/差）は開発者向け。デバッグ表示が有効なときだけ出す。
     if (debug) {
       const scores = document.createElement('span');
       scores.className = 'sim-confidence-scores';
@@ -3613,6 +3609,7 @@
         ' / 2位 ' + formatVectorRaw(confidence.secondScore) +
         ' / 差 ' + formatVectorRaw(confidence.margin);
       confidenceEl.appendChild(scores);
+      confidenceEl.hidden = false;
     }
   };
 
@@ -4105,17 +4102,9 @@
 
     statusEl.textContent = results.length + '件の候補が見つかりました。';
 
-    // 表示順: ①低確度の注意書き（最上部固定）→②一括アクションボタン群→③結果グリッド
-    // （末尾の「さらに表示」は runSimilarSearch 側で listEl に追加する）。
-
-    // 確度が低いときは注意書きを添える
-    const level = data && data.matchConfidence && data.matchConfidence.level;
-    if (level === 'low') {
-      const note = document.createElement('div');
-      note.className = 'sim-note';
-      note.textContent = '⚠ 有力な候補を絞り込めていません。以下は参考程度にご覧ください。';
-      listEl.appendChild(note);
-    }
+    // 表示順: ①一括アクションボタン群→②結果グリッド
+    // （低確度の注意書きは renderSimilarConfidence が confidenceEl 側に一本化して出すため、
+    // ここでは重複して出さない。末尾の「さらに表示」は runSimilarSearch 側で listEl に追加する）。
 
     // kintone結果（アーカイブ以外）の追加フィールド表示に使う取得済みキャッシュ。
     // buildHeroCard/buildResultRow に共有参照として渡し、行→カード展開後も表示が消えないようにする。
