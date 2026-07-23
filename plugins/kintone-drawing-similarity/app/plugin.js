@@ -397,6 +397,22 @@
         return;
       }
 
+      // メモリキャッシュにはなかったが、永続キャッシュ（IndexedDB）に残っていれば
+      // それを使う（ヒットしたらメモリLRUにも載せる）。
+      if (thumbCacheKey) {
+        const idbBlob = await idbGetThumbBlob(thumbCacheKey);
+        if (idbBlob) {
+          const idbBlobUrl = URL.createObjectURL(idbBlob);
+          putCachedThumbUrl(thumbCacheKey, idbBlobUrl);
+          const idbImg = document.createElement('img');
+          idbImg.className = 'preview-image';
+          idbImg.alt = name || '';
+          idbImg.src = idbBlobUrl;
+          replacePlaceholderWith(idbImg);
+          return;
+        }
+      }
+
       placeholder.textContent = 'プレビューを生成しています...';
       try {
         if (!apiBaseUrl) {
@@ -410,11 +426,13 @@
           body: blobOrFile
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        let blobUrl = URL.createObjectURL(await res.blob());
+        const resultBlob = await res.blob();
+        let blobUrl = URL.createObjectURL(resultBlob);
         // キャッシュする場合はキャッシュが所有するため、モーダルのtrackUrlには渡さない。
         // キャッシュしない場合（cacheKey無し＝ローカルのドラッグ&ドロップ）は従来通り追跡する。
         if (thumbCacheKey) {
           putCachedThumbUrl(thumbCacheKey, blobUrl);
+          idbPutThumbBlob(thumbCacheKey, resultBlob); // fire-and-forget。永続キャッシュへの反映
         } else if (trackUrl) {
           blobUrl = trackUrl(blobUrl);
         }
@@ -803,6 +821,126 @@
   // 通常サムネイルキャッシュと同じ _thumbCache に同居させる（LRU上限も共有）。
   const THUMB_ENC_CACHE_PREFIX = 'thumbenc:';
 
+  // 変換済みサムネイル/プレビューの永続キャッシュ（IndexedDB）。
+  // メモリLRU（_thumbCache）の背後に置く2層目で、リロード・翌日でも再変換を避ける。
+  // キーはfileKey（内容に対して不変）ベースなので無効化は不要。
+  // IndexedDBが使えない環境（プライベートモード等）ではすべて静かに無効化され、
+  // 従来のメモリキャッシュのみで動作する。
+  const IDB_THUMB_DB_NAME = 'pb-drawing-sim-cache';
+  const IDB_THUMB_DB_VERSION = 1;
+  const IDB_THUMB_STORE = 'thumbs';
+  const IDB_THUMB_MAX_AGE_MS = 60 * 24 * 60 * 60 * 1000; // 60日より古いエントリは初回オープン時に掃除する
+
+  // indexedDB.open は1回だけ行い、結果（Promise<IDBDatabase|null>）を使い回す。
+  // 失敗時（プライベートモード等でIndexedDB自体が使えない、open失敗など）はnullを解決し、
+  // 以降の idbGetThumbBlob/idbPutThumbBlob は常にno-opとして振る舞う。
+  let _idbThumbDbPromise = null;
+  const openThumbDb = () => {
+    if (_idbThumbDbPromise) return _idbThumbDbPromise;
+    _idbThumbDbPromise = new Promise((resolve) => {
+      if (typeof indexedDB === 'undefined') {
+        resolve(null);
+        return;
+      }
+      let req;
+      try {
+        req = indexedDB.open(IDB_THUMB_DB_NAME, IDB_THUMB_DB_VERSION);
+      } catch {
+        resolve(null);
+        return;
+      }
+      req.onupgradeneeded = () => {
+        try {
+          if (!req.result.objectStoreNames.contains(IDB_THUMB_STORE)) {
+            req.result.createObjectStore(IDB_THUMB_STORE); // out-of-lineキー（キーはget/put側で指定）
+          }
+        } catch { /* 失敗してもonsuccess/onerrorに任せる */ }
+      };
+      req.onsuccess = () => {
+        const db = req.result;
+        // DBを最初に開いたときだけ、古いエントリ（60日超）を掃除する。掃除自体の
+        // 失敗はキャッシュの読み書きに影響させない（次回オープン時に再試行される）。
+        try {
+          purgeOldThumbEntries(db);
+        } catch { /* 無視 */ }
+        resolve(db);
+      };
+      req.onerror = () => resolve(null);
+      req.onblocked = () => resolve(null);
+    });
+    return _idbThumbDbPromise;
+  };
+
+  // t（保存日時）が cutoff より古いエントリをカーソルで削除する。
+  // 件数は高々数百想定のため、インデックスを追加せず全走査で十分。
+  const purgeOldThumbEntries = (db) => {
+    let tx;
+    try {
+      tx = db.transaction(IDB_THUMB_STORE, 'readwrite');
+    } catch {
+      return;
+    }
+    const cutoff = Date.now() - IDB_THUMB_MAX_AGE_MS;
+    let cursorReq;
+    try {
+      cursorReq = tx.objectStore(IDB_THUMB_STORE).openCursor();
+    } catch {
+      return;
+    }
+    cursorReq.onsuccess = () => {
+      const cursor = cursorReq.result;
+      if (!cursor) return;
+      const value = cursor.value;
+      if (value && typeof value.t === 'number' && value.t < cutoff) {
+        try { cursor.delete(); } catch { /* 無視 */ }
+      }
+      cursor.continue();
+    };
+    cursorReq.onerror = () => { /* 無視。次回オープン時に再試行される */ };
+  };
+
+  // 永続キャッシュからBlobを取得する。open失敗・トランザクション失敗など、あらゆる
+  // 失敗はnullを返す。呼び出し側はnull時、従来通りネットワーク取得にフォールバックする。
+  const idbGetThumbBlob = async (key) => {
+    try {
+      const db = await openThumbDb();
+      if (!db) return null;
+      return await new Promise((resolve) => {
+        let tx;
+        try {
+          tx = db.transaction(IDB_THUMB_STORE, 'readonly');
+        } catch {
+          resolve(null);
+          return;
+        }
+        const req = tx.objectStore(IDB_THUMB_STORE).get(key);
+        req.onsuccess = () => {
+          const entry = req.result;
+          resolve(entry && entry.blob ? entry.blob : null);
+        };
+        req.onerror = () => resolve(null);
+      });
+    } catch {
+      return null;
+    }
+  };
+
+  // 永続キャッシュへBlobを書き込む（fire-and-forget。呼び出し側はawaitしなくてよい）。
+  // 書き込み失敗・容量超過はすべて握りつぶす（永続キャッシュはあくまで高速化のためで、
+  // 表示自体はメモリキャッシュ＋ネットワーク取得だけで従来通り成立する）。
+  // 暗号化サムネイル（THUMB_ENC_CACHE_PREFIX接頭辞のキー）は保存しない
+  // （/thumbsのバッチ取得が既に軽量なため。メモリLRUのみ従来どおり使う）。
+  const idbPutThumbBlob = async (key, blob) => {
+    if (typeof key === 'string' && key.indexOf(THUMB_ENC_CACHE_PREFIX) === 0) return;
+    try {
+      const db = await openThumbDb();
+      if (!db) return;
+      const tx = db.transaction(IDB_THUMB_STORE, 'readwrite');
+      tx.objectStore(IDB_THUMB_STORE).put({ blob, t: Date.now() }, key);
+      tx.onerror = () => { /* 容量超過等。無視 */ };
+    } catch { /* 無視 */ }
+  };
+
   // 高速サムネイル: /thumbs で暗号化サムネイルをまとめて取得し、WebCrypto(AES-GCM)で
   // 復号してblob URLに変換する。recordId(文字列)→blobURL のMapを返す。
   // 取得・復号のどの失敗も静かに握りつぶし、そのrecordIdは結果に含めない
@@ -903,6 +1041,22 @@
     skeleton.className = 'sim-skeleton';
     thumbBox.appendChild(skeleton);
 
+    // メモリキャッシュにはなかったが、永続キャッシュ（IndexedDB）に前回・前日以前の
+    // 変換結果が残っていれば、ダウンロード・サーバー変換をせずそれを使う。
+    // ヒットしたらメモリLRUにも載せて以降は従来通り同期パスで返せるようにする。
+    const idbBlob = await idbGetThumbBlob(cacheKey);
+    if (idbBlob) {
+      const idbBlobUrl = URL.createObjectURL(idbBlob);
+      putCachedThumbUrl(cacheKey, idbBlobUrl);
+      thumbBox.textContent = '';
+      const idbImg = document.createElement('img');
+      idbImg.className = 'sim-thumb-img';
+      idbImg.alt = '';
+      idbImg.src = idbBlobUrl;
+      thumbBox.appendChild(idbImg);
+      return;
+    }
+
     const showRetry = () => {
       thumbBox.textContent = '';
       const retry = document.createElement('button');
@@ -928,8 +1082,10 @@
         body: blob
       });
       if (!res.ok) throw new Error('HTTP ' + res.status);
-      blobUrl = URL.createObjectURL(await res.blob());
+      const resultBlob = await res.blob();
+      blobUrl = URL.createObjectURL(resultBlob);
       putCachedThumbUrl(cacheKey, blobUrl);
+      idbPutThumbBlob(cacheKey, resultBlob); // fire-and-forget。永続キャッシュへの反映
     } catch {
       showRetry();
       return;
@@ -4615,6 +4771,9 @@
       const resourceKey = box.dataset.driveResourceKey || '';
 
       // レンダリング済みキャッシュがあれば、ダウンロード・変換を一切せず即表示する。
+      // Google DriveのファイルはfileKeyと違い、同一IDのまま内容が差し替わり得るが、
+      // キーはこれまで通り driveFileId+幅のみとする（永続キャッシュ側の60日掃除で
+      // 自然に更新される想定。厳密な即時無効化はしない）。
       const cacheKey = 'gdrive:' + fileId + ':default';
       const cachedUrl = getCachedThumbUrl(cacheKey);
       if (cachedUrl) {
@@ -4624,6 +4783,23 @@
         cachedImg.alt = '';
         cachedImg.src = cachedUrl;
         box.appendChild(cachedImg);
+        done += 1;
+        triggerBtn.textContent = 'サムネイルを読み込み中... ' + done + ' / ' + boxes.length;
+        return;
+      }
+
+      // メモリキャッシュにはなかったが、永続キャッシュ（IndexedDB）に残っていれば
+      // それを使う（ヒットしたらメモリLRUにも載せる）。
+      const idbBlob = await idbGetThumbBlob(cacheKey);
+      if (idbBlob) {
+        const idbBlobUrl = URL.createObjectURL(idbBlob);
+        putCachedThumbUrl(cacheKey, idbBlobUrl);
+        box.textContent = '';
+        const idbImg = document.createElement('img');
+        idbImg.className = 'sim-thumb-img';
+        idbImg.alt = '';
+        idbImg.src = idbBlobUrl;
+        box.appendChild(idbImg);
         done += 1;
         triggerBtn.textContent = 'サムネイルを読み込み中... ' + done + ' / ' + boxes.length;
         return;
@@ -4644,8 +4820,10 @@
           body: blob
         });
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        const blobUrl = URL.createObjectURL(await res.blob());
+        const resultBlob = await res.blob();
+        const blobUrl = URL.createObjectURL(resultBlob);
         putCachedThumbUrl(cacheKey, blobUrl);
+        idbPutThumbBlob(cacheKey, resultBlob); // fire-and-forget。永続キャッシュへの反映
         const img = document.createElement('img');
         img.className = 'sim-thumb-img';
         img.alt = '';
