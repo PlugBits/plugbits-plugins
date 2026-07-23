@@ -1448,7 +1448,7 @@
       phaseEl.textContent = '処理中... ' + state.processed + ' / ' + state.total + ' 件';
       fill.style.width = state.total > 0 ? Math.round(state.processed / state.total * 100) + '%' : '5%';
     } else if (state.phase === 'done') {
-      phaseEl.textContent = '完了しました。';
+      phaseEl.textContent = '✓ 完了しました（成功 ' + state.success + '件）';
       fill.style.width = '100%';
     } else if (state.phase === 'cancelled') {
       phaseEl.textContent = 'キャンセルしました（実行中だった1件は完了しています）。';
@@ -1456,8 +1456,16 @@
       phaseEl.textContent = 'エラー: ' + (state.errorMessage || '不明なエラー');
     }
 
+    // 完了/エラーを視覚的に強調する（呼び出しごとに冪等に切り替える）
+    phaseEl.classList.toggle('done', state.phase === 'done');
+    phaseEl.classList.toggle('error', state.phase === 'error');
+    fill.classList.toggle('done', state.phase === 'done');
+
     const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
     cancelBtn.textContent = isDone ? '閉じる' : 'キャンセル';
+    // 完了時は閉じるボタンを主要アクションとして目立たせる
+    cancelBtn.classList.toggle('secondary', state.phase !== 'done');
+    cancelBtn.classList.toggle('primary', state.phase === 'done');
 
     overlay.querySelector('.pb-bulk-total b').textContent = state.total > 0 ? state.total + '件' : '-';
     overlay.querySelector('.pb-bulk-success b').textContent = state.success;
@@ -1600,7 +1608,16 @@
 
     overlay.querySelector('.pb-bulk-cancel').addEventListener('click', () => {
       const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
-      if (isDone) { overlay.remove(); return; }
+      if (isDone) {
+        overlay.remove();
+        // レコードが作成された可能性がある場合（成功、または/index送信前にレコード作成済みで
+        // 失敗したケースを含む）は一覧画面に新規レコードを反映するためページを更新する。
+        // スキップ・要手動のみ（レコード未作成）の場合は更新しない。
+        if (state.success > 0 || state.fail > 0) {
+          window.location.reload();
+        }
+        return;
+      }
       cancel.requested = true;
     });
 
@@ -1680,7 +1697,7 @@
     mainEl.textContent = 'PDF / TIF を複数選択';
     const subEl = document.createElement('div');
     subEl.className = 'drop-sub';
-    subEl.textContent = 'クリックしてファイルを選択（複数選択可）';
+    subEl.textContent = 'クリックまたはドラッグ&ドロップで選択（複数選択可）';
     const noteEl = document.createElement('div');
     noteEl.className = 'drop-note';
     noteEl.textContent = '1回の実行につき最大' + BULK_PDF_MAX_PER_RUN + '枚まで';
@@ -1708,7 +1725,7 @@
     fMain.textContent = 'フォルダを選択';
     const fSub = document.createElement('div');
     fSub.className = 'drop-sub';
-    fSub.textContent = 'フォルダ内のPDF・TIFをまとめて選択します';
+    fSub.textContent = 'フォルダ内のPDF・TIFをまとめて選択します（ドラッグ&ドロップ可）';
     const folderInput = document.createElement('input');
     folderInput.type = 'file';
     folderInput.webkitdirectory = true;
@@ -1766,6 +1783,77 @@
     folderInput.addEventListener('change', () => applySelection(Array.from(folderInput.files || [])));
     zone.addEventListener('click', (e) => { if (e.target !== filesInput) filesInput.click(); });
     folderZone.addEventListener('click', (e) => { if (e.target !== folderInput) folderInput.click(); });
+
+    // FileSystemFileEntry → File化（Promise化）
+    const readEntryAsFile = (entry) => new Promise((resolve, reject) => {
+      entry.file(resolve, reject);
+    });
+
+    // FileSystemDirectoryEntry の中身を読み切る。readEntries は1回最大100件しか
+    // 返さない仕様のため、空配列が返るまで繰り返し呼ぶ必要がある。
+    const readAllDirectoryEntries = (dirReader) => new Promise((resolve, reject) => {
+      const all = [];
+      const readBatch = () => {
+        dirReader.readEntries((batch) => {
+          if (!batch.length) {
+            resolve(all);
+            return;
+          }
+          all.push(...batch);
+          readBatch();
+        }, reject);
+      };
+      readBatch();
+    });
+
+    // FileSystemEntry（ファイル or フォルダ）を再帰的に走査し、PDF/TIFのFileを収集する
+    const collectFilesFromEntry = async (entry) => {
+      if (!entry) return [];
+      if (entry.isFile) {
+        try {
+          const file = await readEntryAsFile(entry);
+          return /\.(pdf|tiff?)$/i.test(file.name) ? [file] : [];
+        } catch {
+          return [];
+        }
+      }
+      if (entry.isDirectory) {
+        const dirReader = entry.createReader();
+        const childEntries = await readAllDirectoryEntries(dirReader);
+        const results = await Promise.all(childEntries.map(collectFilesFromEntry));
+        return results.flat();
+      }
+      return [];
+    };
+
+    // ドロップされたファイル/フォルダからFile配列を収集する（entries APIが使えない
+    // 環境では dataTransfer.files にフォールバックする）
+    const collectFilesFromDataTransfer = async (dataTransfer) => {
+      const items = dataTransfer && dataTransfer.items;
+      if (items && items.length && typeof items[0].webkitGetAsEntry === 'function') {
+        const entries = Array.from(items)
+          .map((item) => item.webkitGetAsEntry())
+          .filter(Boolean);
+        const results = await Promise.all(entries.map(collectFilesFromEntry));
+        return results.flat();
+      }
+      return Array.from((dataTransfer && dataTransfer.files) || []);
+    };
+
+    const handleDrop = (e) => {
+      e.preventDefault();
+      zone.classList.remove('drag-over');
+      folderZone.classList.remove('drag-over');
+      collectFilesFromDataTransfer(e.dataTransfer).then((files) => applySelection(files));
+    };
+    [zone, folderZone].forEach((dz) => {
+      dz.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        dz.classList.add('drag-over');
+      });
+      dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+      dz.addEventListener('drop', handleDrop);
+    });
 
     // 必須フィールドの検出（対応外タイプが必須にあれば開始不可にする）
     (async () => {
