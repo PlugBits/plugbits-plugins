@@ -166,7 +166,7 @@ const sendJson = (response, status, payload) => {
   response.writeHead(status, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Index-Meta',
     'Content-Type': 'application/json; charset=utf-8'
   });
   response.end(JSON.stringify(payload));
@@ -214,7 +214,7 @@ const sendBinary = (response, status, contentType, buffer, extraHeaders = {}) =>
   response.writeHead(status, {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key',
+    'Access-Control-Allow-Headers': 'Content-Type, X-API-Key, X-Index-Meta',
     'Content-Type': contentType,
     'Cache-Control': 'no-store',
     ...extraHeaders

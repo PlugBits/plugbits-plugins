@@ -563,6 +563,18 @@ test('render-thumbnail: バイナリ直送でもPNG化できる', async () => {
   assert.equal(buf.readUInt32BE(16), 100);
 });
 
+// CORS: プラグインはkintoneドメイン（クロスオリジン）から X-Index-Meta 付きで
+// POSTするため、プリフライトの Allow-Headers に含まれていないとブラウザで
+// 「Failed to fetch」になる（Node上のfetchはCORSを検証しないため、これを
+// 明示的にヘッダー内容で検証する。実際に本番で発生した退行）。
+test('cors: プリフライトの Allow-Headers に X-Index-Meta が含まれる', async () => {
+  const res = await fetch(api.url + '/index', { method: 'OPTIONS' });
+  assert.equal(res.status, 204);
+  const allowHeaders = String(res.headers.get('access-control-allow-headers') || '').toLowerCase();
+  assert.ok(allowHeaders.includes('x-api-key'), 'X-API-Key を許可');
+  assert.ok(allowHeaders.includes('x-index-meta'), 'X-Index-Meta を許可');
+});
+
 test('render-thumbnail: バイナリ直送で max_width 未指定なら既定幅で200', async () => {
   const res = await fetch(api.url + '/render-thumbnail', {
     method: 'POST',
