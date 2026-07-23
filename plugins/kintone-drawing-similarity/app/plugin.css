@@ -288,6 +288,17 @@
   font-size: 13px;
 }
 
+.pb-bulk-phase.done {
+  color: #15803d;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.pb-bulk-phase.error {
+  color: #b91c1c;
+  font-weight: 700;
+}
+
 .pb-bulk-bar-wrap {
   height: 8px;
   margin-bottom: 16px;
@@ -302,6 +313,10 @@
   border-radius: 4px;
   background: linear-gradient(90deg, #2563eb, #4f46e5);
   transition: width 0.3s ease;
+}
+
+.pb-bulk-bar-fill.done {
+  background: #16a34a;
 }
 
 .pb-bulk-counts {
@@ -339,4 +354,16 @@
 .pb-bulk-actions {
   display: flex;
   justify-content: flex-end;
+}
+
+/* 完了時：閉じるボタンを主要アクションとして目立たせる */
+.pb-bulk-cancel.primary {
+  background: #2563eb;
+  border-color: transparent;
+  color: #ffffff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.08);
+}
+
+.pb-bulk-cancel.primary:hover {
+  background: #1d4ed8;
 }
