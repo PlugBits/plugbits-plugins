@@ -1401,7 +1401,8 @@
 
   // === 複数PDF一括登録（レコード自動作成つき） ===
   // 手元のPDF/TIFを複数選択し、OCR解析→レコード作成→検索登録までをまとめて実行する。
-  // 1回の実行につき最大 BULK_PDF_MAX_PER_RUN 枚（完了後に再実行すれば続きから処理できる）。
+  // 選択したファイルは全件保持し、BULK_PDF_MAX_PER_RUN 枚ずつのチャンクに分けて処理する。
+  // 1チャンク完了後は「続きを登録」ボタンで次のチャンクへ進める（runBulkPdfRegister 参照）。
   const BULK_PDF_MAX_PER_RUN = 100;
   // /analyze と /index はどちらも重い処理のため、通常の一括登録（BULK_INDEX_CONCURRENCY=3）
   // より控えめな並列度にする。
@@ -1426,6 +1427,7 @@
       '<ul class="pb-bulk-errors"></ul>',
       '<div class="pb-bulk-actions">',
       '<button class="pb-bulk-cancel pb-similarity-button secondary" type="button">キャンセル</button>',
+      '<button class="pb-bulk-continue pb-similarity-button primary" type="button" hidden>続きを登録</button>',
       '</div>',
       '</div>'
     ].join('');
@@ -1437,9 +1439,13 @@
     const phaseEl = overlay.querySelector('.pb-bulk-phase');
     const fill = overlay.querySelector('.pb-bulk-bar-fill');
     const cancelBtn = overlay.querySelector('.pb-bulk-cancel');
+    const continueBtn = overlay.querySelector('.pb-bulk-continue');
 
     if (state.phase === 'process') {
       phaseEl.textContent = '処理中... ' + state.processed + ' / ' + state.total + ' 件';
+      fill.style.width = state.total > 0 ? Math.round(state.processed / state.total * 100) + '%' : '5%';
+    } else if (state.phase === 'paused') {
+      phaseEl.textContent = 'ここまで ' + state.processed + ' / ' + state.total + ' 件を処理しました。';
       fill.style.width = state.total > 0 ? Math.round(state.processed / state.total * 100) + '%' : '5%';
     } else if (state.phase === 'done') {
       phaseEl.textContent = '✓ 完了しました（成功 ' + state.success + '件）';
@@ -1455,11 +1461,21 @@
     phaseEl.classList.toggle('error', state.phase === 'error');
     fill.classList.toggle('done', state.phase === 'done');
 
-    const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
-    cancelBtn.textContent = isDone ? '閉じる' : 'キャンセル';
+    const isClosable = state.phase === 'done' || state.phase === 'cancelled' ||
+      state.phase === 'error' || state.phase === 'paused';
+    cancelBtn.textContent = isClosable ? '閉じる' : 'キャンセル';
     // 完了時は閉じるボタンを主要アクションとして目立たせる
     cancelBtn.classList.toggle('secondary', state.phase !== 'done');
     cancelBtn.classList.toggle('primary', state.phase === 'done');
+
+    // 一時停止中（1チャンク完了・残りあり）のときだけ続行ボタンを表示する。
+    // state.processed は全チャンク累計なので、残り件数はここから求まる。
+    const isPaused = state.phase === 'paused';
+    continueBtn.hidden = !isPaused;
+    if (isPaused) {
+      const nextChunkSize = Math.min(state.total - state.processed, BULK_PDF_MAX_PER_RUN);
+      continueBtn.textContent = '続きの' + nextChunkSize + '件を登録';
+    }
 
     overlay.querySelector('.pb-bulk-total b').textContent = state.total > 0 ? state.total + '件' : '-';
     overlay.querySelector('.pb-bulk-success b').textContent = state.success;
@@ -1469,7 +1485,7 @@
 
     const errorsList = overlay.querySelector('.pb-bulk-errors');
     errorsList.textContent = '';
-    // 1回の実行が最大100件のため、全件表示して問題ない
+    // チャンクをまたいだ累計を表示する
     (state.entries || []).forEach((entry) => {
       const li = document.createElement('li');
       li.className = 'pb-bulk-error-item';
@@ -1587,6 +1603,8 @@
   };
 
   // commonFieldValues: 対応タイプの必須フィールドについて、全レコード共通で設定する値（{code: value}）
+  // files は選択された全件（100件超も含む）。BULK_PDF_MAX_PER_RUN 件ずつのチャンクに分けて
+  // 順番に処理し、チャンク完了ごとに一時停止して「続きを登録」ボタンで次のチャンクへ進む。
   const runBulkPdfRegister = async (overlay, config, apiBaseUrl, files, commonFieldValues) => {
     const cancel = { requested: false };
     const state = {
@@ -1600,9 +1618,64 @@
       entries: []
     };
 
+    const appId = kintone.app.getId();
+    const tenantId = deriveTenantId();
+
+    // 次のチャンクの開始インデックス（チャンク完了のたびに進める）
+    let chunkStart = 0;
+
+    // 1チャンク（最大 BULK_PDF_MAX_PER_RUN 件）分を処理する。
+    const runChunk = async () => {
+      const chunkEnd = Math.min(files.length, chunkStart + BULK_PDF_MAX_PER_RUN);
+
+      // 実行中のみ離脱ガードを有効化する（一時停止中はユーザーが離脱してもよい。
+      // 次チャンク開始時に再取得する。release() は冪等なので finally で呼べばよい）。
+      const releaseGuard = beginUploadGuard();
+
+      const processOne = async (file) => {
+        await processOneBulkPdf(file, config, apiBaseUrl, appId, tenantId, commonFieldValues, state);
+        state.processed += 1;
+        updateBulkPdfModal(overlay, state);
+      };
+
+      let nextIndex = chunkStart;
+      const runWorker = async () => {
+        while (nextIndex < chunkEnd && !cancel.requested) {
+          const file = files[nextIndex];
+          nextIndex += 1;
+          await processOne(file);
+        }
+      };
+      const workerCount = Math.min(BULK_PDF_CONCURRENCY, chunkEnd - chunkStart) || 1;
+
+      try {
+        await Promise.all(Array.from({ length: workerCount }, runWorker));
+        chunkStart = chunkEnd;
+        if (cancel.requested) {
+          state.phase = 'cancelled';
+        } else if (chunkStart < files.length) {
+          state.phase = 'paused';
+        } else {
+          state.phase = 'done';
+        }
+        updateBulkPdfModal(overlay, state);
+        if (state.phase === 'done' && state.fail > 0) {
+          console.warn('[index] 複数PDF登録で ' + state.fail + ' 件の検索登録に失敗しました。管理メニューの「一括図面登録 → 未登録を登録」で再登録できます。');
+        }
+      } catch (error) {
+        state.phase = 'error';
+        state.errorMessage = error.message;
+        updateBulkPdfModal(overlay, state);
+        console.warn('[index] 複数PDF登録に失敗: ' + error.message);
+      } finally {
+        releaseGuard();
+      }
+    };
+
     overlay.querySelector('.pb-bulk-cancel').addEventListener('click', () => {
-      const isDone = state.phase === 'done' || state.phase === 'cancelled' || state.phase === 'error';
-      if (isDone) {
+      const isClosable = state.phase === 'done' || state.phase === 'cancelled' ||
+        state.phase === 'error' || state.phase === 'paused';
+      if (isClosable) {
         overlay.remove();
         // レコードが作成された可能性がある場合（成功、または/index送信前にレコード作成済みで
         // 失敗したケースを含む）は一覧画面に新規レコードを反映するためページを更新する。
@@ -1615,46 +1688,15 @@
       cancel.requested = true;
     });
 
+    overlay.querySelector('.pb-bulk-continue').addEventListener('click', () => {
+      if (state.phase !== 'paused') return;
+      state.phase = 'process';
+      updateBulkPdfModal(overlay, state);
+      runChunk();
+    });
+
     updateBulkPdfModal(overlay, state);
-
-    const appId = kintone.app.getId();
-    const tenantId = deriveTenantId();
-
-    // 実行中は離脱ガードを有効化する（複数PDF登録の全ファイル処理を1区間として扱う。
-    // release() は冪等なので finally で1回呼べばよい）。
-    const releaseGuard = beginUploadGuard();
-
-    const processOne = async (file) => {
-      await processOneBulkPdf(file, config, apiBaseUrl, appId, tenantId, commonFieldValues, state);
-      state.processed += 1;
-      updateBulkPdfModal(overlay, state);
-    };
-
-    let nextIndex = 0;
-    const runWorker = async () => {
-      while (nextIndex < files.length && !cancel.requested) {
-        const file = files[nextIndex];
-        nextIndex += 1;
-        await processOne(file);
-      }
-    };
-    const workerCount = Math.min(BULK_PDF_CONCURRENCY, files.length) || 1;
-
-    try {
-      await Promise.all(Array.from({ length: workerCount }, runWorker));
-      state.phase = cancel.requested ? 'cancelled' : 'done';
-      updateBulkPdfModal(overlay, state);
-      if (state.fail > 0) {
-        console.warn('[index] 複数PDF登録で ' + state.fail + ' 件の検索登録に失敗しました。管理メニューの「一括図面登録 → 未登録を登録」で再登録できます。');
-      }
-    } catch (error) {
-      state.phase = 'error';
-      state.errorMessage = error.message;
-      updateBulkPdfModal(overlay, state);
-      console.warn('[index] 複数PDF登録に失敗: ' + error.message);
-    } finally {
-      releaseGuard();
-    }
+    runChunk();
   };
 
   // ファイル選択（複数選択 / フォルダ選択）→ 全レコード共通の必須項目入力 → 確認 → 実行、の2段階。
@@ -1694,7 +1736,7 @@
     subEl.textContent = 'クリックまたはドラッグ&ドロップで選択（複数選択可）';
     const noteEl = document.createElement('div');
     noteEl.className = 'drop-note';
-    noteEl.textContent = '1回の実行につき最大' + BULK_PDF_MAX_PER_RUN + '枚まで';
+    noteEl.textContent = BULK_PDF_MAX_PER_RUN + '件ずつ登録します（100件を超える分は完了後に続けて登録できます）';
     const filesInput = document.createElement('input');
     filesInput.type = 'file';
     filesInput.multiple = true;
@@ -1766,9 +1808,9 @@
       }
       let notice = '';
       if (filtered.length > BULK_PDF_MAX_PER_RUN) {
-        notice = ' 最初の' + BULK_PDF_MAX_PER_RUN + '枚のみ処理します（完了後にもう一度実行すると続きから処理できます）。';
+        notice = ' ' + BULK_PDF_MAX_PER_RUN + '件ずつ登録します（各回の完了後に「続きを登録」で続行できます）。';
       }
-      selectedFiles = filtered.slice(0, BULK_PDF_MAX_PER_RUN);
+      selectedFiles = filtered;
       statusEl.textContent = selectedFiles.length + ' 件のPDF・TIFが選択されました。' + notice;
       refreshStartButton();
     };
@@ -1877,7 +1919,11 @@
     startBtn.addEventListener('click', () => {
       if (!selectedFiles.length || requiredFieldsBlocking) return;
       if (requiredFieldsUi && !requiredFieldsUi.validate()) return;
-      if (!window.confirm(selectedFiles.length + '件のPDFからレコードを作成し、検索登録まで実行します。よろしいですか？')) {
+      const confirmMessage = selectedFiles.length > BULK_PDF_MAX_PER_RUN
+        ? (selectedFiles.length + '件中、最初の' + BULK_PDF_MAX_PER_RUN + '件から登録を開始します。' +
+          '100件ごとに一時停止するので、続きは「続きを登録」で進められます。よろしいですか？')
+        : (selectedFiles.length + '件のPDFからレコードを作成し、検索登録まで実行します。よろしいですか？');
+      if (!window.confirm(confirmMessage)) {
         return;
       }
       const commonFieldValues = requiredFieldsUi ? requiredFieldsUi.getValues() : {};
