@@ -3276,7 +3276,7 @@
     // --- State: Done ---
     // backgroundNote を渡すと、バックグラウンドで実行中の検索インデックス登録について
     // 一言添える（実際の進行/結果は右下の常駐パネル・trackPendingIndex が受け持つ）。
-    const showDoneState = (success, message, detail, backgroundNote) => {
+    const showDoneState = (success, message, detail, backgroundNote, recordLinkId) => {
       clear();
       modal.classList.remove('wide');
       const title = document.createElement('h2');
@@ -3295,6 +3295,20 @@
         det.className = 'result-detail';
         det.textContent = detail;
         resultWrap.appendChild(det);
+      }
+      // モーダル内でレコードを作成/更新した場合はkintoneの画面遷移が起きないため、
+      // 作成したレコードへの導線をここに出す。
+      if (success && recordLinkId) {
+        const linkWrap = document.createElement('div');
+        linkWrap.style.cssText = 'margin-top:10px;';
+        const link = document.createElement('a');
+        link.className = 'sim-link';
+        link.href = '/k/' + appId + '/show#record=' + encodeURIComponent(recordLinkId);
+        link.target = '_blank';
+        link.rel = 'noopener';
+        link.textContent = 'レコードを開く ↗';
+        linkWrap.appendChild(link);
+        resultWrap.appendChild(linkWrap);
       }
       if (backgroundNote) {
         const note = document.createElement('div');
@@ -3463,7 +3477,8 @@
         true,
         '図番 ' + drawingNo + ' を保存しました。',
         'record ' + recordId,
-        '検索登録はバックグラウンドで実行中です（右下の表示をご確認ください）'
+        '検索登録はバックグラウンドで実行中です（右下の表示をご確認ください）',
+        recordId
       );
 
       const tracker = trackPendingIndex('図番 ' + drawingNo + (isNewRecord ? '' : '（更新）'));
