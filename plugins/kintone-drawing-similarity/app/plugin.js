@@ -1815,6 +1815,167 @@
     runChunk();
   };
 
+  // === 高速サムネイルの既存レコード遡及（/thumb-backfill） ===
+  // インデックス状況チェックの「サムネなし」カテゴリ（登録済みだがサムネイル未保存）を
+  // 一括で埋めるための専用ランナー。フル再登録（runFiltered → /index、OCR・AI・埋め込み
+  // まで走る）とは意図的に別実装にしている——サムネイルだけを追加する軽量経路であることが
+  // このエンドポイントの存在意義なので、ここでもOCR等は一切呼ばない。
+  // 複数PDF登録（runBulkPdfRegister）で確立した並列2・beginUploadGuard・進捗カウントの
+  // パターンを踏襲するが、チャンク分割は不要（1件数秒×並列2で100件超でも許容範囲のため）。
+  const THUMB_BACKFILL_CONCURRENCY = 2;
+
+  const createThumbBackfillModal = () => {
+    const overlay = document.createElement('div');
+    overlay.id = 'pb-thumb-backfill-overlay';
+    overlay.className = 'pb-bulk-overlay';
+    overlay.innerHTML = [
+      '<div class="pb-bulk-modal">',
+      '<h2 class="pb-bulk-title">サムネイルを保存</h2>',
+      '<div class="pb-bulk-phase">準備中...</div>',
+      '<div class="pb-bulk-bar-wrap"><div class="pb-bulk-bar-fill"></div></div>',
+      '<div class="pb-bulk-counts">',
+      '<span class="pb-bulk-total">合計 <b>-</b></span>',
+      '<span class="pb-bulk-success">成功 <b>0</b></span>',
+      '<span class="pb-bulk-fail">失敗 <b>0</b></span>',
+      '</div>',
+      '<ul class="pb-bulk-errors"></ul>',
+      '<div class="pb-bulk-actions">',
+      '<button class="pb-bulk-cancel pb-similarity-button secondary" type="button">キャンセル</button>',
+      '</div>',
+      '</div>'
+    ].join('');
+    document.body.appendChild(overlay);
+    return overlay;
+  };
+
+  const updateThumbBackfillModal = (overlay, state) => {
+    const phaseEl = overlay.querySelector('.pb-bulk-phase');
+    const fill = overlay.querySelector('.pb-bulk-bar-fill');
+    const cancelBtn = overlay.querySelector('.pb-bulk-cancel');
+
+    if (state.phase === 'process') {
+      phaseEl.textContent = '処理中... ' + state.processed + ' / ' + state.total + ' 件';
+      fill.style.width = state.total > 0 ? Math.round(state.processed / state.total * 100) + '%' : '5%';
+    } else if (state.phase === 'done') {
+      phaseEl.textContent = '✓ 完了しました（成功 ' + state.success + '件・失敗 ' + state.fail + '件）';
+      fill.style.width = '100%';
+    } else if (state.phase === 'cancelled') {
+      phaseEl.textContent = 'キャンセルしました（実行中だった1件は完了しています）。';
+    }
+
+    phaseEl.classList.toggle('done', state.phase === 'done');
+    fill.classList.toggle('done', state.phase === 'done');
+
+    const isClosable = state.phase === 'done' || state.phase === 'cancelled';
+    cancelBtn.textContent = isClosable ? '閉じる' : 'キャンセル';
+    cancelBtn.classList.toggle('secondary', state.phase !== 'done');
+    cancelBtn.classList.toggle('primary', state.phase === 'done');
+
+    overlay.querySelector('.pb-bulk-total b').textContent = state.total > 0 ? state.total + '件' : '-';
+    overlay.querySelector('.pb-bulk-success b').textContent = state.success;
+    overlay.querySelector('.pb-bulk-fail b').textContent = state.fail;
+
+    const errorsList = overlay.querySelector('.pb-bulk-errors');
+    errorsList.textContent = '';
+    // 失敗のみ表示する（成功件数はカウンタで十分なため、一覧は失敗の内訳に絞る）
+    (state.errors || []).forEach((entry) => {
+      const li = document.createElement('li');
+      li.className = 'pb-bulk-error-item';
+      li.textContent = 'レコード ' + entry.recordId + ': ' + entry.message;
+      errorsList.appendChild(li);
+    });
+  };
+
+  // entries: [{ recordId, drawingNo }]（openIndexStatusModal の noThumb 相当）。
+  // 1件の処理: /k/v1/record GETで最新のfileKeyを取得 → downloadKintoneFile →
+  // /thumb-backfill にバイナリ直送。失敗した件はhasThumbが付かないままなので、
+  // 再チェック→再実行すれば残りだけ拾える（呼び出し元に成否を返す必要が無い設計）。
+  const runThumbBackfill = (config, apiBaseUrl, entries) => {
+    const overlay = createThumbBackfillModal();
+    const cancel = { requested: false };
+    const state = {
+      phase: 'process',
+      total: entries.length,
+      processed: 0,
+      success: 0,
+      fail: 0,
+      errors: []
+    };
+    updateThumbBackfillModal(overlay, state);
+
+    overlay.querySelector('.pb-bulk-cancel').addEventListener('click', () => {
+      const isClosable = state.phase === 'done' || state.phase === 'cancelled';
+      if (isClosable) {
+        overlay.remove();
+        return;
+      }
+      cancel.requested = true;
+    });
+
+    const appId = kintone.app.getId();
+    const tenantId = deriveTenantId();
+    const thumbKey = getThumbKey(config);
+
+    const processOne = async (entry) => {
+      try {
+        const record = await kintone.api(kintone.api.url('/k/v1/record', true), 'GET', {
+          app: appId, id: entry.recordId
+        });
+        const fileField = config.pdfFileField ? record.record[config.pdfFileField] : null;
+        const files = fileField && Array.isArray(fileField.value) ? fileField.value : [];
+        if (!files.length) {
+          throw new Error('PDFファイルが見つかりません');
+        }
+        const blob = await downloadKintoneFile(files[0].fileKey);
+        const response = await fetch(apiBaseUrl + '/thumb-backfill', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'X-Index-Meta': encodeURIComponent(JSON.stringify({
+              tenantId,
+              recordId: entry.recordId,
+              thumbKey
+            })),
+            ...apiKeyHeader(config.apiKey)
+          },
+          body: blob
+        });
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(data.error || 'HTTP ' + response.status);
+        }
+        state.success += 1;
+      } catch (error) {
+        state.fail += 1;
+        state.errors.push({ recordId: entry.recordId, message: error.message });
+        console.warn('[thumb-backfill] レコード ' + entry.recordId + ' のサムネイル保存に失敗: ' + error.message);
+      } finally {
+        state.processed += 1;
+        updateThumbBackfillModal(overlay, state);
+      }
+    };
+
+    let nextIndex = 0;
+    const runWorker = async () => {
+      while (nextIndex < entries.length && !cancel.requested) {
+        const entry = entries[nextIndex];
+        nextIndex += 1;
+        await processOne(entry);
+      }
+    };
+    const workerCount = Math.min(THUMB_BACKFILL_CONCURRENCY, entries.length) || 1;
+
+    // 離脱ガード: 送信中にタブを閉じられると一部だけ保存された状態になりうるため、
+    // 全ワーカー完了までは beforeunload で警告する（release() は完了後に1回だけ呼ぶ）。
+    const releaseGuard = beginUploadGuard();
+    Promise.all(Array.from({ length: workerCount }, runWorker))
+      .then(() => {
+        state.phase = cancel.requested ? 'cancelled' : 'done';
+        updateThumbBackfillModal(overlay, state);
+      })
+      .finally(releaseGuard);
+  };
+
   // ファイル選択（複数選択 / フォルダ選択）→ 全レコード共通の必須項目入力 → 確認 → 実行、の2段階。
   const openBulkPdfRegisterModal = (config, apiBaseUrl) => {
     if (!config.pdfFileField) {
@@ -4985,13 +5146,23 @@
       }
 
       // --- 突き合わせ ---
-      const indexMap = new Map(indexItems.map((it) => [String(it.recordId), String(it.fileKey || '')]));
+      // indexMap: recordId -> { fileKey, hasThumb }（/index-statusのレスポンス対応。
+      // hasThumb が無い旧レスポンス（サーバー未更新時）でも it.hasThumb は undefined になり
+      // Boolean(undefined)=false に落ちるだけなので壊れない）。
+      const indexMap = new Map(indexItems.map((it) => [
+        String(it.recordId),
+        { fileKey: String(it.fileKey || ''), hasThumb: Boolean(it.hasThumb) }
+      ]));
       const drawingNoOf = (record) => config.drawingNoField && record[config.drawingNoField]
         ? String(record[config.drawingNoField].value || '') : '';
       const ok = [];
       const unindexed = [];
       const stale = [];
       const noPdf = [];
+      // 高速サムネイル機能が有効な場合だけ意味を持つカテゴリ: 登録済み（ok）だが
+      // サムネイルが未保存のレコード（旧登録・機能有効化前に登録されたレコード等）。
+      const thumbFeatureEnabled = Boolean(getThumbKey(config));
+      const noThumb = [];
       const kintoneIds = new Set();
       for (const record of records) {
         const recordId = String(record['$id'].value);
@@ -5000,11 +5171,14 @@
         const files = fileField && Array.isArray(fileField.value) ? fileField.value : [];
         const entry = { recordId, drawingNo: drawingNoOf(record) };
         if (!files.length) { noPdf.push(entry); continue; }
-        const indexedFileKey = indexMap.get(recordId);
-        if (indexedFileKey === undefined) { unindexed.push(entry); continue; }
+        const indexed = indexMap.get(recordId);
+        if (indexed === undefined) { unindexed.push(entry); continue; }
         // file_key 未記録の旧データは差分判定不能のため OK 扱い
-        if (indexedFileKey && indexedFileKey !== String(files[0].fileKey)) { stale.push(entry); continue; }
+        if (indexed.fileKey && indexed.fileKey !== String(files[0].fileKey)) { stale.push(entry); continue; }
         ok.push(entry);
+        if (thumbFeatureEnabled && !indexed.hasThumb) {
+          noThumb.push(entry);
+        }
       }
       const orphans = [...indexMap.keys()]
         .filter((id) => !kintoneIds.has(id))
@@ -5023,12 +5197,17 @@
 
       const grid = document.createElement('div');
       grid.className = 'stat-grid';
-      [
+      const statTiles = [
         { num: ok.length, label: '登録済み', cls: 'ok' },
         { num: unindexed.length, label: '未登録', cls: unindexed.length ? 'warn' : '' },
         { num: stale.length, label: '要更新', cls: stale.length ? 'warn' : '' },
         { num: orphans.length, label: '孤児', cls: orphans.length ? 'err' : '' }
-      ].forEach(({ num, label, cls }) => {
+      ];
+      // 高速サムネイル機能が無効なら従来どおりの表示のまま（タイルを増やさない）。
+      if (thumbFeatureEnabled) {
+        statTiles.push({ num: noThumb.length, label: 'サムネなし', cls: noThumb.length ? 'warn' : '' });
+      }
+      statTiles.forEach(({ num, label, cls }) => {
         const card = document.createElement('div');
         card.className = 'stat-card' + (cls ? ' ' + cls : '');
         const n = document.createElement('div');
@@ -5057,6 +5236,9 @@
       if (unindexed.length) content.appendChild(buildSection('未登録（検索に出ません）', unindexed));
       if (stale.length) content.appendChild(buildSection('要更新（PDFが差し替えられています）', stale));
       if (orphans.length) content.appendChild(buildSection('孤児（レコード削除済み・検索結果に残っています）', orphans, { linkable: false }));
+      if (thumbFeatureEnabled && noThumb.length) {
+        content.appendChild(buildSection('サムネイル未保存（表示は従来どおり動作します）', noThumb));
+      }
       if (noPdf.length) {
         const note = document.createElement('div');
         note.className = 'diff-note';
@@ -5092,6 +5274,19 @@
         staleBtn.textContent = '要更新を再登録（' + stale.length + '件）';
         staleBtn.addEventListener('click', () => runFiltered('要更新レコードの再登録', stale));
         actions.appendChild(staleBtn);
+      }
+      if (thumbFeatureEnabled && noThumb.length) {
+        // フル再登録（/index、OCR・AI・埋め込みまで走る）とは別の軽量経路。
+        // runFiltered は使わず、サムネイルだけを追加する専用ランナーを呼ぶ。
+        const thumbBtn = document.createElement('button');
+        thumbBtn.type = 'button';
+        thumbBtn.className = 'btn-secondary';
+        thumbBtn.textContent = 'サムネイルを保存（' + noThumb.length + '件）';
+        thumbBtn.addEventListener('click', () => {
+          closeModal();
+          runThumbBackfill(config, apiBaseUrl, noThumb);
+        });
+        actions.appendChild(thumbBtn);
       }
       if (bulkMode) {
         // 全件登録の対象は PDF が添付されている全レコード（登録済み＋未登録＋要更新）。

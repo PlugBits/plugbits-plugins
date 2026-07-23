@@ -2754,13 +2754,17 @@ const server = createServer(async (request, response) => {
       const tenantId = request._forcedTenantId || url.searchParams.get('tenantId') || 'default';
       const appId = url.searchParams.get('appId') || '';
       const must = [{ key: 'tenant_id', match: { value: tenantId } }];
-      const byRecord = new Map(); // record_id -> file_key（回転違いは同一レコードに集約）
+      // record_id -> { fileKey, hasThumb }（回転違いは同一レコードに集約。
+      // hasThumb は thumb_ver を持つ点が1つでもあれば true）
+      const byRecord = new Map();
       let nextOffset = null;
       let hasMore = true;
       while (hasMore) {
         const scrollBody = {
           limit: 250,
-          with_payload: ['record_id', 'app_id', 'file_key', 'doc_type'],
+          // thumb_enc本体（暗号文、~30KB）は一覧に不要なので取得せず、有無判定に
+          // 使えるバージョン番号（thumb_ver）だけを取る。
+          with_payload: ['record_id', 'app_id', 'file_key', 'doc_type', 'thumb_ver'],
           filter: { must }
         };
         if (nextOffset != null) {
@@ -2781,7 +2785,12 @@ const server = createServer(async (request, response) => {
             continue;
           }
           if (payload.record_id) {
-            byRecord.set(String(payload.record_id), String(payload.file_key || ''));
+            const recordId = String(payload.record_id);
+            const existing = byRecord.get(recordId);
+            byRecord.set(recordId, {
+              fileKey: existing?.fileKey || String(payload.file_key || ''),
+              hasThumb: Boolean(existing?.hasThumb) || Boolean(payload.thumb_ver)
+            });
           }
         }
         nextOffset = data.result?.next_page_offset ?? null;
@@ -2791,7 +2800,11 @@ const server = createServer(async (request, response) => {
         configured: true,
         tenantId,
         count: byRecord.size,
-        items: [...byRecord.entries()].map(([recordId, fileKey]) => ({ recordId, fileKey }))
+        items: [...byRecord.entries()].map(([recordId, info]) => ({
+          recordId,
+          fileKey: info.fileKey,
+          hasThumb: info.hasThumb
+        }))
       });
     } catch (error) {
       sendJson(response, error.status || 500, { error: error.message });
@@ -3073,6 +3086,98 @@ const server = createServer(async (request, response) => {
           thumbEnc: point.payload.thumb_enc
         }));
       sendJson(response, 200, { thumbs });
+    } catch (error) {
+      sendJson(response, error.status || 500, { error: error.message });
+    }
+    return;
+  }
+
+  // 高速サムネイルの既存レコード遡及。既に登録済み（/index済み）のレコードに対して、
+  // サムネイルだけを軽量に追加する専用経路。OCR・AI（Gemini）・埋め込み計算は一切
+  // 行わないため、フル再登録（/index）に比べて大幅に低コストで大量遡及できる。
+  // 受信形式は /index のバイナリ直送経路と同じ: Content-Type: application/octet-stream
+  // でPDF/TIFの生バイト列、メタは X-Index-Meta ヘッダー（URLエンコードJSON）。
+  if (request.method === 'POST' && url.pathname === '/thumb-backfill') {
+    try {
+      const contentType = String(request.headers['content-type'] || '').toLowerCase();
+      if (!contentType.startsWith('application/octet-stream')) {
+        sendJson(response, 400, { error: 'Content-Type: application/octet-stream is required' });
+        return;
+      }
+
+      const pdfBuffer = await readRawBody(request);
+      if (!pdfBuffer.length) {
+        sendJson(response, 400, { error: 'Empty PDF content' });
+        return;
+      }
+
+      const metaHeaderRaw = request.headers['x-index-meta'];
+      const metaHeader = Array.isArray(metaHeaderRaw) ? metaHeaderRaw[0] : metaHeaderRaw;
+      let meta;
+      try {
+        if (!metaHeader) {
+          throw new Error('missing x-index-meta header');
+        }
+        meta = JSON.parse(decodeURIComponent(metaHeader));
+        if (!meta || typeof meta !== 'object') {
+          throw new Error('x-index-meta is not a JSON object');
+        }
+      } catch {
+        sendJson(response, 400, { error: 'invalid or missing x-index-meta header' });
+        return;
+      }
+      // テナント強制は /index のバイナリ経路と同じ applyForcedTenant を通す
+      // （最重要: ここを忘れるとテナント越えでの上書きが可能になる）。
+      const body = applyForcedTenant(request, meta);
+
+      if (!body.recordId) {
+        sendJson(response, 400, { error: 'recordId is required' });
+        return;
+      }
+      if (!isQdrantConfigured()) {
+        sendJson(response, 200, { ok: true, configured: false });
+        return;
+      }
+
+      const tenantId = body.tenantId || 'default';
+      // ポイントIDは /thumbs と同じ代表点（回転0相当）を使う。thumb_encは
+      // 全回転ポイントのpayloadに複製される想定だが、遡及はギャラリー表示用の
+      // 代表点だけで十分（次回のフル再登録で全回転点に揃う）。
+      const pointId = toPointId(tenantId, body.recordId);
+
+      // 事前に既存ポイントの有無を確認する（/thumbs と同じ取得方法）。未登録の
+      // recordIdにサムネイルだけ追加しても意味が無いため、明確に404を返す。
+      const existing = await qdrantRequest(
+        '/collections/' + encodeURIComponent(qdrantCollection) + '/points',
+        { method: 'POST', body: JSON.stringify({ ids: [pointId], with_payload: false }) }
+      );
+      if (!Array.isArray(existing.result) || existing.result.length === 0) {
+        sendJson(response, 404, { error: 'record not indexed yet — use /index instead' });
+        return;
+      }
+
+      // thumbKeyの値そのものはログに出さない。
+      const thumbPngBuffer = await convertPdfFirstPageToThumbnailPng(pdfBuffer, thumbEncMaxWidth);
+      const thumbEnc = encryptThumbnail(thumbPngBuffer, body.thumbKey);
+      if (!thumbEnc) {
+        sendJson(response, 400, { error: 'invalid or missing thumbKey' });
+        return;
+      }
+
+      // set_payload はベクトル・他フィールドを一切変更せず、指定フィールドだけを
+      // 既存ポイントのpayloadに追記/上書きする（/tag と同じAPI）。
+      await qdrantRequest(
+        '/collections/' + encodeURIComponent(qdrantCollection) + '/points/payload?wait=true',
+        {
+          method: 'POST',
+          body: JSON.stringify({
+            payload: { thumb_enc: thumbEnc, thumb_ver: THUMB_ENC_VERSION },
+            points: [pointId]
+          })
+        }
+      );
+
+      sendJson(response, 200, { ok: true, recordId: body.recordId });
     } catch (error) {
       sendJson(response, error.status || 500, { error: error.message });
     }
