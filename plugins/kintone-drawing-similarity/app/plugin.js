@@ -140,6 +140,48 @@
     return fallback || ('エラーが発生しました (HTTP ' + status + ')');
   };
 
+  // /index へのバイナリ直送を XMLHttpRequest で行い、リクエストボディの送信完了
+  // （アップロード完了）を検知する。fetch にはアップロード進捗・完了イベントが無いため、
+  // beforeunload ガードを「送信中の1〜3秒」だけに限定する目的で XHR を使う。
+  // リクエストボディ（PDF）がサーバーに届き切れば、応答（Qdrant書き込み込みで約14秒かかる
+  // ことがある）をブラウザが待たなくてもサーバー側の登録処理は完了する。
+  //
+  // onUploadComplete はアップロード完了時に1回だけ呼ばれる（xhr.upload の load イベント。
+  // 何らかの理由でそのイベントが発火しなかった場合の保険として xhr.onload でも呼ぶ）。
+  // 通信エラー・タイムアウト時は呼ばない（ボディが実際に届いたかどうか保証できないため。
+  // その場合でも reject 後に呼び出し側の fail() が最終的にガードを解除する＝取りこぼしはない）。
+  const sendIndexBinary = (apiBaseUrl, apiKey, meta, blob, onUploadComplete) => new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', apiBaseUrl + '/index', true);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-Index-Meta', encodeURIComponent(JSON.stringify(meta)));
+    if (apiKey) xhr.setRequestHeader('X-API-Key', apiKey);
+
+    let uploadNotified = false;
+    const notifyUploadComplete = () => {
+      if (uploadNotified) return;
+      uploadNotified = true;
+      if (onUploadComplete) onUploadComplete();
+    };
+    xhr.upload.addEventListener('load', notifyUploadComplete);
+
+    xhr.onload = () => {
+      // 保険: 上の upload.load が何らかの理由で発火しなかった場合でも、応答が
+      // 返ってきた時点で送信は確実に完了しているため、ここで必ず通知する。
+      notifyUploadComplete();
+      let data = {};
+      try { data = JSON.parse(xhr.responseText || '{}') || {}; } catch (_) { /* ignore */ }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(data);
+      } else {
+        reject(new Error(describeApiError(xhr.status, data.error)));
+      }
+    };
+    xhr.onerror = () => reject(new Error(describeApiError(0)));
+    xhr.ontimeout = () => reject(new Error(describeApiError(0)));
+    xhr.send(blob);
+  });
+
   // --- 経過時間に応じて進行メッセージを切り替える ---
   // phases: [{ at: 経過秒, text: 表示文言 }, ...]（at 昇順）
   const startProgressiveStatus = (update, phases) => {
@@ -167,8 +209,19 @@
   // 新規/更新の kintone レコード保存はモーダル内で即完了させ、重い検索インデックス登録は
   // バックグラウンドで実行する。進行状況は画面右下の常駐パネル（Gmail の「送信中...」方式）
   // に出す。kintone のアプリ内移動（一覧⇄詳細）はページを破棄しないため、パネルと
-  // fetch はそのまま生存する。フルページ遷移（タブを閉じる・リロード・別アプリへの移動）は
-  // beforeunload でブラウザ標準の確認ダイアログを出して抑止する。
+  // 送信はそのまま生存する。
+  //
+  // ガードは「リクエストボディの送信中（1〜3秒）」だけに限定する。/index はリクエスト
+  // ボディ（PDF）がサーバーに届き切れば、ブラウザが応答（Qdrant書き込み込みで約14秒）を
+  // 待たなくてもサーバー側で登録が完了するため、守るべきは送信中の短い区間だけでよい。
+  // そのため以下の2つのカウンタを別々に管理する:
+  //   - _pendingActiveCount: 「送信中（アップロード中）」の件数。これが1以上の間だけ
+  //     beforeunload ガード（フルページ遷移の抑止）を有効化する。
+  //   - _pendingUnsettledCount: 「まだ done()/fail() されていない（サーバー応答待ち含む）」
+  //     件数。パネルの自動非表示・リロード持ち越しボタンの表示条件はこちら側で判定する
+  //     （送信完了後もサーバー処理中の行はパネルに残り続けるため、ガード解除＝完了ではない）。
+  // フルページ遷移（タブを閉じる・リロード・別アプリへの移動）は beforeunload で
+  // ブラウザ標準の確認ダイアログを出して抑止する。
   // 強制終了された場合の保険は既存の「一括図面登録 → 未登録を登録」。
   const PENDING_INDEX_CSS = [
     ':host { all: initial; }',
@@ -218,13 +271,15 @@
     note.textContent = '完了までこのタブを閉じないでください。';
     panel.append(header, list, note);
     shadow.append(style, panel);
-    _pendingIndexUi = { panel, list };
+    _pendingIndexUi = { panel, list, note };
     return _pendingIndexUi;
   };
 
   // 処理中件数が1以上の間だけ beforeunload を登録し、0になったら解除する
   // （タブを閉じる・リロード・別アプリへの移動＝フルページ遷移をブラウザ標準の確認で抑止する）。
   let _pendingActiveCount = 0;
+  // 「まだ done()/fail() されていない」件数。_pendingActiveCount とは別物（上のコメント参照）。
+  let _pendingUnsettledCount = 0;
   // モーダルclose時にリロードしたいが、バックグラウンドの検索登録が残っている場合の
   // 持ち越しフラグ。即リロードすると処理中のfetchが死んで未登録になるため
   //（実際に発生した不具合）、全件完了後にパネル上のボタンでユーザーに委ねる。
@@ -249,32 +304,68 @@
     }
   };
 
+  // パネル下部の注意書きは、アップロード中（ガード有効）の行が1つでも残っているかどうかで
+  // 切り替える。ガードが外れている＝ページ移動しても送信済みデータは失われないため、
+  // 「タブを閉じるな」ではなく「サーバー処理中」に文言を変える。
+  const updatePendingNote = () => {
+    if (!_pendingIndexUi) return;
+    _pendingIndexUi.note.textContent = _pendingActiveCount > 0
+      ? 'アップロード完了までこのタブを閉じないでください。'
+      : 'サーバーで処理中です。ページを移動しても登録は完了します。';
+  };
+
   // 呼ぶと右下パネルに進行中の行を1つ追加し、beforeunloadガードを有効化する。
-  // 戻り値の done()/fail(message) で行の表示を更新し、全処理が終わればガードを解除する。
+  //
+  // 戻り値:
+  //   - uploadDone(): リクエストボディの送信完了（アップロード完了）時に呼ぶ。ガード計数
+  //     （_pendingActiveCount）を減らして beforeunload ガードを解除し、行の表示を
+  //     「🔄 サーバーで処理中」に更新する。まだ done()/fail() が呼ばれていない場合のみ有効。
+  //   - done()/fail(message): サーバー応答時に呼ぶ。行を完了/失敗表示にし、完了計数
+  //     （_pendingUnsettledCount）を減らす。uploadDone() が未呼び出しならガード解除も
+  //     ここで行う（＝ガード解除は uploadDone/done/fail のどこから来ても必ず1回だけ実行される）。
   const trackPendingIndex = (label) => {
     const { panel, list } = ensurePendingIndexUi();
     panel.hidden = false;
     _pendingActiveCount += 1;
+    _pendingUnsettledCount += 1;
     _syncPendingGuard();
+    updatePendingNote();
 
     const row = document.createElement('li');
     row.className = 'pb-pending-row';
     const text = document.createElement('span');
     text.className = 'pb-pending-text';
-    text.textContent = '🔄 検索登録中: ' + label;
+    text.textContent = '⬆ アップロード中: ' + label;
     row.appendChild(text);
     list.appendChild(row);
 
+    // guardReleased: ガード（アップロード中カウント）を解除済みか。uploadDone() と
+    // done()/fail() のどちらが先に来ても、ここで多重解除を防ぐ。
+    let guardReleased = false;
+    const releaseGuard = () => {
+      if (guardReleased) return;
+      guardReleased = true;
+      _pendingActiveCount = Math.max(0, _pendingActiveCount - 1);
+      _syncPendingGuard();
+      updatePendingNote();
+    };
+
+    // settled: done()/fail() 済みか（完了計数の二重減算防止、および uploadDone() が
+    // done/fail の後に来た場合に表示を上書きしないためのガードを兼ねる）。
     let settled = false;
     const finish = () => {
       if (settled) return;
       settled = true;
-      _pendingActiveCount = Math.max(0, _pendingActiveCount - 1);
-      _syncPendingGuard();
+      releaseGuard();
+      _pendingUnsettledCount = Math.max(0, _pendingUnsettledCount - 1);
     };
 
+    // 自動非表示・リロード持ち越しボタンの発火条件は「未完了件数（_pendingUnsettledCount）が
+    // 0」であること。ガード（_pendingActiveCount、アップロード中件数）が0でも、サーバー処理中の
+    // 行が残っていれば発火させない（ここを _pendingActiveCount で判定すると、アップロードだけ
+    // 終わった時点でリロードボタンやパネル自動非表示が誤発火するバグになる）。
     const maybeAutoHide = () => {
-      if (_pendingActiveCount !== 0) return;
+      if (_pendingUnsettledCount !== 0) return;
       // 全件完了時: リロードの持ち越し要求（requestReloadWhenIdle）があれば、
       // ここで初めて「表示を更新する」ボタンを出してユーザーに選ばせる
       //（勝手にリロードすると編集中の作業を壊しかねないため）。
@@ -293,7 +384,7 @@
       }
       if (!list.querySelector('.pb-pending-row.fail')) {
         setTimeout(() => {
-          if (_pendingActiveCount === 0 && !list.querySelector('.pb-pending-row.fail') && !list.querySelector('.pb-pending-reload')) {
+          if (_pendingUnsettledCount === 0 && !list.querySelector('.pb-pending-row.fail') && !list.querySelector('.pb-pending-reload')) {
             panel.hidden = true;
             list.textContent = '';
           }
@@ -302,6 +393,11 @@
     };
 
     return {
+      uploadDone: () => {
+        if (settled) return; // done/fail が先に来ていれば表示を上書きしない
+        releaseGuard();
+        text.textContent = '🔄 サーバーで処理中: ' + label;
+      },
       done: () => {
         finish();
         text.textContent = '✓ 完了: ' + label;
@@ -1080,38 +1176,29 @@
               // ここでawaitすると保存後の画面遷移を長時間ブロックしてしまうため、待たずに
               // trackPendingIndex に委ね、進行・結果は画面右下の常駐パネルに出す
               // （kintoneは保存後に詳細画面へ遷移するが、SPAでページは破棄されないため
-              // パネルとこのfetchは生存し、離脱ガードも効く）。
+              // パネルとこの送信は生存する）。
+              // XHR（sendIndexBinary）でバイナリ直送し、アップロード完了（送信完了）を
+              // 検知した時点で tracker.uploadDone() を呼んでガードを解除する。この画面遷移は
+              // すでにフルページ遷移そのもの（kintoneの保存後リダイレクト）だが、送信さえ
+              // 終わっていれば以降のページ内操作（一覧⇄詳細の移動など）を妨げる必要はない。
               const tracker = trackPendingIndex('図番 ' + (pending.drawingNo || ''));
               (async () => {
                 try {
-                  let pdfBase64;
-                  if (permanentFileKey) {
-                    const blob = await downloadKintoneFile(permanentFileKey);
-                    pdfBase64 = await toBase64(blob);
-                  }
-                  const indexRes = await fetch(apiBaseUrl + '/index', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', ...apiKeyHeader(config.apiKey) },
-                    body: JSON.stringify({
-                      appId: pending.appId,
-                      recordId,
-                      tenantId: pending.tenantId,
-                      drawingNo: pending.drawingNo,
-                      productName: getFieldValue(record, config.productNameField) || pending.productName,
-                      material: getFieldValue(record, config.materialField) || pending.material,
-                      dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
-                      tags,
-                      shapeTags: shapeTagsForSync || '',
-                      fileKey: permanentFileKey,
-                      fileName: permanentFileName,
-                      ...(pdfBase64 !== undefined ? { pdf_base64: pdfBase64 } : {}),
-                      limit: 10
-                    })
-                  });
-                  const data = await indexRes.json().catch(() => ({}));
-                  if (!indexRes.ok) {
-                    throw new Error(data.error || 'HTTP ' + indexRes.status);
-                  }
+                  const blob = permanentFileKey ? await downloadKintoneFile(permanentFileKey) : null;
+                  await sendIndexBinary(apiBaseUrl, config.apiKey, {
+                    appId: pending.appId,
+                    recordId,
+                    tenantId: pending.tenantId,
+                    drawingNo: pending.drawingNo,
+                    productName: getFieldValue(record, config.productNameField) || pending.productName,
+                    material: getFieldValue(record, config.materialField) || pending.material,
+                    dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
+                    tags,
+                    shapeTags: shapeTagsForSync || '',
+                    fileKey: permanentFileKey,
+                    fileName: permanentFileName,
+                    limit: 10
+                  }, blob, () => tracker.uploadDone());
                   tracker.done();
                 } catch (error) {
                   // 一括図面登録（未登録を登録）で拾える
@@ -2604,8 +2691,13 @@
     const processOptions = parseOptionsList(config.processOptions);
 
     let kintoneRecordChanged = false;
+    // モーダルが閉じられた（Esc・×・オーバーレイクリック）後は showDoneState 等の
+    // DOM 更新を行わない。バックグラウンドの /index 送信自体は継続し、結果は右下の
+    // 常駐パネル（trackPendingIndex）が引き受ける。
+    let modalClosed = false;
     const shell = createModalShell({
       onClose: () => {
+        modalClosed = true;
         if (kintoneRecordChanged) {
           // バックグラウンドの検索登録が残っている間に即リロードすると、処理中の
           // fetchが中断されて未登録になる（実際に発生）。残っている場合は全件完了後に
@@ -3331,8 +3423,9 @@
         resultWrap.appendChild(det);
       }
       // モーダル内でレコードを作成/更新した場合はkintoneの画面遷移が起きないため、
-      // 作成したレコードへの導線をここに出す。
-      if (success && recordLinkId) {
+      // 作成したレコードへの導線をここに出す（インデックス登録だけ失敗した場合も
+      // レコード自体は保存済みのためリンクを出す）。
+      if (recordLinkId) {
         const linkWrap = document.createElement('div');
         linkWrap.style.cssText = 'margin-top:10px;';
         const link = document.createElement('a');
@@ -3503,48 +3596,64 @@
       }
 
       // kintoneレコードの保存はここまでで完了。検索インデックス登録（/index、コールド
-      // スタート時は1分弱）はモーダルをブロックせずバックグラウンドで実行する。
-      // 完了画面はすぐに表示し、進行・結果は画面右下の常駐パネル（trackPendingIndex）が
-      // 引き受ける。bodyは手元の file をそのままバイナリ直送する
-      // （アップロード済みのバイト列と同一のため、kintoneからのダウンロードは不要）。
-      showDoneState(
-        true,
-        '図番 ' + drawingNo + ' を保存しました。',
-        'record ' + recordId,
-        '検索登録はバックグラウンドで実行中です（右下の表示をご確認ください）',
-        recordId
-      );
+      // スタート時は1分弱）は、応答（Qdrant書き込み込み）をブラウザが待つ必要はない。
+      // リクエストボディ（PDF）の送信さえサーバーに届き切れば、サーバー側で登録処理は
+      // 完了するため、守るべきはその送信中の1〜3秒だけ。そこでモーダルは送信完了まで
+      // ステップ表示（ステップ3「検索インデックスを登録」＝アップロード中）で待たせ、
+      // 送信完了（XHRのupload load）を検知した時点で初めて完了画面を出す。その時点で
+      // beforeunloadガードは解除済みのため、以降はページ移動も完全に自由になる。
+      // bodyは手元の file をそのままバイナリ直送する（アップロード済みのバイト列と
+      // 同一のため、kintoneからのダウンロードは不要）。
+      showRegisteringState(2, 'アップロード中...');
 
-      const tracker = trackPendingIndex('図番 ' + drawingNo + (isNewRecord ? '' : '（更新）'));
-      fetch(apiBaseUrl + '/index', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/octet-stream',
-          'X-Index-Meta': encodeURIComponent(JSON.stringify({
-            appId: String(appId),
-            recordId: String(recordId),
-            tenantId,
-            drawingNo,
-            productName,
-            material,
-            dimension,
-            tags: tags.join(','),
-            shapeTags: shapeTags.join(','),
-            fileKey: indexFileKey,
-            fileName: indexFileName,
-            limit: 10
-          })),
-          ...apiKeyHeader(config.apiKey)
-        },
-        body: file
-      }).then(async (indexRes) => {
-        const data = await indexRes.json().catch(() => ({}));
-        if (!indexRes.ok) {
-          throw new Error(describeApiError(indexRes.status, data.error));
-        }
+      const indexLabel = '図番 ' + drawingNo + (isNewRecord ? '' : '（更新）');
+      const tracker = trackPendingIndex(indexLabel);
+      let doneScreenShown = false;
+      const onUploadComplete = () => {
+        // tracker.uploadDone() 内でガード（アップロード中カウント）はすでに解除されている。
+        // モーダルがまだ開いていれば完了画面を出す。Esc等で先に閉じられていた場合は
+        // DOM操作をせず、右下の常駐パネルに結果表示を委ねる（送信自体は継続している）。
+        tracker.uploadDone();
+        doneScreenShown = true;
+        if (modalClosed) return;
+        showDoneState(
+          true,
+          '図番 ' + drawingNo + ' を保存しました。',
+          'record ' + recordId,
+          '検索登録はサーバーで処理中です。右下の表示で完了を確認できます（ページを移動しても登録は完了します）',
+          recordId
+        );
+      };
+
+      sendIndexBinary(apiBaseUrl, config.apiKey, {
+        appId: String(appId),
+        recordId: String(recordId),
+        tenantId,
+        drawingNo,
+        productName,
+        material,
+        dimension,
+        tags: tags.join(','),
+        shapeTags: shapeTags.join(','),
+        fileKey: indexFileKey,
+        fileName: indexFileName,
+        limit: 10
+      }, file, onUploadComplete).then(() => {
         tracker.done();
       }).catch((error) => {
         tracker.fail(error.message);
+        // 送信自体が失敗した場合（onUploadComplete未発火）は完了画面が出ておらず、
+        // モーダルが「アップロード中...」のまま固まってしまうため、ここでエラー画面を出す。
+        // レコード保存自体は完了済みなのでその旨を明記する。
+        if (!doneScreenShown && !modalClosed) {
+          showDoneState(
+            false,
+            '検索インデックスの登録に失敗しました。',
+            error.message + '\n※レコード自体は保存済みです（record ' + recordId + '）。管理メニューの「一括図面登録 → 未登録を登録」で再登録できます。',
+            undefined,
+            recordId
+          );
+        }
       });
     };
 
