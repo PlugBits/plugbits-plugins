@@ -100,6 +100,12 @@
     archiveToggle.checked = config.showArchiveButton !== 'false';
   }
 
+  // 高速サムネイル（暗号化保存）の表示トグル（既定: オフ / オプトイン）。
+  const fastThumbsToggle = getElement('fastThumbs');
+  if (fastThumbsToggle) {
+    fastThumbsToggle.checked = config.fastThumbs === 'true';
+  }
+
   // 接続テスト: /health で疎通、/tags（認証対象）でAPIキーを検証する
   const testBtn = getElement('testConnection');
   const testStatus = getElement('testStatus');
@@ -182,6 +188,17 @@
     nextConfig.showBulkButton = getElement('showBulkButton') && getElement('showBulkButton').checked ? 'true' : 'false';
     nextConfig.showDebugInfo = getElement('showDebugInfo') && getElement('showDebugInfo').checked ? 'true' : 'false';
     nextConfig.showArchiveButton = getElement('showArchiveButton') && getElement('showArchiveButton').checked ? 'true' : 'false';
+
+    nextConfig.fastThumbs = getElement('fastThumbs') && getElement('fastThumbs').checked ? 'true' : 'false';
+    // 復号鍵は既存の値をまず引き継ぐ（fields配列に含めていないため、明示的にコピーしないと
+    // 保存のたびに失われてしまう）。チェックONで、かつ未生成の場合のみ新規生成する。
+    // 一度生成した鍵はチェックOFFにしても削除しない
+    //（そうしないと過去に保存した暗号化サムネイルが復号できなくなる）。
+    nextConfig.thumbEncKey = config.thumbEncKey || '';
+    if (nextConfig.fastThumbs === 'true' && !nextConfig.thumbEncKey) {
+      const keyBytes = crypto.getRandomValues(new Uint8Array(32));
+      nextConfig.thumbEncKey = btoa(String.fromCharCode(...keyBytes));
+    }
 
     // 未入力の場合は既定URLを実効値として保存する（プラグイン本体は常にURLが
     // 入っている前提で動作するため、plugin.js側の変更は不要）。
