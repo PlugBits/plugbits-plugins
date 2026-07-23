@@ -62,11 +62,13 @@
     gear: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"></path></svg>'
   };
 
-  const createHeaderButton = ({ id, label, variant = 'primary', icon }) => {
+  // kintone標準の見た目に馴染む白基調ボタンに統一する（variantによる色分けは廃止）。
+  // 呼び出し側のシグネチャは変えないため variant は受け取るが使用しない。
+  const createHeaderButton = ({ id, label, variant: _variant = 'primary', icon }) => {
     const btn = document.createElement('button');
     btn.type = 'button';
     if (id) btn.id = id;
-    btn.className = 'pb-similarity-button' + (variant && variant !== 'primary' ? ' ' + variant : '');
+    btn.className = 'pb-header-btn';
     const iconSvg = icon && PB_ICONS[icon]
       ? '<span class="pb-btn-icon" aria-hidden="true">' + PB_ICONS[icon] + '</span>'
       : '';
@@ -132,6 +134,28 @@
     if (status === 0) return 'サーバーに接続できませんでした。ネットワークまたはAPI Base URLを確認してください。';
     if (status >= 500) return 'サーバーでエラーが発生しました。サーバー起動中の可能性があります。少し待ってから再試行してください。' + (fallback ? '\n詳細: ' + fallback : '');
     return fallback || ('エラーが発生しました (HTTP ' + status + ')');
+  };
+
+  // --- 画面上部中央に出す軽量トースト通知（window.alertの代替） ---
+  // 同時に複数出さない：表示中に呼ばれたら要素を使い回し、文言を差し替えてタイマーを延長する。
+  let pbToastEl = null;
+  let pbToastTimer = null;
+  const showPluginToast = (message, type = 'error') => {
+    if (!pbToastEl) {
+      pbToastEl = document.createElement('div');
+      pbToastEl.id = 'pb-toast';
+      document.body.appendChild(pbToastEl);
+    }
+    pbToastEl.className = 'pb-toast pb-toast-' + type;
+    pbToastEl.textContent = message;
+    // reflow を挟んでからshowを付けることで、既に表示中の場合でもフェードが自然に見える
+    pbToastEl.classList.remove('show');
+    void pbToastEl.offsetWidth;
+    pbToastEl.classList.add('show');
+    window.clearTimeout(pbToastTimer);
+    pbToastTimer = setTimeout(() => {
+      pbToastEl.classList.remove('show');
+    }, 4500);
   };
 
   // /index へのバイナリ直送を XMLHttpRequest で行い、リクエストボディの送信完了
@@ -1097,7 +1121,7 @@
 
     indexButton.addEventListener('click', () => {
       if (!apiBaseUrl) {
-        window.alert('プラグイン設定でAPI Base URLを設定してください。');
+        showPluginToast('プラグイン設定でAPI Base URLを設定してください。', 'error');
         return;
       }
 
@@ -1119,7 +1143,7 @@
 
     button.addEventListener('click', () => {
       if (!apiBaseUrl) {
-        window.alert('プラグイン設定でAPI Base URLを設定してください。');
+        showPluginToast('プラグイン設定でAPI Base URLを設定してください。', 'error');
         return;
       }
 
@@ -1702,7 +1726,7 @@
   // ファイル選択（複数選択 / フォルダ選択）→ 全レコード共通の必須項目入力 → 確認 → 実行、の2段階。
   const openBulkPdfRegisterModal = (config, apiBaseUrl) => {
     if (!config.pdfFileField) {
-      window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
+      showPluginToast('プラグイン設定でPDFファイルフィールドコードを設定してください。', 'error');
       return;
     }
     const shell = createModalShell();
@@ -1787,18 +1811,55 @@
     actions.appendChild(startBtn);
     formPanel.appendChild(actions);
 
+    // window.confirmの代わりに、モーダル内に開始確認ブロックを表示する。
+    const confirmBlock = document.createElement('div');
+    confirmBlock.className = 'confirm-block';
+    confirmBlock.hidden = true;
+    const confirmMsgEl = document.createElement('div');
+    confirmMsgEl.className = 'confirm-block-msg';
+    const confirmActionsEl = document.createElement('div');
+    confirmActionsEl.className = 'confirm-block-actions';
+    const confirmBackBtn = document.createElement('button');
+    confirmBackBtn.type = 'button';
+    confirmBackBtn.className = 'btn-secondary';
+    confirmBackBtn.textContent = '戻る';
+    const confirmStartBtn = document.createElement('button');
+    confirmStartBtn.type = 'button';
+    confirmStartBtn.className = 'btn-primary';
+    confirmStartBtn.textContent = '開始する';
+    confirmActionsEl.append(confirmBackBtn, confirmStartBtn);
+    confirmBlock.append(confirmMsgEl, confirmActionsEl);
+    formPanel.appendChild(confirmBlock);
+
     content.append(header, formPanel);
 
     let selectedFiles = [];
     let requiredFieldsUi = null;
     let requiredFieldsBlocking = false;
     let requiredFieldsReady = false;
+    let confirmVisible = false;
 
     const refreshStartButton = () => {
-      startBtn.disabled = !selectedFiles.length || !requiredFieldsReady || requiredFieldsBlocking;
+      startBtn.disabled = !selectedFiles.length || !requiredFieldsReady || requiredFieldsBlocking || confirmVisible;
+    };
+
+    // 確認ブロックを消して元の状態（登録開始ボタンが押せる状態）に戻す
+    const hideConfirmBlock = () => {
+      confirmVisible = false;
+      confirmBlock.hidden = true;
+      refreshStartButton();
+    };
+
+    const showConfirmBlock = (message) => {
+      confirmMsgEl.textContent = message;
+      confirmVisible = true;
+      confirmBlock.hidden = false;
+      startBtn.disabled = true;
     };
 
     const applySelection = (rawFiles) => {
+      // ファイル選択をやり直したら確認ブロックは消す（二重表示防止）
+      hideConfirmBlock();
       const filtered = rawFiles.filter((f) => /\.(pdf|tiff?)$/i.test(f.name));
       if (!filtered.length) {
         statusEl.textContent = 'PDF・TIFファイルが見つかりませんでした。';
@@ -1921,11 +1982,16 @@
       if (requiredFieldsUi && !requiredFieldsUi.validate()) return;
       const confirmMessage = selectedFiles.length > BULK_PDF_MAX_PER_RUN
         ? (selectedFiles.length + '件中、最初の' + BULK_PDF_MAX_PER_RUN + '件から登録を開始します。' +
-          '100件ごとに一時停止するので、続きは「続きを登録」で進められます。よろしいですか？')
-        : (selectedFiles.length + '件のPDFからレコードを作成し、検索登録まで実行します。よろしいですか？');
-      if (!window.confirm(confirmMessage)) {
-        return;
-      }
+          '100件ごとに一時停止するので、続きは「続きを登録」で進められます。')
+        : (selectedFiles.length + '件のPDFからレコードを作成し、検索登録まで実行します。');
+      showConfirmBlock(confirmMessage);
+    });
+
+    confirmBackBtn.addEventListener('click', () => {
+      hideConfirmBlock();
+    });
+
+    confirmStartBtn.addEventListener('click', () => {
       const commonFieldValues = requiredFieldsUi ? requiredFieldsUi.getValues() : {};
       shell.closeModal();
       const overlay = createBulkPdfModal();
@@ -2334,6 +2400,10 @@
     '.dropzone .drop-main { font-size: 15px; color: var(--pb-ink-2); font-weight: 600; margin-bottom: 6px; }',
     '.dropzone .drop-sub { font-size: 12.5px; color: var(--pb-muted); }',
     '.drop-note { margin-top: 14px; font-size: 11.5px; color: var(--pb-faint); }',
+    '.drop-error { margin-top: 10px; font-size: 12px; font-weight: 600; }',
+    '.drop-error[hidden] { display: none; }',
+    '.drop-error-error { color: var(--pb-red); }',
+    '.drop-error-warn { color: var(--pb-amber); }',
     '.file-input { display: none; }',
     // ---- spinner / progress ----
     '.pb-spinner { width: 22px; height: 22px; border-radius: 50%; flex: 0 0 auto;',
@@ -2367,6 +2437,13 @@
     '.field-note { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11.5px; border-radius: 6px; padding: 5px 8px; }',
     '.field-note.info { background: var(--pb-primary-soft); color: var(--pb-primary); }',
     '.field-note.warn { background: var(--pb-amber-soft); color: var(--pb-amber); }',
+    // ---- 開始確認ブロック（window.confirmの代替） ----
+    '.confirm-block { margin-top: 14px; padding: 14px; border: 1px solid var(--pb-line-2);',
+    '  border-radius: var(--pb-radius-sm); background: var(--pb-bg); }',
+    '.confirm-block[hidden] { display: none; }',
+    '.confirm-block-msg { font-size: 13px; color: var(--pb-ink-2); line-height: 1.6; margin-bottom: 12px; white-space: pre-wrap; }',
+    '.confirm-block-actions { display: flex; gap: 10px; }',
+    '.confirm-block-actions .btn-primary, .confirm-block-actions .btn-secondary { flex: 1; min-height: 38px; }',
     // ---- chips ----
     '.chip-grid { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 6px; }',
     '.chip { display: inline-flex; align-items: center; gap: 5px; padding: 6px 12px;',
@@ -4517,14 +4594,32 @@
       dropWrap.appendChild(noteEl);
     }
 
+    // ドロップゾーン下部にエラー/警告をインライン表示する（ブラウザのalert代替）。
+    const errorEl = document.createElement('div');
+    errorEl.className = 'drop-error';
+    errorEl.hidden = true;
+    dropWrap.appendChild(errorEl);
+
+    const showDropMessage = (message, kind) => {
+      errorEl.textContent = message;
+      errorEl.className = 'drop-error drop-error-' + kind;
+      errorEl.hidden = false;
+    };
+    const clearDropMessage = () => {
+      errorEl.hidden = true;
+      errorEl.textContent = '';
+    };
+
     const acceptFiles = (files) => {
+      clearDropMessage();
       const file = files && files[0];
       if (!file || !(file.type === 'application/pdf' || file.type === 'image/tiff' || /\.(pdf|tiff?)$/i.test(file.name))) {
-        window.alert('PDFまたはTIFファイルを選択してください。');
+        showDropMessage('PDFまたはTIFファイルを選択してください。', 'error');
         return;
       }
       if (files.length > 1) {
-        window.alert('複数のファイルが選択されました。1件目「' + file.name + '」のみ使用します。');
+        // 処理は続行する警告なので onFile は呼ぶ（エラーとは異なり止めない）
+        showDropMessage('複数のファイルが選択されました。1件目「' + file.name + '」のみ使用します。', 'warn');
       }
       onFile(file);
     };
@@ -4673,7 +4768,7 @@
   // 孤児（レコード削除済みなのに検索に出る）を検知し、その場で修復できるようにする。
   const openIndexStatusModal = (config, apiBaseUrl, options = {}) => {
     if (!config.pdfFileField) {
-      window.alert('プラグイン設定でPDFファイルフィールドコードを設定してください。');
+      showPluginToast('プラグイン設定でPDFファイルフィールドコードを設定してください。', 'error');
       return;
     }
     // bulkMode: 「一括図面登録」メニューから開いた場合。状況チェックの結果画面に
@@ -5043,7 +5138,7 @@
     });
     group.appendChild(registerBtn);
 
-    const uploadSearchBtn = createHeaderButton({ id: 'pb-upload-search-btn', label: '類似検索（アップロード）', variant: 'secondary', icon: 'upload' });
+    const uploadSearchBtn = createHeaderButton({ id: 'pb-upload-search-btn', label: '図面検索', variant: 'secondary', icon: 'upload' });
     uploadSearchBtn.addEventListener('click', () => {
       if (document.getElementById('pb-upload-similar-host')) {
         return;
