@@ -456,6 +456,44 @@
    挿入されるため、既存の .pb-bulk-* 等と同じトーンでここに定義する。 */
 .pb-gallery-root {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Hiragino Sans", "Noto Sans JP", sans-serif;
+  /* カードが画面端に接しないよう余白を確保する */
+  padding: 20px 24px 32px;
+}
+
+/* --- 左パネル（即時絞り込み・検索）＋右コンテンツのレイアウト ---
+   900px未満ではパネルを上に折り返し、横幅いっぱいの1カラムにする。 */
+.pb-gallery-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+}
+
+@media (max-width: 899px) {
+  .pb-gallery-layout {
+    flex-direction: column;
+  }
+
+  .pb-gallery-panel {
+    width: 100%;
+  }
+}
+
+.pb-gallery-panel {
+  box-sizing: border-box;
+  flex-shrink: 0;
+  width: 220px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #d8dce3;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.pb-gallery-content {
+  flex: 1;
+  min-width: 0;
 }
 
 .pb-gallery-note {
@@ -576,6 +614,148 @@
 .pb-gallery-more-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* --- 左パネルの中身（検索ボックス・絞り込みチップ・表示順・件数）--- */
+.pb-gallery-search-input {
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid #d8dce3;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #1e293b;
+  font-size: 13px;
+}
+
+.pb-gallery-search-input:focus {
+  outline: none;
+  border-color: #94a3b8;
+}
+
+.pb-gallery-search-input:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.pb-gallery-index-prompt:empty {
+  display: none;
+}
+
+.pb-gallery-index-btn {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #94a3b8;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #3f4a56;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: center;
+  cursor: pointer;
+}
+
+.pb-gallery-index-btn:hover {
+  background: #eef1f5;
+}
+
+.pb-gallery-filter-title {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #8593a3;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.pb-gallery-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.pb-gallery-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border: 1px solid #d8dce3;
+  border-radius: 999px;
+  background: #f8fafc;
+  color: #3f4a56;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.pb-gallery-filter-chip:hover {
+  border-color: #94a3b8;
+}
+
+.pb-gallery-filter-chip-active {
+  border-color: #3b82f6;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.pb-gallery-filter-more {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 2px;
+  border: none;
+  background: none;
+  color: #64748b;
+  font-size: 11.5px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.pb-gallery-sort-select {
+  box-sizing: border-box;
+  width: 100%;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid #d8dce3;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #3f4a56;
+  font-size: 12.5px;
+}
+
+.pb-gallery-sort-select:disabled {
+  background: #f8fafc;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
+.pb-gallery-count-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 1px solid #eef1f5;
+}
+
+.pb-gallery-count {
+  font-size: 11.5px;
+  color: #8593a3;
+}
+
+.pb-gallery-clear-link {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #3b82f6;
+  font-size: 11.5px;
+  text-decoration: underline;
+  cursor: pointer;
 }
 
 /* --- サムネイル表示の共通パーツ（buildThumbnailBox/loadThumbnailが動的に生成）---

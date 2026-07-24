@@ -5635,6 +5635,25 @@
     };
   };
 
+  // 検索ボックスの入力ごとに毎回フィルタを回すと重いため、一定時間の無入力を待ってから実行する。
+  // clearTimeoutはグローバル未宣言のため既存コード（pbToast等）に合わせてwindow経由で呼ぶ。
+  const debounce = (fn, wait) => {
+    let timer = null;
+    return (...args) => {
+      if (timer) window.clearTimeout(timer);
+      timer = setTimeout(() => fn(...args), wait);
+    };
+  };
+
+  // 左パネルの「即時検索」用メタデータ先読み設定。
+  // GALLERY_INDEX_PAGE: 先読み1回あたりの取得件数。
+  // GALLERY_INDEX_AUTO_LIMIT: これを超える件数のアプリでは自動先読みせず、
+  //   ユーザーがパネルのボタンを押したときだけ先読みを開始する。
+  const GALLERY_INDEX_PAGE = 500;
+  const GALLERY_INDEX_AUTO_LIMIT = 10000;
+  // 絞り込みチップ（材質・形状タグ）を初期表示する上限件数。超えた分は「他を表示」で展開する。
+  const GALLERY_FILTER_CHIP_LIMIT = 12;
+
   // config: プラグイン設定（pdfFileField/drawingNoField/productNameFieldを使用）。
   // apiBaseUrl: サムネイル変換API（未設定でもギャラリー自体は表示し、サムネイルだけ「画像なし」になる）。
   // galleryEl: <div id="pb-drawing-gallery"> 本体。二重描画防止のため呼び出し側でチェック済みの前提。
@@ -5653,13 +5672,27 @@
       return;
     }
 
+    // レイアウト: 左に絞り込みパネル、右にグリッド＋「さらに表示」を収めたコンテンツ領域。
+    // 900px未満では .pb-gallery-layout がCSS側でcolumnに切り替わりパネルが上に折り返す。
+    const layout = document.createElement('div');
+    layout.className = 'pb-gallery-layout';
+    galleryEl.appendChild(layout);
+
+    const panel = document.createElement('div');
+    panel.className = 'pb-gallery-panel';
+    layout.appendChild(panel);
+
+    const content = document.createElement('div');
+    content.className = 'pb-gallery-content';
+    layout.appendChild(content);
+
     const grid = document.createElement('div');
     grid.className = 'pb-gallery-grid';
-    galleryEl.appendChild(grid);
+    content.appendChild(grid);
 
     const moreWrap = document.createElement('div');
     moreWrap.className = 'pb-gallery-more-wrap';
-    galleryEl.appendChild(moreWrap);
+    content.appendChild(moreWrap);
 
     // サムネイルはレンダリング済みキャッシュ（_thumbCache）が所有するblob URLを使い回すため、
     // trackObjectUrl（モーダルclose時の解放用）は何もしない関数を渡せばよい。
@@ -5670,9 +5703,31 @@
     const fields = ['$id', config.drawingNoField, config.productNameField, config.pdfFileField].filter(Boolean);
     const baseQuery = kintone.app.getQueryCondition() || '';
 
+    // --- サーバーページングモード（従来どおり）の状態 ---
     let offset = 0;
     let totalCount = 0;
     let loading = false;
+
+    // --- 即時検索（クライアント内モード）の状態 ---
+    // indexFields: 先読み専用のフィールド一覧。材質・形状タグは設定されているときだけ含める。
+    const indexFields = ['$id', config.drawingNoField, config.productNameField,
+      config.materialField, config.shapeTagField, config.pdfFileField].filter(Boolean);
+    let indexItems = []; // { recordId, drawingNo, productName, material, shapeTags:[], record }
+    // idle: 未着手 / idle-large: 1万件超で未有効化 / loading: 先読み中 / ready: 完了 / failed: 失敗
+    let indexState = 'idle';
+    let indexDecisionMade = false;
+    let indexTotalAvailable = 0;
+    let clientMode = false; // trueになったらグリッド描画はクライアント内モードに一本化する
+    let clientOffset = 0;
+    let filteredItems = [];
+    let chipRefreshFns = [];
+
+    const filterState = {
+      search: '', // 小文字化済み
+      materials: new Set(),
+      shapeTags: new Set(),
+      sort: 'new' // 'new' | 'old' | 'no'
+    };
 
     // thumbUrlMap: 高速サムネイルで復号済みのblob URL（recordId(string)→URL）。
     // ヒットしたレコードはキューに積まず即座に表示する。
@@ -5726,7 +5781,358 @@
       return card;
     };
 
-    // 総件数から残り件数を算出し、「さらに表示」ボタンを出す/隠すを切り替える。
+    // === 即時検索（クライアント内モード）: メタデータの正規化・絞り込み・並び替え ===
+
+    // 生レコードを検索・絞り込み用の軽量な形に正規化する。record自体はbuildCard再利用のため保持する。
+    const normalizeIndexRecord = (record) => ({
+      recordId: record.$id && record.$id.value,
+      drawingNo: config.drawingNoField ? getFieldValue(record, config.drawingNoField) : '',
+      productName: config.productNameField ? getFieldValue(record, config.productNameField) : '',
+      material: config.materialField ? getFieldValue(record, config.materialField) : '',
+      shapeTags: config.shapeTagField ? parseTags(getFieldValue(record, config.shapeTagField)) : [],
+      record
+    });
+
+    // 検索ボックス（部分一致・小文字化済み）→材質（OR）→形状タグ（OR）の順にAND評価する。
+    const matchesFilters = (item) => {
+      if (filterState.search) {
+        const haystack = (item.drawingNo + ' ' + item.productName).toLowerCase();
+        if (haystack.indexOf(filterState.search) === -1) {
+          return false;
+        }
+      }
+      if (filterState.materials.size && !filterState.materials.has(item.material)) {
+        return false;
+      }
+      if (filterState.shapeTags.size) {
+        const hit = item.shapeTags.some((tag) => filterState.shapeTags.has(tag));
+        if (!hit) {
+          return false;
+        }
+      }
+      return true;
+    };
+
+    // indexItemsは取得順（$id desc、新しい順）のまま蓄積されるため、
+    // 「新しい順」はそのまま・「古い順」は反転・「図番順」だけ明示的にソートする。
+    const sortItems = (items) => {
+      if (filterState.sort === 'old') {
+        return items.slice().reverse();
+      }
+      if (filterState.sort === 'no') {
+        return items.slice().sort((a, b) => (a.drawingNo || '').localeCompare(b.drawingNo || ''));
+      }
+      return items;
+    };
+
+    // === 左パネル: 絞り込みチップ（材質・形状タグ）===
+    // counts: 値→件数のMap。selectedSet: フィルタ状態（Set）。onChange: 選択変更のたびに呼ぶ。
+    // 戻り値は再描画用の関数（「条件をクリア」から選択解除後の表示更新に使う）。
+    const buildChipGroup = (wrap, title, counts, selectedSet, onChange) => {
+      wrap.textContent = '';
+      if (!counts.size) {
+        return null;
+      }
+
+      const titleEl = document.createElement('div');
+      titleEl.className = 'pb-gallery-filter-title';
+      titleEl.textContent = title;
+      wrap.appendChild(titleEl);
+
+      const chipsEl = document.createElement('div');
+      chipsEl.className = 'pb-gallery-filter-chips';
+      wrap.appendChild(chipsEl);
+
+      // 件数降順。distinct値が多い場合は上位12件のみ表示し、「他を表示」で全展開する。
+      const entries = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+      let expanded = false;
+
+      const renderChips = () => {
+        chipsEl.textContent = '';
+        const visible = expanded ? entries : entries.slice(0, GALLERY_FILTER_CHIP_LIMIT);
+        visible.forEach(([value, count]) => {
+          const chip = document.createElement('button');
+          chip.type = 'button';
+          chip.className = 'pb-gallery-filter-chip' + (selectedSet.has(value) ? ' pb-gallery-filter-chip-active' : '');
+          chip.textContent = value + ' (' + count + ')';
+          chip.addEventListener('click', () => {
+            if (selectedSet.has(value)) {
+              selectedSet.delete(value);
+            } else {
+              selectedSet.add(value);
+            }
+            renderChips();
+            onChange();
+          });
+          chipsEl.appendChild(chip);
+        });
+        if (!expanded && entries.length > GALLERY_FILTER_CHIP_LIMIT) {
+          const moreBtn = document.createElement('button');
+          moreBtn.type = 'button';
+          moreBtn.className = 'pb-gallery-filter-more';
+          moreBtn.textContent = '他を表示（' + (entries.length - GALLERY_FILTER_CHIP_LIMIT) + '）';
+          moreBtn.addEventListener('click', () => {
+            expanded = true;
+            renderChips();
+          });
+          chipsEl.appendChild(moreBtn);
+        }
+      };
+      renderChips();
+      return renderChips;
+    };
+
+    // 先読み完了後に一度だけ呼ぶ。読み込んだ全メタデータから動的にチップ群を構築する
+    // （フォーム定義APIは使わず、実際に読み込んだ値だけを対象にする）。
+    const buildFilterChips = () => {
+      materialGroupWrap.textContent = '';
+      shapeGroupWrap.textContent = '';
+      chipRefreshFns = [];
+
+      if (config.materialField) {
+        const counts = new Map();
+        indexItems.forEach((item) => {
+          if (item.material) {
+            counts.set(item.material, (counts.get(item.material) || 0) + 1);
+          }
+        });
+        const refresh = buildChipGroup(materialGroupWrap, '材質', counts, filterState.materials, applyFilters);
+        if (refresh) chipRefreshFns.push(refresh);
+      }
+
+      if (config.shapeTagField) {
+        const counts = new Map();
+        indexItems.forEach((item) => {
+          item.shapeTags.forEach((tag) => {
+            if (tag) {
+              counts.set(tag, (counts.get(tag) || 0) + 1);
+            }
+          });
+        });
+        const refresh = buildChipGroup(shapeGroupWrap, '形状タグ', counts, filterState.shapeTags, applyFilters);
+        if (refresh) chipRefreshFns.push(refresh);
+      }
+    };
+
+    // === 左パネル: 件数表示・条件クリア ===
+    const updateCountAndClear = () => {
+      countWrap.textContent = '';
+      if (!clientMode) {
+        return;
+      }
+      const countEl = document.createElement('div');
+      countEl.className = 'pb-gallery-count';
+      countEl.textContent = filteredItems.length + '件 / 全' + indexItems.length + '件';
+      countWrap.appendChild(countEl);
+
+      const hasFilter = !!filterState.search || filterState.materials.size > 0 ||
+        filterState.shapeTags.size > 0 || filterState.sort !== 'new';
+      if (hasFilter) {
+        const clearBtn = document.createElement('button');
+        clearBtn.type = 'button';
+        clearBtn.className = 'pb-gallery-clear-link';
+        clearBtn.textContent = '条件をクリア';
+        clearBtn.addEventListener('click', () => {
+          filterState.search = '';
+          filterState.materials.clear();
+          filterState.shapeTags.clear();
+          filterState.sort = 'new';
+          searchInput.value = '';
+          sortSelect.value = 'new';
+          chipRefreshFns.forEach((fn) => fn());
+          applyFilters();
+        });
+        countWrap.appendChild(clearBtn);
+      }
+    };
+
+    // === 左パネル: 先読み進捗・有効化ボタンの表示 ===
+    const updatePanelState = () => {
+      if (indexState === 'loading') {
+        searchInput.disabled = true;
+        searchInput.placeholder = '検索準備中...（' + indexItems.length + ' / ' + indexTotalAvailable + '件）';
+      } else if (indexState === 'ready') {
+        searchInput.disabled = false;
+        searchInput.placeholder = '図番・品名で検索';
+      } else {
+        searchInput.disabled = true;
+        searchInput.placeholder = '図番・品名で検索';
+      }
+      sortSelect.disabled = indexState !== 'ready';
+
+      indexPromptWrap.textContent = '';
+      if (indexState === 'idle-large') {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'pb-gallery-index-btn';
+        btn.textContent = '即時検索を有効にする（全' + totalCount + '件を読み込み）';
+        btn.addEventListener('click', () => startIndexPreload());
+        indexPromptWrap.appendChild(btn);
+      }
+
+      updateCountAndClear();
+    };
+
+    // === クライアント内モード: 表示中カードの描画（20件ずつ、配列スライス）===
+    const clearEmptyNote = () => {
+      const existing = content.querySelector('.pb-gallery-empty');
+      if (existing) existing.remove();
+    };
+
+    const renderClientMoreButton = () => {
+      moreWrap.textContent = '';
+      const remaining = filteredItems.length - clientOffset;
+      if (remaining <= 0) {
+        return;
+      }
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'pb-gallery-more-btn';
+      btn.textContent = 'さらに表示（残り' + remaining + '件）';
+      btn.addEventListener('click', () => {
+        btn.disabled = true;
+        btn.textContent = '読み込み中...';
+        renderClientPage();
+      });
+      moreWrap.appendChild(btn);
+    };
+
+    // フィルタ後の配列から表示中カードの続きを描画する。サムネイル取得（高速サムネイル＋
+    // フォールバックキュー）は表示分（この20件）だけに適用され、絞り込んでも画像取得は
+    // 表示中カードの分しか発生しない。
+    const renderClientPage = () => {
+      const slice = filteredItems.slice(clientOffset, clientOffset + GALLERY_PAGE_SIZE);
+      if (!slice.length) {
+        if (clientOffset === 0) {
+          const empty = document.createElement('div');
+          empty.className = 'pb-gallery-empty';
+          empty.textContent = '条件に一致する図面がありません。';
+          content.insertBefore(empty, moreWrap);
+        }
+        renderClientMoreButton();
+        return;
+      }
+      const recordIds = slice.map((item) => item.recordId).filter(Boolean);
+      fetchDecryptedThumbs(apiBaseUrl, config, recordIds).then((thumbUrlMap) => {
+        slice.forEach((item) => {
+          grid.appendChild(buildCard(item.record, thumbUrlMap));
+        });
+        clientOffset += slice.length;
+        renderClientMoreButton();
+      });
+    };
+
+    // 検索・チップ・並び順のいずれかが変わるたびに呼ぶ。先頭から再描画する
+    // （表示中カードの部分差分更新はせず、シンプルさを優先する）。
+    const applyFilters = () => {
+      filteredItems = sortItems(indexItems.filter(matchesFilters));
+      clientOffset = 0;
+      grid.textContent = '';
+      clearEmptyNote();
+      renderClientPage();
+      updateCountAndClear();
+    };
+
+    // サーバーページングモードからクライアント内モードへの切り替え。実装を単純に保つため、
+    // 表示中の内容は維持せず先頭から再描画する（ちらつきは生じるが先読み完了は一度きりのため許容）。
+    const switchToClientMode = () => {
+      clientMode = true;
+      applyFilters();
+    };
+
+    const onIndexReady = () => {
+      indexState = 'ready';
+      buildFilterChips();
+      updatePanelState();
+      switchToClientMode();
+    };
+
+    // メタデータを500件ずつ逐次取得し、indexItemsに積み上げる。取得完了で onIndexReady()、
+    // 途中失敗時は console.warn のみで諦め、サーバーページングモードのまま動作を継続する。
+    const startIndexPreload = () => {
+      if (indexState === 'loading' || indexState === 'ready') {
+        return;
+      }
+      indexState = 'loading';
+      indexItems = [];
+      updatePanelState();
+
+      const step = (indexOffset) => {
+        const query = baseQuery + ' order by $id desc limit ' + GALLERY_INDEX_PAGE + ' offset ' + indexOffset;
+        kintone.api(kintone.api.url('/k/v1/records', true), 'GET', {
+          app: appId,
+          query,
+          fields: indexFields,
+          totalCount: true
+        }).then((resp) => {
+          const records = resp.records || [];
+          indexTotalAvailable = Number(resp.totalCount || 0);
+          records.forEach((record) => {
+            indexItems.push(normalizeIndexRecord(record));
+          });
+          updatePanelState();
+          if (records.length === GALLERY_INDEX_PAGE && indexItems.length < indexTotalAvailable) {
+            step(indexOffset + GALLERY_INDEX_PAGE);
+          } else {
+            onIndexReady();
+          }
+        }).catch((error) => {
+          console.warn('[pb] 図面ギャラリーの検索インデックス作成に失敗しました', error);
+          indexState = 'failed';
+          updatePanelState();
+        });
+      };
+      step(0);
+    };
+
+    // === 左パネルのDOM構築 ===
+    const searchInput = document.createElement('input');
+    searchInput.type = 'text';
+    searchInput.className = 'pb-gallery-search-input';
+    searchInput.placeholder = '図番・品名で検索';
+    searchInput.disabled = true;
+    searchInput.addEventListener('input', debounce(() => {
+      filterState.search = searchInput.value.trim().toLowerCase();
+      applyFilters();
+    }, 100));
+    panel.appendChild(searchInput);
+
+    // 1万件超のアプリで、ユーザーが先読みを選択するまで表示するボタンの器。
+    const indexPromptWrap = document.createElement('div');
+    indexPromptWrap.className = 'pb-gallery-index-prompt';
+    panel.appendChild(indexPromptWrap);
+
+    const materialGroupWrap = document.createElement('div');
+    panel.appendChild(materialGroupWrap);
+
+    const shapeGroupWrap = document.createElement('div');
+    panel.appendChild(shapeGroupWrap);
+
+    const sortTitle = document.createElement('div');
+    sortTitle.className = 'pb-gallery-filter-title';
+    sortTitle.textContent = '表示順';
+    panel.appendChild(sortTitle);
+
+    const sortSelect = document.createElement('select');
+    sortSelect.className = 'pb-gallery-sort-select';
+    sortSelect.disabled = true;
+    [['new', '新しい順（既定）'], ['old', '古い順'], ['no', '図番順']].forEach(([value, label]) => {
+      const opt = document.createElement('option');
+      opt.value = value;
+      opt.textContent = label;
+      sortSelect.appendChild(opt);
+    });
+    sortSelect.addEventListener('change', () => {
+      filterState.sort = sortSelect.value;
+      applyFilters();
+    });
+    panel.appendChild(sortSelect);
+
+    const countWrap = document.createElement('div');
+    countWrap.className = 'pb-gallery-count-wrap';
+    panel.appendChild(countWrap);
+
+    // 総件数から残り件数を算出し、「さらに表示」ボタンを出す/隠すを切り替える（サーバーページングモード）。
     const renderMoreButton = () => {
       moreWrap.textContent = '';
       const remaining = totalCount - offset;
@@ -5774,12 +6180,30 @@
         totalCount = Number(resp.totalCount || 0);
         const records = resp.records || [];
 
+        // 総件数が分かった最初のページ応答で、即時検索の先読みを自動開始するか
+        // （1万件以下）、ユーザーの選択待ちにするか（1万件超）を一度だけ決める。
+        if (!indexDecisionMade) {
+          indexDecisionMade = true;
+          if (totalCount > 0 && totalCount <= GALLERY_INDEX_AUTO_LIMIT) {
+            startIndexPreload();
+          } else if (totalCount > GALLERY_INDEX_AUTO_LIMIT) {
+            indexState = 'idle-large';
+            updatePanelState();
+          }
+        }
+
         if (offset === 0 && !records.length) {
           moreWrap.textContent = '';
           const empty = document.createElement('div');
           empty.className = 'pb-gallery-empty';
           empty.textContent = 'レコードがありません。';
-          galleryEl.insertBefore(empty, moreWrap);
+          content.insertBefore(empty, moreWrap);
+          return;
+        }
+
+        // 先読みがこの応答より先に完了し、既にクライアント内モードへ切り替わっていた場合は
+        // このページ分の描画は不要（インデックス側で既に再描画済み）。
+        if (clientMode) {
           return;
         }
 
@@ -5788,6 +6212,10 @@
         // 追加リクエストは一切発生しない）。
         const recordIds = records.map((record) => record.$id && record.$id.value).filter(Boolean);
         const thumbUrlMap = await fetchDecryptedThumbs(apiBaseUrl, config, recordIds);
+
+        if (clientMode) {
+          return;
+        }
 
         records.forEach((record) => {
           grid.appendChild(buildCard(record, thumbUrlMap));
