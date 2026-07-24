@@ -164,6 +164,32 @@
     </div>
   </div>
 
+  <div class="pb-card">
+    <div class="pb-card-head">
+      <h2>ボタン表示</h2>
+      <p>図面登録・図面検索・管理ボタンを表示する一覧を選べます。「選択した一覧のみ表示」にすると、チェックした一覧以外にはボタンが表示されません。</p>
+    </div>
+    <div class="pb-card-body">
+      <div class="pb-field">
+        <span>ボタンを表示する一覧</span>
+        <label style="display: flex; align-items: center; gap: 6px; font-weight: 400; font-size: 13px; color: #0f172a;">
+          <input type="radio" name="buttonViewMode" id="buttonViewModeAll" value="all" checked />
+          すべての一覧に表示（既定）
+        </label>
+        <label style="display: flex; align-items: center; gap: 6px; font-weight: 400; font-size: 13px; color: #0f172a; margin-top: 6px;">
+          <input type="radio" name="buttonViewMode" id="buttonViewModeSelected" value="selected" />
+          選択した一覧のみ表示
+        </label>
+        <div id="buttonViewError" class="pb-hint" hidden>ビュー一覧を取得できませんでした。「すべての一覧に表示」のみ選択できます。</div>
+      </div>
+
+      <div id="buttonViewListWrap" class="pb-field" hidden>
+        <span>表示する一覧<em class="pb-hint">チェックした一覧にのみボタンが表示されます</em></span>
+        <div id="buttonViewList"></div>
+      </div>
+    </div>
+  </div>
+
   <details id="advancedSettings" class="pb-advanced">
     <summary class="pb-advanced-summary">詳細設定（通常は変更不要）</summary>
     <div class="pb-advanced-body">
