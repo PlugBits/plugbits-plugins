@@ -27,12 +27,21 @@
     return record[fieldCode].value || '';
   };
 
+  // 添付フィールド（pdfFileField）から「図面として扱う先頭のファイル」を取得する。
+  // 現場ではExcel等が図面PDFより先にアップロードされているレコードがあり、単純に
+  // value[0]（先頭ファイル）を掴むとサムネイル・登録・検索・ギャラリーが図面ではない
+  // ファイルを対象にしてしまう（利用者報告）。そのため拡張子がPDF/TIFの最初のファイルを
+  // 「図面ファイル」として優先的に返す。該当ファイルが1件も無い場合（Excelのみ添付など）は
+  // 図面なしとして null を返す。呼び出し側はもともと空配列時に null/undefined を想定した
+  // 分岐（ギャラリーの「ファイルなし」表示、登録モーダルの新規登録状態、検索の
+  // 「PDFが登録されていません」等）を持っているため、この判定でも同じ経路に自然に乗る。
   const getFirstFile = (record, fieldCode) => {
     const value = getFieldValue(record, fieldCode);
     if (!Array.isArray(value) || !value.length) {
       return null;
     }
-    return value[0];
+    const drawing = value.find((f) => /\.(pdf|tiff?)$/i.test(String((f && f.name) || '')));
+    return drawing || null;
   };
 
   const formatVectorRaw = (value) => {
@@ -1360,8 +1369,12 @@
     group.className = 'pb-btn-group';
 
     const button = createHeaderButton({ id: 'pb-similarity-search', label: '類似図面検索', variant: 'primary', icon: 'search' });
+    // kintone標準では添付PDFがプレビューされずダウンロードになる環境があり、これまで図面を
+    // 見るには類似検索を実行するしかなかった（検索モーダル左パネルにのみプレビューが出る）。
+    // 検索を伴わず図面だけを大きく確認できるボタンを追加する。
+    const previewButton = createHeaderButton({ id: 'pb-drawing-preview', label: '図面プレビュー', variant: 'secondary', icon: 'layers' });
     const indexButton = createHeaderButton({ id: 'pb-similarity-index', label: '図面を登録/更新', variant: 'secondary', icon: 'refresh' });
-    group.append(button, indexButton);
+    group.append(button, previewButton, indexButton);
     header.appendChild(group);
 
     if (config.tagField && config.tagSpaceId) {
@@ -1404,6 +1417,21 @@
       }
 
       openSimilarModal(config, apiBaseUrl, event);
+    });
+
+    previewButton.addEventListener('click', () => {
+      if (!apiBaseUrl) {
+        showPluginToast('プラグイン設定でAPI Base URLを設定してください。', 'error');
+        return;
+      }
+
+      const fileMeta = getFirstFile(event.record, config.pdfFileField);
+      if (!fileMeta) {
+        showPluginToast('プレビューできる図面（PDF/TIF）が添付されていません。', 'error');
+        return;
+      }
+
+      openDrawingPreviewModal(config, apiBaseUrl, fileMeta);
     });
 
     return event;
@@ -1601,17 +1629,17 @@
     // 呼ばれても競合しない（updateBulkModal は全ワーカーから呼ばれても表示は壊れない）。
     const processOneRecord = async (record) => {
       const recordId = record['$id'].value;
-      const fileField = config.pdfFileField ? record[config.pdfFileField] : null;
-      const files = fileField && Array.isArray(fileField.value) ? fileField.value : [];
+      // 添付の先頭がPDF/TIF以外（Excel等）のケースがあるため、先頭ファイルではなく
+      // 先頭のPDF/TIFファイルを図面として扱う（getFirstFileと同じ基準）。
+      const file = getFirstFile(record, config.pdfFileField);
 
-      if (!files.length) {
+      if (!file) {
         state.skip += 1;
         state.processed += 1;
         updateBulkModal(overlay, state);
         return;
       }
 
-      const file = files[0];
       const thumbKey = getThumbKey(config);
       const payload = {
         appId,
@@ -2089,12 +2117,13 @@
         const record = await kintone.api(kintone.api.url('/k/v1/record', true), 'GET', {
           app: appId, id: entry.recordId
         });
-        const fileField = config.pdfFileField ? record.record[config.pdfFileField] : null;
-        const files = fileField && Array.isArray(fileField.value) ? fileField.value : [];
-        if (!files.length) {
+        // 添付の先頭がPDF/TIF以外（Excel等）のケースがあるため、先頭ファイルではなく
+        // 先頭のPDF/TIFファイルを図面として扱う（getFirstFileと同じ基準）。
+        const file = getFirstFile(record.record, config.pdfFileField);
+        if (!file) {
           throw new Error('PDFファイルが見つかりません');
         }
-        const blob = await downloadKintoneFile(files[0].fileKey);
+        const blob = await downloadKintoneFile(file.fileKey);
         const response = await fetch(apiBaseUrl + '/thumb-backfill', {
           method: 'POST',
           headers: {
@@ -5092,6 +5121,48 @@
     });
   };
 
+  // 詳細画面の「図面プレビュー」ボタン用モーダル。類似検索（/similar）は一切実行せず、
+  // 添付図面（先頭のPDF/TIF）を大きく表示するだけの単独プレビュー。既存の類似検索モーダル
+  // 左パネルと同じ buildPreviewPanel（cacheKeyによるメモリ/IndexedDBキャッシュ、TIFは
+  // /render-thumbnailでのサーバー変換、PDFはブラウザ<embed>直接表示）をそのまま流用し、
+  // 新しい変換経路は作らない。
+  const openDrawingPreviewModal = (config, apiBaseUrl, fileMeta) => {
+    const shell = createModalShell();
+    shell.host.id = 'pb-drawing-preview-host';
+    // 既存の検索モーダルと同等の広さで表示する
+    shell.modal.classList.add('wide');
+    const content = shell.content;
+
+    const header = document.createElement('div');
+    header.className = 'modal-header';
+    const titleWrap = document.createElement('div');
+    const title = document.createElement('h2');
+    title.textContent = '図面プレビュー';
+    const sub = document.createElement('div');
+    sub.className = 'modal-sub';
+    sub.textContent = fileMeta.name || '';
+    titleWrap.append(title, sub);
+    header.appendChild(titleWrap);
+
+    const layout = document.createElement('div');
+    layout.className = 'form-layout';
+
+    const preview = buildPreviewPanel(
+      fileMeta.name || '',
+      shell.trackObjectUrl,
+      { apiBaseUrl, config, cacheKey: fileMeta.fileKey }
+    );
+    // preview-panel は本来 form-layout 内で40%固定の左ペイン用だが、このモーダルには
+    // 検索フォーム側のペインが無いため、単独ペインとして全幅を使わせる。
+    preview.panel.style.flex = '1 1 auto';
+    layout.appendChild(preview.panel);
+    content.append(header, layout);
+
+    downloadKintoneFile(fileMeta.fileKey)
+      .then((blob) => preview.showBlob(blob))
+      .catch((error) => preview.showMessage('プレビューを表示できません: ' + error.message));
+  };
+
   // 共通のドロップゾーンを組み立てる（onFile に選択された File を渡す）
   const buildDropzone = ({ main, sub, note, onFile }) => {
     const dropWrap = document.createElement('div');
@@ -5411,14 +5482,15 @@
       for (const record of records) {
         const recordId = String(record['$id'].value);
         kintoneIds.add(recordId);
-        const fileField = record[config.pdfFileField];
-        const files = fileField && Array.isArray(fileField.value) ? fileField.value : [];
+        // 添付の先頭がPDF/TIF以外（Excel等）のケースがあるため、先頭ファイルではなく
+        // 先頭のPDF/TIFファイルを突き合わせに使う（getFirstFileと同じ基準）。
+        const file = getFirstFile(record, config.pdfFileField);
         const entry = { recordId, drawingNo: drawingNoOf(record) };
-        if (!files.length) { noPdf.push(entry); continue; }
+        if (!file) { noPdf.push(entry); continue; }
         const indexed = indexMap.get(recordId);
         if (indexed === undefined) { unindexed.push(entry); continue; }
         // file_key 未記録の旧データは差分判定不能のため OK 扱い
-        if (indexed.fileKey && indexed.fileKey !== String(files[0].fileKey)) { stale.push(entry); continue; }
+        if (indexed.fileKey && indexed.fileKey !== String(file.fileKey)) { stale.push(entry); continue; }
         ok.push(entry);
         if (thumbFeatureEnabled && !indexed.hasThumb) {
           noThumb.push(entry);
