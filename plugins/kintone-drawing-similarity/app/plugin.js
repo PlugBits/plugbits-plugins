@@ -368,14 +368,20 @@
   // options.cacheKey はkintoneのfileKey等、内容に対して不変な識別子。渡された場合のみ
   // レンダリング結果をモジュールスコープのキャッシュに載せ、blob URLはtrackUrlではなく
   // キャッシュが所有する（渡さない場合＝ローカルのドラッグ&ドロップはキャッシュしない）。
+  // options.hideLabel: trueのときファイル名ヘッダー（preview-label）自体を作らない。
+  // 単独プレビュー用モーダル（openDrawingPreviewModal）でプレビュー実体（embed/img）を
+  // パネル全域に広げるために使う。類似検索モーダルの左パネル（openSimilarModal等）は
+  // 従来通りfalse（省略）でラベルを表示する。
   const buildPreviewPanel = (name, trackUrl, options = {}) => {
-    const { apiBaseUrl, config, cacheKey } = options;
+    const { apiBaseUrl, config, cacheKey, hideLabel } = options;
     const panel = document.createElement('div');
     panel.className = 'preview-panel';
-    const label = document.createElement('div');
-    label.className = 'preview-label';
-    label.textContent = name || '';
-    panel.appendChild(label);
+    if (!hideLabel) {
+      const label = document.createElement('div');
+      label.className = 'preview-label';
+      label.textContent = name || '';
+      panel.appendChild(label);
+    }
     const placeholder = document.createElement('div');
     placeholder.className = 'preview-placeholder';
     placeholder.textContent = 'プレビューを読み込み中...';
@@ -5133,30 +5139,23 @@
     shell.modal.classList.add('wide');
     const content = shell.content;
 
-    const header = document.createElement('div');
-    header.className = 'modal-header';
-    const titleWrap = document.createElement('div');
-    const title = document.createElement('h2');
-    title.textContent = '図面プレビュー';
-    const sub = document.createElement('div');
-    sub.className = 'modal-sub';
-    sub.textContent = fileMeta.name || '';
-    titleWrap.append(title, sub);
-    header.appendChild(titleWrap);
-
+    // タイトル・ファイル名のヘッダーは作らない。モーダル全体をプレビュー領域として使い、
+    // 閉じる手段は createModalShell 標準の ×・Esc・オーバーレイクリックのみとする
+    // （ヘッダー分の高さが無くなる分、PDF/画像を最大サイズで表示できる）。
     const layout = document.createElement('div');
     layout.className = 'form-layout';
 
     const preview = buildPreviewPanel(
       fileMeta.name || '',
       shell.trackObjectUrl,
-      { apiBaseUrl, config, cacheKey: fileMeta.fileKey }
+      { apiBaseUrl, config, cacheKey: fileMeta.fileKey, hideLabel: true }
     );
     // preview-panel は本来 form-layout 内で40%固定の左ペイン用だが、このモーダルには
-    // 検索フォーム側のペインが無いため、単独ペインとして全幅を使わせる。
+    // 検索フォーム側のペインが無いため、単独ペインとして全幅・全高を使わせる。
+    // ファイル名ラベルも hideLabel で非表示にし、embed/img自体の表示領域を最大化する。
     preview.panel.style.flex = '1 1 auto';
     layout.appendChild(preview.panel);
-    content.append(header, layout);
+    content.appendChild(layout);
 
     downloadKintoneFile(fileMeta.fileKey)
       .then((blob) => preview.showBlob(blob))
@@ -5942,11 +5941,30 @@
     let totalCount = 0;
     let loading = false;
 
+    // galleryFilterFields: プラグイン設定で選んだ「任意の絞り込みフィールド」
+    // （材質・形状タグ以外）。実行時にフィールド名APIを呼ばずに済むよう、設定画面側で
+    // { code, label, type } の配列としてJSON文字列で保存されている。JSON.parse失敗・
+    // 未設定時は空配列にフォールバックする。materialField/shapeTagFieldと重複するコードは
+    // チップの二重表示を防ぐため除外する。
+    let galleryFilterFields = [];
+    try {
+      const parsedFilterFields = JSON.parse(config.galleryFilterFields || '[]');
+      if (Array.isArray(parsedFilterFields)) {
+        const excludeCodes = new Set([config.materialField, config.shapeTagField].filter(Boolean));
+        galleryFilterFields = parsedFilterFields.filter((f) => f && f.code && !excludeCodes.has(f.code));
+      }
+    } catch {
+      galleryFilterFields = [];
+    }
+
     // --- 即時検索（クライアント内モード）の状態 ---
-    // indexFields: 先読み専用のフィールド一覧。材質・形状タグは設定されているときだけ含める。
+    // indexFields: 先読み専用のフィールド一覧。材質・形状タグ・設定した絞り込みフィールドは
+    // 設定されているときだけ含める。
     const indexFields = ['$id', config.drawingNoField, config.productNameField,
-      config.materialField, config.shapeTagField, config.pdfFileField].filter(Boolean);
-    let indexItems = []; // { recordId, drawingNo, productName, material, shapeTags:[], record }
+      config.materialField, config.shapeTagField, config.pdfFileField]
+      .concat(galleryFilterFields.map((f) => f.code))
+      .filter(Boolean);
+    let indexItems = []; // { recordId, drawingNo, productName, material, shapeTags:[], extra:{}, record }
     // idle: 未着手 / idle-large: 1万件超で未有効化 / loading: 先読み中 / ready: 完了 / failed: 失敗
     let indexState = 'idle';
     let indexDecisionMade = false;
@@ -5960,6 +5978,8 @@
       search: '', // 小文字化済み
       materials: new Set(),
       shapeTags: new Set(),
+      // extra: 設定した絞り込みフィールドごとの選択値。code → Set。
+      extra: new Map(galleryFilterFields.map((f) => [f.code, new Set()])),
       sort: 'new' // 'new' | 'old' | 'no'
     };
 
@@ -6025,16 +6045,26 @@
     // === 即時検索（クライアント内モード）: メタデータの正規化・絞り込み・並び替え ===
 
     // 生レコードを検索・絞り込み用の軽量な形に正規化する。record自体はbuildCard再利用のため保持する。
-    const normalizeIndexRecord = (record) => ({
-      recordId: record.$id && record.$id.value,
-      drawingNo: config.drawingNoField ? getFieldValue(record, config.drawingNoField) : '',
-      productName: config.productNameField ? getFieldValue(record, config.productNameField) : '',
-      material: config.materialField ? getFieldValue(record, config.materialField) : '',
-      shapeTags: config.shapeTagField ? parseTags(getFieldValue(record, config.shapeTagField)) : [],
-      record
-    });
+    // extra: galleryFilterFieldsで選んだフィールドの値（code→値）。CHECK_BOXは配列のまま、
+    // それ以外は文字列でgetFieldValueが返す値をそのまま保持する。
+    const normalizeIndexRecord = (record) => {
+      const extra = {};
+      galleryFilterFields.forEach((f) => {
+        extra[f.code] = getFieldValue(record, f.code);
+      });
+      return {
+        recordId: record.$id && record.$id.value,
+        drawingNo: config.drawingNoField ? getFieldValue(record, config.drawingNoField) : '',
+        productName: config.productNameField ? getFieldValue(record, config.productNameField) : '',
+        material: config.materialField ? getFieldValue(record, config.materialField) : '',
+        shapeTags: config.shapeTagField ? parseTags(getFieldValue(record, config.shapeTagField)) : [],
+        extra,
+        record
+      };
+    };
 
-    // 検索ボックス（部分一致・小文字化済み）→材質（OR）→形状タグ（OR）の順にAND評価する。
+    // 検索ボックス（部分一致・小文字化済み）→材質（OR）→形状タグ（OR）→設定した絞り込み
+    // フィールド（各フィールド内OR、フィールド間AND）の順に評価する。
     const matchesFilters = (item) => {
       if (filterState.search) {
         const haystack = (item.drawingNo + ' ' + item.productName).toLowerCase();
@@ -6048,6 +6078,19 @@
       if (filterState.shapeTags.size) {
         const hit = item.shapeTags.some((tag) => filterState.shapeTags.has(tag));
         if (!hit) {
+          return false;
+        }
+      }
+      for (const [code, selectedSet] of filterState.extra) {
+        if (!selectedSet.size) {
+          continue;
+        }
+        const value = item.extra[code];
+        if (Array.isArray(value)) {
+          if (!value.some((v) => selectedSet.has(v))) {
+            return false;
+          }
+        } else if (!selectedSet.has(value)) {
           return false;
         }
       }
@@ -6125,9 +6168,12 @@
 
     // 先読み完了後に一度だけ呼ぶ。読み込んだ全メタデータから動的にチップ群を構築する
     // （フォーム定義APIは使わず、実際に読み込んだ値だけを対象にする）。
+    // 材質・形状タグの後に、設定した絞り込みフィールド（galleryFilterFields）ごとの
+    // チップ群を追加する。タイトルは設定画面で保存済みのlabelを使う。
     const buildFilterChips = () => {
       materialGroupWrap.textContent = '';
       shapeGroupWrap.textContent = '';
+      extraGroupWraps.forEach((wrap) => { wrap.textContent = ''; });
       chipRefreshFns = [];
 
       if (config.materialField) {
@@ -6153,6 +6199,24 @@
         const refresh = buildChipGroup(shapeGroupWrap, '形状タグ', counts, filterState.shapeTags, applyFilters);
         if (refresh) chipRefreshFns.push(refresh);
       }
+
+      galleryFilterFields.forEach((field, i) => {
+        const counts = new Map();
+        indexItems.forEach((item) => {
+          const value = item.extra[field.code];
+          if (Array.isArray(value)) {
+            // CHECK_BOX: 要素ごとにカウントする
+            value.forEach((v) => {
+              if (v) counts.set(v, (counts.get(v) || 0) + 1);
+            });
+          } else if (value) {
+            counts.set(value, (counts.get(value) || 0) + 1);
+          }
+        });
+        const selectedSet = filterState.extra.get(field.code);
+        const refresh = buildChipGroup(extraGroupWraps[i], field.label || field.code, counts, selectedSet, applyFilters);
+        if (refresh) chipRefreshFns.push(refresh);
+      });
     };
 
     // === 左パネル: 件数表示・条件クリア ===
@@ -6166,8 +6230,9 @@
       countEl.textContent = filteredItems.length + '件 / 全' + indexItems.length + '件';
       countWrap.appendChild(countEl);
 
+      const hasExtraFilter = Array.from(filterState.extra.values()).some((set) => set.size > 0);
       const hasFilter = !!filterState.search || filterState.materials.size > 0 ||
-        filterState.shapeTags.size > 0 || filterState.sort !== 'new';
+        filterState.shapeTags.size > 0 || hasExtraFilter || filterState.sort !== 'new';
       if (hasFilter) {
         const clearBtn = document.createElement('button');
         clearBtn.type = 'button';
@@ -6177,6 +6242,7 @@
           filterState.search = '';
           filterState.materials.clear();
           filterState.shapeTags.clear();
+          filterState.extra.forEach((set) => set.clear());
           filterState.sort = 'new';
           searchInput.value = '';
           sortSelect.value = 'new';
@@ -6365,6 +6431,14 @@
 
     const shapeGroupWrap = document.createElement('div');
     panel.appendChild(shapeGroupWrap);
+
+    // 設定した絞り込みフィールド（galleryFilterFields）ごとのチップ群の器。
+    // フィールド数分だけ用意し、buildFilterChipsが順番に埋める。
+    const extraGroupWraps = galleryFilterFields.map(() => {
+      const wrap = document.createElement('div');
+      panel.appendChild(wrap);
+      return wrap;
+    });
 
     const sortTitle = document.createElement('div');
     sortTitle.className = 'pb-gallery-filter-title';

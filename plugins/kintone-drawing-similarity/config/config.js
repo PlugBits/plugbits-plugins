@@ -14,6 +14,10 @@
 
   const LAYOUT_ONLY_TYPES = new Set(['SUBTABLE', 'GROUP', 'REFERENCE_TABLE', 'LABEL', 'SPACER', 'HR', 'RECORD_NUMBER', 'CATEGORY', 'STATUS', 'STATUS_ASSIGNEE']);
 
+  // ギャラリーの「絞り込みフィールド」チェックボックスとして列挙する対象の型。
+  // 値の種類が有限で、チップによる絞り込みに向くもののみ。
+  const GALLERY_FILTER_FIELD_TYPES = new Set(['DROP_DOWN', 'RADIO_BUTTON', 'CHECK_BOX', 'SINGLE_LINE_TEXT']);
+
   // kintoneのサブドメインをテナントIDとして使う。手入力にすると環境間でズレるため常にドメインから再計算する。
   const deriveTenantId = () => (window.location.hostname || '').split('.')[0] || 'default';
 
@@ -160,6 +164,47 @@
     });
   }
 
+  // ギャラリーの「絞り込みフィールド」チェックボックスリストを、/k/v1/app/form/fields の
+  // 応答（selectFieldsのドロップダウン構築と共用）から組み立てる。materialField/
+  // shapeTagFieldに設定済みのコードは重複表示防止のため除外する。保存済み
+  // （config.galleryFilterFields、{code,label,type}のJSON配列）にあるコードはチェック復元する。
+  let galleryFilterFieldsFetchFailed = false;
+  const populateGalleryFilterFieldsList = (properties) => {
+    const listEl = getElement('galleryFilterFieldsList');
+    if (!listEl) return;
+    let savedFields = [];
+    try {
+      const parsed = JSON.parse(config.galleryFilterFields || '[]');
+      if (Array.isArray(parsed)) savedFields = parsed;
+    } catch {
+      savedFields = [];
+    }
+    const savedCodes = new Set(savedFields.map((f) => f && f.code).filter(Boolean));
+    const excludeCodes = new Set([config.materialField, config.shapeTagField].filter(Boolean));
+
+    listEl.innerHTML = '';
+    Object.keys(properties)
+      .filter((code) => GALLERY_FILTER_FIELD_TYPES.has(properties[code].type) && !excludeCodes.has(code))
+      .sort((a, b) => a.localeCompare(b, 'ja'))
+      .forEach((code) => {
+        const label = document.createElement('label');
+        label.style.cssText = 'display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;color:#0f172a;margin-top:6px;';
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'pb-gallery-filter-field-checkbox';
+        checkbox.value = code;
+        const fieldLabel = properties[code].label || code;
+        checkbox.dataset.label = fieldLabel;
+        checkbox.dataset.type = properties[code].type;
+        checkbox.checked = savedCodes.has(code);
+        label.appendChild(checkbox);
+        label.appendChild(document.createTextNode(
+          fieldLabel && fieldLabel !== code ? code + '（' + fieldLabel + '）' : code
+        ));
+        listEl.appendChild(label);
+      });
+  };
+
   kintone.api(kintone.api.url('/k/v1/app/form/fields', true), 'GET', { app: kintone.app.getId() })
     .then((resp) => {
       const properties = resp.properties || {};
@@ -169,6 +214,7 @@
           populateSelect(element, config[field] || '', properties);
         }
       });
+      populateGalleryFilterFieldsList(properties);
     })
     .catch(() => {
       selectFields.forEach((field) => {
@@ -181,6 +227,11 @@
         element.appendChild(fallbackOption);
         element.value = config[field] || '';
       });
+      galleryFilterFieldsFetchFailed = true;
+      const listEl = getElement('galleryFilterFieldsList');
+      if (listEl) listEl.innerHTML = '';
+      const errorEl = getElement('galleryFilterFieldsError');
+      if (errorEl) errorEl.hidden = false;
       window.alert('フィールド一覧の取得に失敗しました。アプリの設定を確認してください。');
     });
 
@@ -318,6 +369,22 @@
 
     // ギャラリーの図面クリック時のレコード詳細の開き方（'newtab' 既定 | 'same'）。
     nextConfig.galleryOpenMode = getElement('galleryOpenMode') ? (getElement('galleryOpenMode').value || 'newtab') : (config.galleryOpenMode || 'newtab');
+
+    // ギャラリーの絞り込みフィールド（材質・形状タグ以外の任意フィールド）。
+    // 実行時（plugin.js）でフィールド名APIを呼ばずに済むよう、{code, label, type} の
+    // 配列としてJSON文字列で保存する。フィールド一覧の取得に失敗している場合は
+    // チェックボックスが生成されていないため、既存設定をそのまま維持する。
+    if (galleryFilterFieldsFetchFailed) {
+      nextConfig.galleryFilterFields = config.galleryFilterFields || '';
+    } else {
+      const galleryFilterFieldsListEl = getElement('galleryFilterFieldsList');
+      const galleryFilterFieldsCheckboxes = galleryFilterFieldsListEl
+        ? galleryFilterFieldsListEl.querySelectorAll('.pb-gallery-filter-field-checkbox')
+        : [];
+      const selectedGalleryFilterFields = Array.prototype.filter.call(galleryFilterFieldsCheckboxes, (el) => el.checked)
+        .map((el) => ({ code: el.value, label: el.dataset.label || el.value, type: el.dataset.type || '' }));
+      nextConfig.galleryFilterFields = JSON.stringify(selectedGalleryFilterFields);
+    }
 
     // ヘッダーボタン（図面登録・図面検索・管理）を表示するビュー。
     // 未設定/'all'は従来どおり全ビュー表示、'selected'は選んだビューのみ表示。
