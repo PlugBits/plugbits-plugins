@@ -106,6 +106,12 @@
     fastThumbsToggle.checked = config.fastThumbs === 'true';
   }
 
+  // ギャラリーの図面クリック時のレコード詳細の開き方（既定: 新しいタブ）。
+  const galleryOpenModeEl = getElement('galleryOpenMode');
+  if (galleryOpenModeEl) {
+    galleryOpenModeEl.value = config.galleryOpenMode === 'same' ? 'same' : 'newtab';
+  }
+
   // 接続テスト: /health で疎通、/tags（認証対象）でAPIキーを検証する
   const testBtn = getElement('testConnection');
   const testStatus = getElement('testStatus');
@@ -309,6 +315,9 @@
 
     // 図面ギャラリーに使うビューID。取得失敗時はエラーオプションの値（＝既存設定を維持）が入る。
     nextConfig.galleryViewId = getElement('galleryViewId') ? (getElement('galleryViewId').value || '') : (config.galleryViewId || '');
+
+    // ギャラリーの図面クリック時のレコード詳細の開き方（'newtab' 既定 | 'same'）。
+    nextConfig.galleryOpenMode = getElement('galleryOpenMode') ? (getElement('galleryOpenMode').value || 'newtab') : (config.galleryOpenMode || 'newtab');
 
     // ヘッダーボタン（図面登録・図面検索・管理）を表示するビュー。
     // 未設定/'all'は従来どおり全ビュー表示、'selected'は選んだビューのみ表示。
