@@ -468,16 +468,6 @@
   gap: 20px;
 }
 
-@media (max-width: 899px) {
-  .pb-gallery-layout {
-    flex-direction: column;
-  }
-
-  .pb-gallery-panel {
-    width: 100%;
-  }
-}
-
 .pb-gallery-panel {
   box-sizing: border-box;
   flex-shrink: 0;
@@ -489,6 +479,31 @@
   border: 1px solid #d8dce3;
   border-radius: 8px;
   background: #ffffff;
+  /* 右のグリッドをスクロールしてもパネルを画面内に留める。kintoneの固定グローバルナビ
+     （画面上部の黒いバー、約48px）に隠れない位置まで下げる。align-self: flex-start は
+     flexコンテナ内でstickyを効かせるために必須（親のalign-items: flex-startと合わせて
+     パネルがストレッチされないようにする）。 */
+  position: sticky;
+  top: 60px;
+  align-self: flex-start;
+  max-height: calc(100vh - 76px);
+  overflow-y: auto;
+}
+
+/* 900px未満用の上書き。.pb-gallery-panel本体より後ろに置くこと（同じ詳細度のセレクタは
+   ソース順で後勝ちのため、@media側を先に書くとsticky指定に上書きされてしまう）。 */
+@media (max-width: 899px) {
+  .pb-gallery-layout {
+    flex-direction: column;
+  }
+
+  .pb-gallery-panel {
+    width: 100%;
+    /* column折り返し時（パネルが上に来るレイアウト）はstickyを解除する。
+       stickyのままだと画面を占有し続けてしまうため。 */
+    position: static;
+    max-height: none;
+  }
 }
 
 .pb-gallery-content {
@@ -614,6 +629,57 @@
 .pb-gallery-more-btn:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* --- 無限スクロール用の番兵（「さらに表示」ボタンの代わり）---
+   通常は非表示。IntersectionObserverが画面内（手前300px）への進入を検知したときだけ、
+   pb-gallery-sentinel-visible が付いて表示される。 */
+.pb-gallery-sentinel {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 12px 16px;
+  color: #8593a3;
+  font-size: 13px;
+}
+
+.pb-gallery-sentinel-visible {
+  display: flex;
+}
+
+.pb-gallery-sentinel-spinner {
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid #d8dce3;
+  border-top-color: #64748b;
+  border-radius: 50%;
+  animation: pb-gallery-spin 0.8s linear infinite;
+}
+
+@keyframes pb-gallery-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* IntersectionObserver非対応環境のみのフォールバック: 番兵自体をクリックで読み足すボタンにする */
+.pb-gallery-sentinel-fallback {
+  cursor: pointer;
+  border: 1px solid #d8dce3;
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.pb-gallery-sentinel-fallback:hover {
+  background: #f7f9fa;
+}
+
+/* サーバーページングモードの取得失敗時（番兵とは別に表示する） */
+.pb-gallery-load-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 /* --- 左パネルの中身（検索ボックス・絞り込みチップ・表示順・件数）--- */
