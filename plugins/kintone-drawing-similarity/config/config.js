@@ -178,6 +178,58 @@
       window.alert('フィールド一覧の取得に失敗しました。アプリの設定を確認してください。');
     });
 
+  // 図面ギャラリー: 一覧のカスタマイズビュー（表示形式「カスタマイズ」＝type === 'CUSTOM'）
+  // を取得し、ドロップダウンに列挙する。ここで選ばれたビューは、plugin.js側で
+  // app.record.index.show の event.viewId と照合して自動でギャラリーを描画する
+  //（ビューのHTML編集は不要）。
+  const galleryViewSelectEl = getElement('galleryViewId');
+  if (galleryViewSelectEl) {
+    kintone.api(kintone.api.url('/k/v1/app/views', true), 'GET', { app: kintone.app.getId() })
+      .then((resp) => {
+        const views = resp.views || {};
+        const customViews = Object.keys(views)
+          .map((key) => views[key])
+          .filter((view) => view.type === 'CUSTOM')
+          .sort((a, b) => Number(a.index) - Number(b.index));
+
+        galleryViewSelectEl.innerHTML = '';
+
+        const noneOption = document.createElement('option');
+        noneOption.value = '';
+        noneOption.textContent = '使用しない';
+        galleryViewSelectEl.appendChild(noneOption);
+
+        customViews.forEach((view) => {
+          const option = document.createElement('option');
+          option.value = view.id;
+          option.textContent = view.name;
+          galleryViewSelectEl.appendChild(option);
+        });
+
+        // 保存済みのビューが一覧に無い（削除された等）場合は、選択状態を保てるよう
+        // 無効な項目として追加しておく（勝手に空選択へ戻して意図せず設定を失わせない）。
+        const savedGalleryViewId = config.galleryViewId || '';
+        const savedExists = customViews.some((view) => String(view.id) === String(savedGalleryViewId));
+        if (savedGalleryViewId && !savedExists) {
+          const missingOption = document.createElement('option');
+          missingOption.value = savedGalleryViewId;
+          missingOption.textContent = '（削除されたビュー: ' + savedGalleryViewId + '）';
+          galleryViewSelectEl.appendChild(missingOption);
+        }
+
+        galleryViewSelectEl.value = savedGalleryViewId;
+        galleryViewSelectEl.disabled = customViews.length === 0;
+      })
+      .catch(() => {
+        galleryViewSelectEl.innerHTML = '';
+        const errOption = document.createElement('option');
+        errOption.value = config.galleryViewId || '';
+        errOption.textContent = 'ビュー一覧を取得できませんでした';
+        galleryViewSelectEl.appendChild(errOption);
+        galleryViewSelectEl.disabled = true;
+      });
+  }
+
   getElement('save').addEventListener('click', () => {
     const nextConfig = fields.reduce((acc, field) => {
       const element = getElement(field);
@@ -190,6 +242,9 @@
     nextConfig.showArchiveButton = getElement('showArchiveButton') && getElement('showArchiveButton').checked ? 'true' : 'false';
 
     nextConfig.fastThumbs = getElement('fastThumbs') && getElement('fastThumbs').checked ? 'true' : 'false';
+
+    // 図面ギャラリーに使うビューID。取得失敗時はエラーオプションの値（＝既存設定を維持）が入る。
+    nextConfig.galleryViewId = getElement('galleryViewId') ? (getElement('galleryViewId').value || '') : (config.galleryViewId || '');
     // 復号鍵は既存の値をまず引き継ぐ（fields配列に含めていないため、明示的にコピーしないと
     // 保存のたびに失われてしまう）。チェックONで、かつ未生成の場合のみ新規生成する。
     // 一度生成した鍵はチェックOFFにしても削除しない
