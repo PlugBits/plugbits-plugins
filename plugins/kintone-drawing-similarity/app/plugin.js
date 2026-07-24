@@ -5604,9 +5604,12 @@
   };
 
   // === 図面プレビューのギャラリービュー ===
-  // カスタマイズビュー（一覧設定で作るHTMLビュー）のHTMLに
-  // <div id="pb-drawing-gallery"></div> を置くだけで、図面サムネイルのカードグリッドを
-  // 描画する。一覧の絞り込み（kintone.app.getQueryCondition）を尊重し、20件ずつページングする。
+  // カスタマイズビュー（一覧設定で作るHTMLビュー）を図面サムネイルのカードグリッドとして
+  // 描画する。呼び出し元（app.record.index.show）は、プラグイン設定のドロップダウンで
+  // 選んだビュー（config.galleryViewId とevent.viewIdの一致）を検知して自動でマーカー要素を
+  // 生成するか、旧方式としてビューHTML内の <div id="pb-drawing-gallery"></div> をそのまま使う。
+  // いずれの経路でもこの関数が呼ばれる時点ではマーカー要素が既に存在する前提。
+  // 一覧の絞り込み（kintone.app.getQueryCondition）を尊重し、20件ずつページングする。
   const GALLERY_PAGE_SIZE = 20;
   const GALLERY_THUMB_CONCURRENCY = 3;
 
@@ -6323,11 +6326,24 @@
     const config = kintone.plugin.app.getConfig(PLUGIN_ID);
     const apiBaseUrl = normalizeBaseUrl(config.apiBaseUrl);
 
-    // 図面プレビューのギャラリービュー: カスタマイズビューのHTMLに
-    // <div id="pb-drawing-gallery"></div> があれば描画する。kintoneの一覧はビュー切替の
-    // たびにDOMを作り直すのでこのハンドラも毎回発火し直すが、描画済みマーカー
-    // （dataset.pbRendered）が無い＝新しく現れた要素のときだけ改めて描画する。
-    const galleryEl = document.getElementById('pb-drawing-gallery');
+    // 図面プレビューのギャラリービュー。表示経路は2つ:
+    //   1. HTMLマーカー方式（旧方式・後方互換）: カスタマイズビューのHTMLに
+    //      <div id="pb-drawing-gallery"></div> を手で置いた既存導入をそのまま動かす。
+    //   2. viewId一致方式（新方式）: 設定画面のドロップダウンで選んだビュー
+    //      （config.galleryViewId）が現在表示中のビュー（event.viewId）と一致したら、
+    //      ヘッダースペースにマーカー要素を自動生成する。ビューのHTMLは空のままでよい。
+    // どちらの経路でも、生成/検出した要素に対する実際の描画は同じ下のブロックで行う。
+    // kintoneの一覧はビュー切替のたびにDOMを作り直すのでこのハンドラも毎回発火し直すが、
+    // 描画済みマーカー（dataset.pbRendered）が無い＝新しく現れた要素のときだけ改めて描画する。
+    let galleryEl = document.getElementById('pb-drawing-gallery');
+    if (!galleryEl && config.galleryViewId && String(event.viewId) === String(config.galleryViewId)) {
+      const headerSpace = kintone.app.getHeaderSpaceElement();
+      if (headerSpace) {
+        galleryEl = document.createElement('div');
+        galleryEl.id = 'pb-drawing-gallery';
+        headerSpace.appendChild(galleryEl);
+      }
+    }
     if (galleryEl && !galleryEl.dataset.pbRendered) {
       renderDrawingGallery(config, apiBaseUrl, galleryEl);
     }
