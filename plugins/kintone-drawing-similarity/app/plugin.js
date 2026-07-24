@@ -5694,6 +5694,99 @@
     moreWrap.className = 'pb-gallery-more-wrap';
     content.appendChild(moreWrap);
 
+    // === 無限スクロール: 番兵要素とIntersectionObserver ===
+    // 「さらに表示」ボタンの代わりに、番兵(sentinel)がスクロールで画面内（rootMargin分の
+    // 先読みを含む）に入ったら次の20件を読み足す。クライアント内モード（renderClientPage）・
+    // サーバーページングモード（loadPage）のどちらでも同じ番兵・Observerインスタンスを使い回す。
+    const sentinel = document.createElement('div');
+    sentinel.className = 'pb-gallery-sentinel';
+    const sentinelSpinner = document.createElement('span');
+    sentinelSpinner.className = 'pb-gallery-sentinel-spinner';
+    const sentinelLabel = document.createElement('span');
+    sentinelLabel.className = 'pb-gallery-sentinel-label';
+    sentinelLabel.textContent = '読み込み中...';
+    sentinel.append(sentinelSpinner, sentinelLabel);
+    moreWrap.appendChild(sentinel);
+
+    // loadingMore: 読み足し処理の多重発火ガード。クライアント内モードはfetchDecryptedThumbsの
+    // await区間があるため、既存の（サーバーページングモード用の）loadingフラグとは別にこちらで
+    // 一元的にガードする。
+    let loadingMore = false;
+    // clientLoadToken: applyFilters()を呼ぶたびに更新し、絞り込み変更前に発行された
+    // renderClientPage()の結果（古い世代のfetchDecryptedThumbs応答）を無視するためのトークン。
+    // これが無いと、読み足し中に検索条件を変えたとき、古い絞り込みのカードが
+    // クリア後のグリッドに紛れ込む・clientOffsetが壊れる、といった競合が起きうる。
+    let clientLoadToken = 0;
+
+    const hasIntersectionObserver = typeof IntersectionObserver !== 'undefined';
+
+    // 番兵の表示/非表示のみを切り替える。表示中はIntersectionObserverの監視対象にする
+    // （同一要素へのobserve()の再呼び出しは無害＝二重登録されない）。
+    const setSentinelVisible = (visible) => {
+      sentinel.classList.toggle('pb-gallery-sentinel-visible', visible);
+      if (!hasIntersectionObserver) {
+        // フォールバック: 番兵自体をクリックで読み足すボタン代わりに使う
+        sentinelLabel.textContent = visible ? 'さらに読み込む（クリック）' : '読み込み中...';
+        return;
+      }
+      if (visible) {
+        observer.observe(sentinel);
+      } else {
+        observer.unobserve(sentinel);
+      }
+    };
+
+    // 番兵が画面内（Observerのroot Marginと同じ300px手前判定）にまだいるかを自前で確認する。
+    // 読み足し完了直後、ブラウザ側のcallbackが（同一要素のままなので）再発火しないケースに備え、
+    // 完了のたびにこれで交差状態を確認し、まだ視界内なら続けて次のページを読み込む。
+    const isSentinelNearViewport = () => {
+      if (!sentinel.classList.contains('pb-gallery-sentinel-visible')) {
+        return false;
+      }
+      const rect = sentinel.getBoundingClientRect();
+      const viewportBottom = (window.innerHeight || document.documentElement.clientHeight || 0) + 300;
+      return rect.top <= viewportBottom;
+    };
+
+    // クライアント内モード／サーバーページングモードのどちらかを見て次の20件を読み足す。
+    // loadingMore中の再入、末尾到達後の呼び出しは何もしない。
+    const loadMoreOnce = () => {
+      if (loadingMore) {
+        return;
+      }
+      if (clientMode) {
+        if (clientOffset >= filteredItems.length) {
+          setSentinelVisible(false);
+          return;
+        }
+        loadingMore = true;
+        renderClientPage();
+      } else {
+        if (loading || offset >= totalCount) {
+          return;
+        }
+        loadingMore = true;
+        loadPage();
+      }
+    };
+
+    const maybeLoadMore = () => {
+      if (isSentinelNearViewport()) {
+        loadMoreOnce();
+      }
+    };
+
+    const observer = hasIntersectionObserver ? new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        loadMoreOnce();
+      }
+    }, { rootMargin: '300px', threshold: 0 }) : null;
+
+    if (!hasIntersectionObserver) {
+      sentinel.classList.add('pb-gallery-sentinel-fallback');
+      sentinel.addEventListener('click', () => loadMoreOnce());
+    }
+
     // サムネイルはレンダリング済みキャッシュ（_thumbCache）が所有するblob URLを使い回すため、
     // trackObjectUrl（モーダルclose時の解放用）は何もしない関数を渡せばよい。
     const noop = () => {};
@@ -5979,28 +6072,11 @@
       if (existing) existing.remove();
     };
 
-    const renderClientMoreButton = () => {
-      moreWrap.textContent = '';
-      const remaining = filteredItems.length - clientOffset;
-      if (remaining <= 0) {
-        return;
-      }
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'pb-gallery-more-btn';
-      btn.textContent = 'さらに表示（残り' + remaining + '件）';
-      btn.addEventListener('click', () => {
-        btn.disabled = true;
-        btn.textContent = '読み込み中...';
-        renderClientPage();
-      });
-      moreWrap.appendChild(btn);
-    };
-
     // フィルタ後の配列から表示中カードの続きを描画する。サムネイル取得（高速サムネイル＋
     // フォールバックキュー）は表示分（この20件）だけに適用され、絞り込んでも画像取得は
     // 表示中カードの分しか発生しない。
     const renderClientPage = () => {
+      const token = clientLoadToken;
       const slice = filteredItems.slice(clientOffset, clientOffset + GALLERY_PAGE_SIZE);
       if (!slice.length) {
         if (clientOffset === 0) {
@@ -6009,24 +6085,37 @@
           empty.textContent = '条件に一致する図面がありません。';
           content.insertBefore(empty, moreWrap);
         }
-        renderClientMoreButton();
+        loadingMore = false;
+        setSentinelVisible(false);
         return;
       }
       const recordIds = slice.map((item) => item.recordId).filter(Boolean);
       fetchDecryptedThumbs(apiBaseUrl, config, recordIds).then((thumbUrlMap) => {
+        if (token !== clientLoadToken) {
+          // この間にapplyFilters()が呼ばれ、この読み込みは既に古い絞り込み条件のもの。
+          // clientOffset/gridは新しい世代のrenderClientPage()側で管理済みなので何もしない。
+          return;
+        }
         slice.forEach((item) => {
           grid.appendChild(buildCard(item.record, thumbUrlMap));
         });
         clientOffset += slice.length;
-        renderClientMoreButton();
+        loadingMore = false;
+        setSentinelVisible(clientOffset < filteredItems.length);
+        maybeLoadMore();
       });
     };
 
     // 検索・チップ・並び順のいずれかが変わるたびに呼ぶ。先頭から再描画する
     // （表示中カードの部分差分更新はせず、シンプルさを優先する）。
     const applyFilters = () => {
+      clientLoadToken += 1;
       filteredItems = sortItems(indexItems.filter(matchesFilters));
       clientOffset = 0;
+      // 直後のrenderClientPage()自体を「読み込み中」として扱い、その完了前にスクロールで
+      // 読み足しが二重発火しないようにする（番兵も一旦隠してObserverの発火を止める）。
+      loadingMore = true;
+      setSentinelVisible(false);
       grid.textContent = '';
       clearEmptyNote();
       renderClientPage();
@@ -6132,27 +6221,18 @@
     countWrap.className = 'pb-gallery-count-wrap';
     panel.appendChild(countWrap);
 
-    // 総件数から残り件数を算出し、「さらに表示」ボタンを出す/隠すを切り替える（サーバーページングモード）。
-    const renderMoreButton = () => {
-      moreWrap.textContent = '';
-      const remaining = totalCount - offset;
-      if (remaining <= 0) {
-        return;
-      }
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'pb-gallery-more-btn';
-      btn.textContent = 'さらに表示（残り' + remaining + '件）';
-      btn.addEventListener('click', () => {
-        btn.disabled = true;
-        btn.textContent = '読み込み中...';
-        loadPage();
-      });
-      moreWrap.appendChild(btn);
-    };
+    // ロード失敗時のエラー表示（番兵とは別の子要素として持ち、番兵ノード自体は
+    // 使い回す＝差し替えない。errorBoxがある間は番兵を隠してObserverの発火を止める）。
+    let errorBox = null;
 
     const renderLoadError = () => {
-      moreWrap.textContent = '';
+      loadingMore = false;
+      setSentinelVisible(false);
+      if (errorBox) {
+        errorBox.remove();
+      }
+      errorBox = document.createElement('div');
+      errorBox.className = 'pb-gallery-load-error';
       const err = document.createElement('div');
       err.className = 'pb-gallery-note pb-gallery-note-error';
       err.textContent = '図面の取得に失敗しました。';
@@ -6160,8 +6240,13 @@
       retryBtn.type = 'button';
       retryBtn.className = 'pb-gallery-more-btn';
       retryBtn.textContent = '再試行';
-      retryBtn.addEventListener('click', () => loadPage());
-      moreWrap.append(err, retryBtn);
+      retryBtn.addEventListener('click', () => {
+        errorBox.remove();
+        errorBox = null;
+        loadPage();
+      });
+      errorBox.append(err, retryBtn);
+      moreWrap.insertBefore(errorBox, sentinel);
     };
 
     const loadPage = () => {
@@ -6177,6 +6262,7 @@
         totalCount: true
       }).then(async (resp) => {
         loading = false;
+        loadingMore = false;
         totalCount = Number(resp.totalCount || 0);
         const records = resp.records || [];
 
@@ -6193,7 +6279,7 @@
         }
 
         if (offset === 0 && !records.length) {
-          moreWrap.textContent = '';
+          setSentinelVisible(false);
           const empty = document.createElement('div');
           empty.className = 'pb-gallery-empty';
           empty.textContent = 'レコードがありません。';
@@ -6221,7 +6307,8 @@
           grid.appendChild(buildCard(record, thumbUrlMap));
         });
         offset += records.length;
-        renderMoreButton();
+        setSentinelVisible(offset < totalCount);
+        maybeLoadMore();
       }).catch((error) => {
         loading = false;
         console.warn('[pb] 図面ギャラリーの取得に失敗しました', error);
