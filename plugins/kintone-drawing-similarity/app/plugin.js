@@ -8,6 +8,18 @@
   // kintoneのサブドメインをそのままテナントIDとして使う。保存値に頼るとドメインとズレる恐れがあるため毎回ここで算出する。
   const deriveTenantId = () => (window.location.hostname || '').split('.')[0] || 'default';
 
+  // ヘッダーボタン群をこのビューに表示するか。既定（buttonViewMode未設定/'all'）は
+  // 従来どおり全ビューに表示する。'selected' のときは buttonViewIds に含まれる
+  // ビューだけに表示する。
+  const shouldShowListButtons = (config, viewId) => {
+    const mode = config.buttonViewMode || 'all';
+    if (mode !== 'selected') {
+      return true;
+    }
+    const ids = String(config.buttonViewIds || '').split(',').map((s) => s.trim()).filter(Boolean);
+    return ids.some((id) => id === String(viewId));
+  };
+
   const getFieldValue = (record, fieldCode) => {
     if (!fieldCode || !record[fieldCode]) {
       return '';
@@ -6346,6 +6358,19 @@
     }
     if (galleryEl && !galleryEl.dataset.pbRendered) {
       renderDrawingGallery(config, apiBaseUrl, galleryEl);
+    }
+
+    // ヘッダーボタン群（図面登録・図面検索・管理）をこのビューに表示するかどうかの判定。
+    // 表示対象外のビューでは、ビュー切替でヘッダーDOMが使い回されて残った古い
+    // #pb-list-btns があれば取り除いたうえでボタン設置をスキップする
+    // （ギャラリーの描画はこの判定の影響を受けないため、ギャラリービューでボタンだけ
+    // 非表示にする、という組み合わせも可能）。
+    if (!shouldShowListButtons(config, event.viewId)) {
+      const staleGroup = document.getElementById('pb-list-btns');
+      if (staleGroup) {
+        staleGroup.remove();
+      }
+      return event;
     }
 
     if (document.getElementById('pb-list-btns')) {

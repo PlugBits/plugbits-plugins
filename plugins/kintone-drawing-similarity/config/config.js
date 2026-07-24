@@ -178,55 +178,119 @@
       window.alert('フィールド一覧の取得に失敗しました。アプリの設定を確認してください。');
     });
 
+  // ビュー一覧種別のラベル（ボタン表示ビューのチェックボックスリストで使う）。
+  const VIEW_TYPE_LABELS = { LIST: '一覧', CUSTOM: 'カスタマイズ', CALENDAR: 'カレンダー' };
+
+  // ヘッダーボタン（図面登録・図面検索・管理）を表示するビューを選ぶUI。
+  const buttonViewModeAllEl = getElement('buttonViewModeAll');
+  const buttonViewModeSelectedEl = getElement('buttonViewModeSelected');
+  const buttonViewListWrapEl = getElement('buttonViewListWrap');
+  const buttonViewListEl = getElement('buttonViewList');
+  const buttonViewErrorEl = getElement('buttonViewError');
+  const savedButtonViewIds = String(config.buttonViewIds || '').split(',').map((s) => s.trim()).filter(Boolean);
+
+  const applyButtonViewMode = (mode) => {
+    if (buttonViewListWrapEl) {
+      buttonViewListWrapEl.hidden = mode !== 'selected';
+    }
+  };
+
+  if (buttonViewModeAllEl && buttonViewModeSelectedEl) {
+    const savedButtonViewMode = config.buttonViewMode === 'selected' ? 'selected' : 'all';
+    buttonViewModeAllEl.checked = savedButtonViewMode === 'all';
+    buttonViewModeSelectedEl.checked = savedButtonViewMode === 'selected';
+    applyButtonViewMode(savedButtonViewMode);
+
+    buttonViewModeAllEl.addEventListener('change', () => applyButtonViewMode('all'));
+    buttonViewModeSelectedEl.addEventListener('change', () => applyButtonViewMode('selected'));
+  }
+
+  const populateButtonViewList = (allViews) => {
+    if (!buttonViewListEl) return;
+    buttonViewListEl.innerHTML = '';
+    allViews.forEach((view) => {
+      const label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:6px;font-weight:400;font-size:13px;color:#0f172a;margin-top:6px;';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = 'pb-button-view-checkbox';
+      checkbox.value = view.id;
+      checkbox.checked = savedButtonViewIds.includes(String(view.id));
+      label.appendChild(checkbox);
+      label.appendChild(document.createTextNode(view.name + '（' + (VIEW_TYPE_LABELS[view.type] || view.type) + '）'));
+      buttonViewListEl.appendChild(label);
+    });
+  };
+
   // 図面ギャラリー: 一覧のカスタマイズビュー（表示形式「カスタマイズ」＝type === 'CUSTOM'）
   // を取得し、ドロップダウンに列挙する。ここで選ばれたビューは、plugin.js側で
   // app.record.index.show の event.viewId と照合して自動でギャラリーを描画する
   //（ビューのHTML編集は不要）。
+  // 同じ /k/v1/app/views の取得結果を、下のボタン表示ビュー選択（全ビュー種別を列挙）
+  // でも共用する。APIは1回だけ呼び出す。
   const galleryViewSelectEl = getElement('galleryViewId');
-  if (galleryViewSelectEl) {
+  if (galleryViewSelectEl || buttonViewListEl) {
     kintone.api(kintone.api.url('/k/v1/app/views', true), 'GET', { app: kintone.app.getId() })
       .then((resp) => {
         const views = resp.views || {};
-        const customViews = Object.keys(views)
+        const allViews = Object.keys(views)
           .map((key) => views[key])
-          .filter((view) => view.type === 'CUSTOM')
           .sort((a, b) => Number(a.index) - Number(b.index));
 
-        galleryViewSelectEl.innerHTML = '';
+        if (galleryViewSelectEl) {
+          const customViews = allViews.filter((view) => view.type === 'CUSTOM');
 
-        const noneOption = document.createElement('option');
-        noneOption.value = '';
-        noneOption.textContent = '使用しない';
-        galleryViewSelectEl.appendChild(noneOption);
+          galleryViewSelectEl.innerHTML = '';
 
-        customViews.forEach((view) => {
-          const option = document.createElement('option');
-          option.value = view.id;
-          option.textContent = view.name;
-          galleryViewSelectEl.appendChild(option);
-        });
+          const noneOption = document.createElement('option');
+          noneOption.value = '';
+          noneOption.textContent = '使用しない';
+          galleryViewSelectEl.appendChild(noneOption);
 
-        // 保存済みのビューが一覧に無い（削除された等）場合は、選択状態を保てるよう
-        // 無効な項目として追加しておく（勝手に空選択へ戻して意図せず設定を失わせない）。
-        const savedGalleryViewId = config.galleryViewId || '';
-        const savedExists = customViews.some((view) => String(view.id) === String(savedGalleryViewId));
-        if (savedGalleryViewId && !savedExists) {
-          const missingOption = document.createElement('option');
-          missingOption.value = savedGalleryViewId;
-          missingOption.textContent = '（削除されたビュー: ' + savedGalleryViewId + '）';
-          galleryViewSelectEl.appendChild(missingOption);
+          customViews.forEach((view) => {
+            const option = document.createElement('option');
+            option.value = view.id;
+            option.textContent = view.name;
+            galleryViewSelectEl.appendChild(option);
+          });
+
+          // 保存済みのビューが一覧に無い（削除された等）場合は、選択状態を保てるよう
+          // 無効な項目として追加しておく（勝手に空選択へ戻して意図せず設定を失わせない）。
+          const savedGalleryViewId = config.galleryViewId || '';
+          const savedExists = customViews.some((view) => String(view.id) === String(savedGalleryViewId));
+          if (savedGalleryViewId && !savedExists) {
+            const missingOption = document.createElement('option');
+            missingOption.value = savedGalleryViewId;
+            missingOption.textContent = '（削除されたビュー: ' + savedGalleryViewId + '）';
+            galleryViewSelectEl.appendChild(missingOption);
+          }
+
+          galleryViewSelectEl.value = savedGalleryViewId;
+          galleryViewSelectEl.disabled = customViews.length === 0;
         }
 
-        galleryViewSelectEl.value = savedGalleryViewId;
-        galleryViewSelectEl.disabled = customViews.length === 0;
+        populateButtonViewList(allViews);
       })
       .catch(() => {
-        galleryViewSelectEl.innerHTML = '';
-        const errOption = document.createElement('option');
-        errOption.value = config.galleryViewId || '';
-        errOption.textContent = 'ビュー一覧を取得できませんでした';
-        galleryViewSelectEl.appendChild(errOption);
-        galleryViewSelectEl.disabled = true;
+        if (galleryViewSelectEl) {
+          galleryViewSelectEl.innerHTML = '';
+          const errOption = document.createElement('option');
+          errOption.value = config.galleryViewId || '';
+          errOption.textContent = 'ビュー一覧を取得できませんでした';
+          galleryViewSelectEl.appendChild(errOption);
+          galleryViewSelectEl.disabled = true;
+        }
+        // ビュー一覧が取得できないと「選択した一覧のみ表示」を正しく設定できないため、
+        // モードを「すべての一覧に表示」に固定し、選択不可にして案内を表示する。
+        if (buttonViewModeAllEl && buttonViewModeSelectedEl) {
+          buttonViewModeAllEl.checked = true;
+          buttonViewModeSelectedEl.checked = false;
+          buttonViewModeSelectedEl.disabled = true;
+          applyButtonViewMode('all');
+        }
+        if (buttonViewErrorEl) {
+          buttonViewErrorEl.hidden = false;
+        }
       });
   }
 
@@ -245,6 +309,20 @@
 
     // 図面ギャラリーに使うビューID。取得失敗時はエラーオプションの値（＝既存設定を維持）が入る。
     nextConfig.galleryViewId = getElement('galleryViewId') ? (getElement('galleryViewId').value || '') : (config.galleryViewId || '');
+
+    // ヘッダーボタン（図面登録・図面検索・管理）を表示するビュー。
+    // 未設定/'all'は従来どおり全ビュー表示、'selected'は選んだビューのみ表示。
+    nextConfig.buttonViewMode = (getElement('buttonViewModeSelected') && getElement('buttonViewModeSelected').checked) ? 'selected' : 'all';
+    // ビュー一覧の取得に失敗してチェックボックスが1件も生成されていない場合は、
+    // 既存設定を維持する（未取得の空リストで上書きして設定を失わせないため）。
+    const buttonViewCheckboxes = buttonViewListEl ? buttonViewListEl.querySelectorAll('input[type="checkbox"]') : [];
+    if (buttonViewCheckboxes.length) {
+      nextConfig.buttonViewIds = Array.prototype.filter.call(buttonViewCheckboxes, (el) => el.checked)
+        .map((el) => el.value)
+        .join(',');
+    } else {
+      nextConfig.buttonViewIds = config.buttonViewIds || '';
+    }
     // 復号鍵は既存の値をまず引き継ぐ（fields配列に含めていないため、明示的にコピーしないと
     // 保存のたびに失われてしまう）。チェックONで、かつ未生成の場合のみ新規生成する。
     // 一度生成した鍵はチェックOFFにしても削除しない
