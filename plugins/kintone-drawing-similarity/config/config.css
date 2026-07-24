@@ -186,6 +186,28 @@
   border-color: #d7dee8;
 }
 
+/* ラジオ・チェックボックスには上のテキスト入力用装飾（幅100%・min-height・
+   appearance:none 等）を当てない。当たると中身のない巨大な枠として描画される。 */
+.pb-field input[type="radio"],
+.pb-field input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  appearance: auto;
+  accent-color: #2563eb;
+  flex: 0 0 auto;
+}
+
+.pb-field input[type="radio"]:focus,
+.pb-field input[type="checkbox"]:focus {
+  box-shadow: none;
+  outline: 2px solid rgba(37, 99, 235, 0.5);
+  outline-offset: 1px;
+}
+
 /* --- Connection test --- */
 .pb-test-row {
   display: flex;
