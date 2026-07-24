@@ -187,6 +187,15 @@
         <select id="galleryViewId"></select>
         <div class="pb-hint" style="margin-top: -2px;">図面サムネイルのギャラリーとして使うビューを選択します。アプリ設定の「一覧」で表示形式「カスタマイズ」のビューを作成（HTMLは空のままでOK、ページネーションはオフ推奨）してアプリを更新すると、ここに表示されます。</div>
       </label>
+
+      <label class="pb-field" style="margin-top: 14px;">
+        <span>図面クリック時の開き方</span>
+        <select id="galleryOpenMode">
+          <option value="newtab">新しいタブで開く（既定）</option>
+          <option value="same">同じタブで開く</option>
+        </select>
+        <div class="pb-hint" style="margin-top: -2px;">ギャラリーの図面をクリックしたときのレコード詳細の開き方です。「同じタブで開く」にすると、戻ったときにギャラリーの読み込みが最初からやり直しになります。</div>
+      </label>
     </div>
   </div>
 

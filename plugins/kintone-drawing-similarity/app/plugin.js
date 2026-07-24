@@ -5846,7 +5846,14 @@
       card.addEventListener('click', () => {
         // 一覧URL（/k/123/ やゲストスペースの /g/1/123/ 等）からの相対で遷移するため、
         // ドメイン・スペース構成に関わらず壊れない。
-        location.href = location.pathname + 'show#record=' + recordId;
+        const recordUrl = location.pathname + 'show#record=' + recordId;
+        // 既定は新しいタブで開く（同じタブで開くとギャラリーの先読みが毎回やり直しに
+        // なるため）。プラグイン設定 galleryOpenMode='same' で同じタブ遷移に変更できる。
+        if (config.galleryOpenMode === 'same') {
+          location.href = recordUrl;
+        } else {
+          window.open(recordUrl, '_blank', 'noopener');
+        }
       });
 
       const file = getFirstFile(record, config.pdfFileField);
