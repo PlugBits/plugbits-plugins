@@ -3219,6 +3219,19 @@ const server = createServer(async (request, response) => {
           queryVectorSource = 'uploaded-pdf';
         }
 
+        // ベクトル未取得（未登録レコード）かつ pdf_base64 も無く fileKey フォールバックに
+        // 進む場合、kintone環境（KINTONE_BASE_URL/KINTONE_API_TOKEN）が未設定だと
+        // 後続の loadRecordImage → fetchKintoneFile → assertKintoneConfig で501が飛び、
+        // プラグイン側には「原因不明のAPIエラー」としてしか見えない。これは実際には
+        // 「まだ検索インデックスに登録されていないレコード」という別種の状況なので、
+        // プラグインが機械判定して図面から直接検索するフォールバックに回せるよう、
+        // code付きの404で明示する。kintone環境が設定されているレガシー構成では
+        // 従来どおり下のfileKeyフォールバックが動く（このif自体を通らない）。
+        if (!vector && body.fileKey && (!kintoneBaseUrl || !kintoneApiToken)) {
+          sendJson(response, 404, { error: 'record not indexed yet', code: 'not_indexed' });
+          return;
+        }
+
         if (!vector && body.fileKey) {
           const { pngBuffer } = await loadRecordImage(body);
           const shape = await buildShapeProfile(pngBuffer);

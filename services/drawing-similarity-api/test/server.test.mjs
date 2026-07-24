@@ -1204,6 +1204,17 @@ test('index: バイナリ直送（octet-stream + x-index-meta）で登録でき�
   assert.equal(stored.payload.tenant_id, 'tenant-nokintone');
 });
 
+test('similar: kintone未設定で未登録recordId+fileKeyは404 not_indexed（生のAPIエラーにしない）', async () => {
+  const res = await postJson(noKintoneApi.url, '/similar', {
+    appId: '9', recordId: 'not-indexed-1', tenantId: 'tenant-nokintone',
+    fileKey: 'file-not-indexed', limit: 10
+  });
+  const text = await res.text();
+  assert.equal(res.status, 404, text);
+  const data = JSON.parse(text);
+  assert.equal(data.code, 'not_indexed', 'プラグインが機械判定できるcodeが必要');
+});
+
 test('index: x-index-meta が壊れていれば400', async () => {
   const res = await fetch(noKintoneApi.url + '/index', {
     method: 'POST',

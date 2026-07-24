@@ -4879,7 +4879,11 @@
   };
 
   // 検索実行（進行表示・エラー日本語化・再試行を共通化）
-  const runSimilarSearch = ({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl }) => {
+  // fallbackAttempted: 「未登録レコード→図面直接検索」への自動フォールバックを既に
+  // 1回試みたかどうか。再実行時は必ず true を渡し、無限ループを防ぐ（もっとも、
+  // フォールバック後のpayloadにはfileKeyを含めないため下のnot_indexed分岐自体に
+  // 再突入しない＝二重のガードになっている）。
+  const runSimilarSearch = ({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl, fallbackAttempted }) => {
     listEl.textContent = '';
     confidenceEl.hidden = true;
     const stopStatus = showSearchingStatus(statusEl);
@@ -4892,9 +4896,15 @@
       .then(async (response) => {
         if (!response.ok) {
           let detail = '';
-          try { detail = (await response.json()).error || ''; } catch (_) {}
+          let code = '';
+          try {
+            const errJson = await response.json();
+            detail = errJson.error || '';
+            code = errJson.code || '';
+          } catch (_) {}
           const error = new Error(describeApiError(response.status, detail));
           error.handled = true;
+          error.code = code;
           throw error;
         }
         return response.json();
@@ -4946,6 +4956,50 @@
       })
       .catch((error) => {
         stopStatus();
+
+        // まだ検索インデックスに登録されていないレコード（サーバーがkintone認証情報
+        // レス運用でfileKeyフォールバックできず404を返したケース）。詳細画面からの
+        // 検索はブラウザ側にkintoneセッションがあるので、プラグイン側でPDF/TIFを
+        // 取得してpdf_base64として送り直せば検索できる。エラー表示にはせず自動で
+        // 1回だけ切り替える。
+        if (error.code === 'not_indexed' && payload.fileKey && !fallbackAttempted) {
+          statusEl.innerHTML = '';
+          const spinner = document.createElement('div');
+          spinner.className = 'pb-spinner';
+          const text = document.createElement('span');
+          text.textContent = '検索登録が未完了のため、図面から直接検索しています...';
+          statusEl.append(spinner, text);
+
+          downloadKintoneFile(payload.fileKey)
+            .then((blob) => toBase64(blob))
+            .then((pdfBase64) => {
+              // fileKeyを含めない新しいpayloadで再実行する（=この分岐に二度と入らない）。
+              const fallbackPayload = { ...payload, pdf_base64: pdfBase64 };
+              delete fallbackPayload.fileKey;
+              runSimilarSearch({
+                apiBaseUrl, config, payload: fallbackPayload, statusEl, confidenceEl,
+                listEl, onData, emptyActions, trackObjectUrl, fallbackAttempted: true
+              });
+            })
+            .catch((dlError) => {
+              const message = describeApiError(0, dlError.message);
+              listEl.textContent = '';
+              const errBox = document.createElement('div');
+              errBox.className = 'sim-note';
+              errBox.textContent = '⚠ ' + message;
+              const retryBtn = document.createElement('button');
+              retryBtn.type = 'button';
+              retryBtn.className = 'btn-secondary';
+              retryBtn.textContent = '再試行';
+              retryBtn.style.cssText = 'margin-top:4px;';
+              retryBtn.addEventListener('click', () => {
+                runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl });
+              });
+              listEl.append(errBox, retryBtn);
+            });
+          return;
+        }
+
         const message = error.handled ? error.message : describeApiError(0, error.message);
         listEl.textContent = '';
         const errBox = document.createElement('div');
@@ -6144,11 +6198,32 @@
       updateCountAndClear();
     };
 
-    // サーバーページングモードからクライアント内モードへの切り替え。実装を単純に保つため、
-    // 表示中の内容は維持せず先頭から再描画する（ちらつきは生じるが先読み完了は一度きりのため許容）。
+    // サーバーページングモードからクライアント内モードへの切り替え。
+    // 先読み完了時はグリッドを描き直さず、サーバーページングで表示済みのカードを
+    // そのまま引き継ぐ（クリア→再描画によるちらつきを防止する）。この時点で絞り込み・
+    // 検索は必ず未設定（準備完了までsearchInput/sortSelectはdisabled＝updatePanelState参照）
+    // であり、表示順も既定の「新しい順」＝サーバーページングと同じ $id desc（indexItemsは
+    // その順で先読みしている）なので、filteredItems（=indexItems全件）の先頭 clientOffset
+    // 件は表示済みカードと一致する。
+    //
+    // clientOffsetはサーバーページング側の「offset」変数からではなく、実際にグリッドへ
+    // 描画済みのカード枚数（grid.children.length）から求める。gridにはbuildCard()が
+    // 生成したカードしか入らない（空状態メッセージ等はcontent側に別途挿入される）ため、
+    // これは常に「今画面にあるカードの枚数」と正確に一致する。
+    // 補足（in-flightのloadPageとの競合について）: loadPage()はレスポンス受信直後・
+    // サムネイル取得(await)完了前にloading/loadingMoreフラグを倒すため、この切り替えが
+    // その僅かな窓に割り込むケースがある。ただしloadPage側はカードのDOM追加とoffset変数
+    // の更新を同じ同期区間（間にawaitを挟まない）で行い、かつ前後2箇所に
+    // 「if (clientMode) return」ガードがあるため、そのケースでも実際にはoffset変数と
+    // grid.children.lengthは常に一致する。とはいえその一致はloadPage内部の実装詳細に
+    // 依存しており将来の変更で崩れうるため、より頑健な「実カード数」の方を採用する。
     const switchToClientMode = () => {
       clientMode = true;
-      applyFilters();
+      filteredItems = sortItems(indexItems.filter(matchesFilters)); // = indexItems（無フィルタ・既定ソート）
+      clientOffset = grid.children.length; // 表示済みカード数を引き継ぐ
+      loadingMore = false; // renderClientPageを経由しないため明示的にリセットしておく
+      setSentinelVisible(clientOffset < filteredItems.length);
+      updateCountAndClear();
     };
 
     const onIndexReady = () => {
