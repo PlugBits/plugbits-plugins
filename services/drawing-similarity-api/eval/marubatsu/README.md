@@ -1,0 +1,130 @@
+# マルバツ判定ゲーム — 精度検証ツール一式
+
+drawing-similarity API の検索精度を、ブラインドの○×判定だけで検証するためのツール。
+ルール・問題構成・集計ルールの正典は次の2ファイル（**必ず先に読むこと**）:
+
+- `../../精度検証_マルバツ判定ルール.md`
+- `../../精度検証計画_モニター5000枚.md`
+
+このディレクトリには依存パッケージの追加は一切ない（Node.js コア機能のみで完結する）。
+
+## 構成
+
+| ファイル | 役割 |
+|---|---|
+| `lib.js` | 純粋ロジック（PRNG・抽選・シャッフル・再出題織り込み・集計計算・ブートストラップ・CSV化）。API/ファイルIOに依存しない |
+| `generate-set.js` | 出題セット生成スクリプト（CLI） |
+| `judge.html` | ○×判定ページ（ブラウザで開く。vanilla JS、1ファイル完結） |
+| `serve.js` | `judge.html` と `out/` を配信する最小限の静的サーバー |
+| `aggregate.js` | 判定結果の集計スクリプト（CLI） |
+| `out/` | 生成物置き場（gitignore対象。trials.json・サムネイル・レポート等） |
+
+対応するユニットテスト: `../../test/marubatsu.test.mjs`（`lib.js` の計算ロジックを検証。API呼び出しは含まない）
+
+```
+node --test services/drawing-similarity-api/test/marubatsu.test.mjs
+```
+
+## 使い方（生成 → 配信 → 判定 → 集計）
+
+### 0. 事前準備
+
+- drawing-similarity API が起動しており、対象テナントの図面が `/index` で登録済みであること
+- 環境変数（`generate-set.js` 実行時に必要）:
+
+  | 変数 | 説明 | 既定値 |
+  |---|---|---|
+  | `API_BASE_URL` | drawing-similarity API のURL | `http://localhost:8080` |
+  | `TENANT_ID` | 対象テナントID | `default` |
+  | `API_KEY` | `X-API-Key`（テナント認証が有効な場合のみ必要） | (なし) |
+  | `KINTONE_BASE_URL` | kintoneサブドメインのURL（サムネイル取得に必須） | (なし・必須) |
+  | `KINTONE_API_TOKEN` | kintone REST APIトークン（サムネイル取得に必須） | (なし・必須) |
+
+### 1. 出題セット生成
+
+```bash
+API_BASE_URL=https://your-api.example.com \
+TENANT_ID=monitor-corp \
+KINTONE_BASE_URL=https://your-domain.cybozu.com \
+KINTONE_API_TOKEN=xxxx \
+node eval/marubatsu/generate-set.js --seed 20260725 --queries 100 --top 5
+```
+
+主なCLI引数:
+
+- `--seed <整数>` **必須**。再現性のため必ず記録する（LP脚注や社内レポートにも残す）
+- `--queries <N>` クエリ数（既定100）
+- `--top <k>` クエリごとのシステム候補件数（既定5）
+- `--split <label>` 任意ラベル（`dev` / `test` 等。trials.json内の各trialに記録される）
+- `--out <dir>` 出力先（既定 `eval/marubatsu/out`）
+
+生成されるもの:
+
+- `out/trials.json` — 出題（システム候補＋ランダム候補＋再出題、シャッフル済み）。判定ページに表示しないメタデータ（source・rank・score・scoreBreakdown・vectorRaw等）も含めて全部残す（改善分析に使うため）
+- `out/manifest.json` — 生成サマリ（クエリ数・trial数・除外数・seed等）
+- `out/thumbs/<recordId>.png` — サムネイルキャッシュ（既存キャッシュはスキップされる。再実行しても壊れない）
+
+途中でエラーが出ても、既に生成済みのサムネイルは `out/thumbs/` に残るため、再実行すれば続きから進む。
+
+### 2. 判定ページの配信
+
+```bash
+node eval/marubatsu/serve.js
+# → http://localhost:8090/judge.html を判定者に開いてもらう
+```
+
+`PORT` 環境変数でポートを変更できる（既定 8090）。`judge.html` は同じディレクトリ内の `out/trials.json` と `out/thumbs/` を `fetch` で読むだけなので、判定者のPCとAPIサーバーとの直接通信は発生しない（配信元のマシン上で完結する）。
+
+### 3. 判定
+
+判定者に名前を入力してもらい開始。1画面1ペア（左=クエリ図面・右=候補図面）で ○/×/？ を判定する。
+
+- ○（参考になる）: ボタン or **←キー**
+- ×（参考にならない）: ボタン or **→キー**
+- ？（判定不能。図面が読めない場合のみ）: ボタンをクリック（誤操作防止のためホットキーは割り当てていない）
+- 取り消し（直前の1問のみ）: ボタン or **U キー**
+- 画像はクリックで拡大表示
+
+進捗は `localStorage` に逐次保存されるため、途中でブラウザを閉じても同じ名前で再開できる（出題データが変わった場合は警告して確認する）。100問ごとに休憩画面を挟む。
+
+判定結果は「結果をダウンロード」ボタン（判定中・完了後どちらでも押せる）で `judgments-<判定者名>-<日時>.json` としてダウンロードされる。
+
+**主判定者・副判定者の両方に判定してもらう場合**、副判定者は全体の約20%を重複判定する運用を想定している（ルール文書参照）。両者とも同じ `out/trials.json` を使って判定すること。
+
+### 4. 集計
+
+```bash
+node eval/marubatsu/aggregate.js \
+  --trials eval/marubatsu/out/trials.json \
+  --judgments ~/Downloads/judgments-主判定者-20260725-101500.json \
+  --judgments ~/Downloads/judgments-副判定者-20260725-103000.json \
+  --out eval/marubatsu/out
+```
+
+- `--judgments` は複数指定できる。**1つ目に指定したファイルが「主判定者」として扱われ**、Precision@k・有用率@5・ランダム対比・再出題一致率の計算に使われる。2つ目以降は判定者間一致率の計算にのみ使う
+- `--bootstrap-seed <整数>`（既定42）: クエリ単位ブートストラップ信頼区間の乱数seed。指定しなければ毎回同じ値で再現可能
+
+出力:
+
+- 標準出力にレポート（Precision@1/@3/@5、有用率@5、ランダム候補○率、95%信頼区間、再出題一致率、判定者間一致率、品質ゲート警告）
+- `out/report.json` — 上記を全部JSONで
+- `out/failures.csv` — **改善分析の主要な成果物**。system候補で×またはskipだった候補を rank昇順・score降順で列挙（vectorRaw・scoreBreakdown内訳付き）。「検索で上位に出したのに参考にならなかった」候補＝スコアリング改善のインプット
+- `out/random_hits.csv` — ○だったのにランダム候補だったもの（検索が拾えていない類似の可能性がある参考リスト）
+
+品質ゲート（ルール文書より）: 再判定一致率が90%未満、または判定者間一致率が低い場合、集計スクリプトが警告を出す。その場合はキャリブレーションからやり直し、その回の数字は公表しないこと。
+
+## dev / test 分割の運用（精度検証計画 Step 4）
+
+チューニング（`EMBED_IMAGE_MODE` や `SCORE_*` 等の変更）を行う場合は、リーク防止のため以下の順で2ラウンドに分ける:
+
+1. `--split dev` で dev用クエリ50件を生成 → 判定 → `aggregate.js` で dev の数字を見ながらチューニング
+2. 設定を凍結する（`EMBEDDING_PROVIDER` 等を固定し記録）
+3. 設定凍結後の状態で **改めて** `--split test` で test用クエリ50件を生成（凍結後の設定で検索順位を出し直す必要があるため、dev生成時のtrials.jsonを使い回してはいけない）→ 判定 → 集計
+4. LPに載せるのは test 側の数字だけ
+
+`--out` は既定で同じ `eval/marubatsu/out` を指すため、dev と test を両方残したい場合は `--out eval/marubatsu/out/dev` ・ `--out eval/marubatsu/out/test` のように別ディレクトリを指定する（`serve.js` は自身と同じディレクトリの `out/` しか配信しないため、判定ラウンドごとに該当ディレクトリを `eval/marubatsu/out` にコピー/リネームしてから `serve.js` を起動するとよい）。チューニング不要と判断した場合は分割せず100件全体を一括で報告値にしてよい（計画書 Step 4-4）。
+
+## 設計上の判断（補足）
+
+- **サムネイル取得経路**: `generate-set.js` は drawing-similarity API サーバーを経由せず、kintone REST API（`/k/v1/file.json?fileKey=`）を直接叩いてPDFを取得する。PNG化だけは既存の `POST /render-thumbnail`（状態を持たない変換専用エンドポイント）を再利用する。これにより検証ツールが本番APIサーバーのkintone接続設定に依存しない一方、PDFレンダリングロジックの二重実装は避けている
+- **アーカイブ図面の扱い**: `/index-status` はそもそも `doc_type=archive` のポイントを含まない（孤児検知の都合上サーバー側で除外されている）ため、出題プール（クエリ・ランダム候補の抽出元）には元々アーカイブが混ざらない。一方 `/similar` の検索結果には同一コレクション内のアーカイブ点が候補として混ざりうる（`docType==='archive'` で `fileKey` が空になる）。`generate-set.js` はこの候補を警告付きで除外し、除外件数を集計ログと `manifest.json` に残す（サイレントに削らない）

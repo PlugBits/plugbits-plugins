@@ -1,0 +1,571 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>マルバツ判定ゲーム</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f4f5f7;
+    --panel: #ffffff;
+    --text: #1f2430;
+    --muted: #6b7280;
+    --border: #d9dce1;
+    --o-color: #1a7f37;
+    --x-color: #c0392b;
+    --skip-color: #7a7a7a;
+    --accent: #2563eb;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  header.topbar {
+    width: 100%;
+    background: #fff8e1;
+    border-bottom: 1px solid #eadb9a;
+    padding: 6px 12px;
+    text-align: center;
+    font-size: 13px;
+    color: #6b5900;
+  }
+  main {
+    width: 100%;
+    max-width: 960px;
+    padding: 16px;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  .screen { width: 100%; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    max-width: 480px;
+    margin: 40px auto;
+  }
+  .card h1 { font-size: 18px; margin-top: 0; }
+  label { display: block; font-size: 14px; margin-bottom: 6px; color: var(--muted); }
+  input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    font-size: 15px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin-bottom: 14px;
+  }
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 8px;
+    padding: 10px 18px;
+    font-size: 14px;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-secondary { background: #e5e7eb; color: #333; }
+  .error-box { color: var(--x-color); font-size: 13px; margin-top: 8px; white-space: pre-wrap; }
+
+  .progress-wrap {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 14px;
+  }
+  .progress-bar {
+    flex: 1;
+    height: 8px;
+    background: #e5e7eb;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .progress-bar > div {
+    height: 100%;
+    background: var(--accent);
+    transition: width 0.15s ease;
+  }
+  .progress-label { font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .download-mini {
+    font-size: 12px;
+    color: var(--accent);
+    background: none;
+    border: none;
+    text-decoration: underline;
+    padding: 0;
+  }
+
+  .pair {
+    display: flex;
+    gap: 16px;
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+  .pane {
+    flex: 1;
+    min-width: 260px;
+    max-width: 440px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    text-align: center;
+  }
+  .pane h2 { font-size: 14px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .pane img {
+    max-width: 100%;
+    max-height: 60vh;
+    cursor: zoom-in;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #fff;
+  }
+  .pane .missing {
+    padding: 40px 8px;
+    color: var(--muted);
+    font-size: 13px;
+    border: 1px dashed var(--border);
+    border-radius: 6px;
+  }
+
+  .controls {
+    margin-top: 20px;
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+  .judge-btn {
+    font-size: 22px;
+    font-weight: 700;
+    padding: 16px 34px;
+    border-radius: 12px;
+    color: #fff;
+    min-width: 110px;
+  }
+  .judge-btn.o { background: var(--o-color); }
+  .judge-btn.x { background: var(--x-color); }
+  .judge-btn.skip {
+    background: #fff;
+    color: var(--skip-color);
+    border: 1px solid var(--border);
+    font-size: 16px;
+    font-weight: 500;
+    align-self: center;
+  }
+  .undo-btn {
+    background: #fff;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    font-size: 13px;
+    align-self: center;
+  }
+  .undo-btn:disabled { opacity: 0.4; cursor: default; }
+
+  .key-legend {
+    text-align: center;
+    color: var(--muted);
+    font-size: 12px;
+    margin-top: 10px;
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.75);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 50;
+    cursor: zoom-out;
+  }
+  .modal-overlay img {
+    max-width: 94vw;
+    max-height: 94vh;
+    background: #fff;
+    border-radius: 4px;
+  }
+  .hidden { display: none !important; }
+
+  .summary-list { font-size: 15px; line-height: 1.9; }
+  .summary-list b { font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+
+<header class="topbar">迷ったら × 。相談・調べ物はせず、直感で判定してください。</header>
+
+<main>
+
+  <!-- 開始画面 -->
+  <section id="screen-start" class="screen">
+    <div class="card">
+      <h1>マルバツ判定ゲーム</h1>
+      <label for="judger-name">判定者名</label>
+      <input type="text" id="judger-name" placeholder="例: 山田太郎" autocomplete="off">
+      <div id="resume-note" class="error-box hidden"></div>
+      <button class="btn-primary" id="btn-start">開始 / 再開</button>
+      <p style="font-size:12px;color:var(--muted);margin-top:16px;">
+        「クエリ図面の仕事をするとき、この候補図面を開いて参照する価値があるか」だけを判定してください。<br>
+        ○＝参考になる　×＝参考にならない　？＝図面が読めない（判定不能。5%未満を目安に）
+      </p>
+    </div>
+  </section>
+
+  <!-- 判定画面 -->
+  <section id="screen-judge" class="screen hidden">
+    <div class="progress-wrap">
+      <div class="progress-label" id="progress-label">0 / 0</div>
+      <div class="progress-bar"><div id="progress-fill" style="width:0%"></div></div>
+      <button class="download-mini" id="btn-download-mid">結果をダウンロード</button>
+    </div>
+
+    <div class="pair">
+      <div class="pane">
+        <h2>クエリ図面</h2>
+        <div id="query-img-wrap"></div>
+      </div>
+      <div class="pane">
+        <h2>候補図面</h2>
+        <div id="candidate-img-wrap"></div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="judge-btn o" id="btn-o">○</button>
+      <button class="judge-btn x" id="btn-x">×</button>
+      <button class="judge-btn skip" id="btn-skip">？（判定不能）</button>
+      <button class="undo-btn" id="btn-undo" disabled>取り消し (U)</button>
+    </div>
+    <div class="key-legend">○: ←キー　　×: →キー　　？: クリックのみ　　取り消し: Uキー（直前の1問のみ）</div>
+  </section>
+
+  <!-- 休憩画面 -->
+  <section id="screen-break" class="screen hidden">
+    <div class="card">
+      <h1>休憩</h1>
+      <p id="break-text"></p>
+      <button class="btn-primary" id="btn-continue">続ける</button>
+    </div>
+  </section>
+
+  <!-- 完了画面 -->
+  <section id="screen-done" class="screen hidden">
+    <div class="card">
+      <h1>お疲れさまでした</h1>
+      <div class="summary-list" id="done-summary"></div>
+      <button class="btn-primary" id="btn-download-final" style="margin-top:16px;">結果をダウンロード</button>
+    </div>
+  </section>
+
+</main>
+
+<div id="modal-overlay" class="modal-overlay hidden">
+  <img id="modal-img" src="" alt="拡大画像">
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  var SESSION_SIZE = 100;
+  var STORAGE_PREFIX = 'marubatsu:progress:v1:';
+
+  var state = {
+    trials: [],
+    judgerName: '',
+    judgedMap: {},       // trialId -> { judgment, judgedAt, elapsedMs }
+    currentIndex: 0,
+    lastJudgedTrialId: null,
+    trialShownAt: 0
+  };
+
+  var el = {};
+  ['screen-start','screen-judge','screen-break','screen-done',
+   'judger-name','resume-note','btn-start',
+   'progress-label','progress-fill','btn-download-mid',
+   'query-img-wrap','candidate-img-wrap',
+   'btn-o','btn-x','btn-skip','btn-undo',
+   'break-text','btn-continue',
+   'done-summary','btn-download-final',
+   'modal-overlay','modal-img'
+  ].forEach(function (id) { el[id] = document.getElementById(id); });
+
+  function showScreen(name) {
+    ['screen-start','screen-judge','screen-break','screen-done'].forEach(function (id) {
+      el[id].classList.toggle('hidden', id !== name);
+    });
+  }
+
+  function storageKey(name) { return STORAGE_PREFIX + name; }
+
+  function fingerprintOf(trials) {
+    return {
+      count: trials.length,
+      firstId: trials.length ? trials[0].trialId : '',
+      lastId: trials.length ? trials[trials.length - 1].trialId : ''
+    };
+  }
+
+  function sameFingerprint(a, b) {
+    return a && b && a.count === b.count && a.firstId === b.firstId && a.lastId === b.lastId;
+  }
+
+  function saveProgress() {
+    var payload = {
+      name: state.judgerName,
+      fingerprint: fingerprintOf(state.trials),
+      judgedMap: state.judgedMap,
+      currentIndex: state.currentIndex
+    };
+    try {
+      localStorage.setItem(storageKey(state.judgerName), JSON.stringify(payload));
+    } catch (e) {
+      console.warn('進捗の保存に失敗しました', e);
+    }
+  }
+
+  function loadProgress(name) {
+    try {
+      var raw = localStorage.getItem(storageKey(name));
+      return raw ? JSON.parse(raw) : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // --- 開始画面 ---
+
+  el['btn-start'].addEventListener('click', function () {
+    var name = el['judger-name'].value.trim();
+    if (!name) {
+      alert('判定者名を入力してください');
+      return;
+    }
+    startFor(name);
+  });
+
+  function startFor(name) {
+    fetch('./out/trials.json').then(function (res) {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return res.json();
+    }).then(function (trials) {
+      if (!Array.isArray(trials) || !trials.length) {
+        throw new Error('trials.json が空です');
+      }
+      state.trials = trials;
+      state.judgerName = name;
+
+      var saved = loadProgress(name);
+      var fp = fingerprintOf(trials);
+      if (saved && sameFingerprint(saved.fingerprint, fp)) {
+        state.judgedMap = saved.judgedMap || {};
+        state.currentIndex = saved.currentIndex || 0;
+      } else if (saved) {
+        var discard = confirm(
+          '以前の進捗データがありますが、出題データが変わっているようです。\n' +
+          '最初からやり直しますか？（OK=最初から / キャンセル=戻る）'
+        );
+        if (!discard) return;
+        state.judgedMap = {};
+        state.currentIndex = 0;
+      } else {
+        state.judgedMap = {};
+        state.currentIndex = 0;
+      }
+      proceed();
+    }).catch(function (e) {
+      el['resume-note'].textContent = 'trials.json の読み込みに失敗しました: ' + e.message +
+        '\n（generate-set.js で出題セットを生成し、serve.js で配信しているか確認してください）';
+      el['resume-note'].classList.remove('hidden');
+    });
+  }
+
+  // --- 進行制御 ---
+
+  function proceed() {
+    if (state.currentIndex >= state.trials.length) {
+      showDone();
+      return;
+    }
+    if (state.currentIndex > 0 && state.currentIndex % SESSION_SIZE === 0) {
+      showBreak();
+      return;
+    }
+    showJudge();
+  }
+
+  function showBreak() {
+    el['break-text'].textContent =
+      'ここまで ' + state.currentIndex + ' / ' + state.trials.length + ' 問が終わりました。休憩してから続けてください。';
+    showScreen('screen-break');
+  }
+
+  el['btn-continue'].addEventListener('click', function () {
+    showJudge();
+  });
+
+  function imgTag(recordId) {
+    var wrap = document.createElement('div');
+    var img = document.createElement('img');
+    img.src = './out/thumbs/' + encodeURIComponent(recordId) + '.png';
+    img.alt = '図面';
+    img.addEventListener('click', function () { openModal(img.src); });
+    img.addEventListener('error', function () {
+      wrap.innerHTML = '<div class="missing">画像が見つかりません</div>';
+    });
+    wrap.appendChild(img);
+    return wrap;
+  }
+
+  function showJudge() {
+    var trial = state.trials[state.currentIndex];
+    el['query-img-wrap'].innerHTML = '';
+    el['candidate-img-wrap'].innerHTML = '';
+    el['query-img-wrap'].appendChild(imgTag(trial.queryRecordId));
+    el['candidate-img-wrap'].appendChild(imgTag(trial.candidateRecordId));
+
+    el['progress-label'].textContent = state.currentIndex + ' / ' + state.trials.length;
+    el['progress-fill'].style.width = Math.round((state.currentIndex / state.trials.length) * 100) + '%';
+
+    el['btn-undo'].disabled = !state.lastJudgedTrialId;
+
+    state.trialShownAt = Date.now();
+    showScreen('screen-judge');
+  }
+
+  function judge(value) {
+    var trial = state.trials[state.currentIndex];
+    if (!trial) return;
+    state.judgedMap[trial.trialId] = {
+      judgment: value,
+      judgedAt: new Date().toISOString(),
+      elapsedMs: Date.now() - state.trialShownAt,
+      queryRecordId: trial.queryRecordId,
+      candidateRecordId: trial.candidateRecordId
+    };
+    state.lastJudgedTrialId = trial.trialId;
+    state.currentIndex += 1;
+    saveProgress();
+    proceed();
+  }
+
+  el['btn-o'].addEventListener('click', function () { judge('o'); });
+  el['btn-x'].addEventListener('click', function () { judge('x'); });
+  el['btn-skip'].addEventListener('click', function () { judge('skip'); });
+
+  el['btn-undo'].addEventListener('click', function () { undo(); });
+
+  function undo() {
+    if (!state.lastJudgedTrialId) return;
+    var idx = state.trials.findIndex(function (t) { return t.trialId === state.lastJudgedTrialId; });
+    if (idx === -1) return;
+    delete state.judgedMap[state.lastJudgedTrialId];
+    state.currentIndex = idx;
+    state.lastJudgedTrialId = null;
+    saveProgress();
+    showJudge();
+  }
+
+  // --- キーボード操作 ---
+  document.addEventListener('keydown', function (e) {
+    if (el['screen-judge'].classList.contains('hidden')) return;
+    if (e.key === 'ArrowLeft') { e.preventDefault(); judge('o'); }
+    else if (e.key === 'ArrowRight') { e.preventDefault(); judge('x'); }
+    else if (e.key === 'u' || e.key === 'U') { e.preventDefault(); undo(); }
+  });
+
+  // --- モーダル拡大表示 ---
+  function openModal(src) {
+    el['modal-img'].src = src;
+    el['modal-overlay'].classList.remove('hidden');
+  }
+  function closeModal() {
+    el['modal-overlay'].classList.add('hidden');
+    el['modal-img'].src = '';
+  }
+  el['modal-overlay'].addEventListener('click', closeModal);
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeModal();
+  });
+
+  // --- 完了画面 ---
+  function showDone() {
+    var values = Object.keys(state.judgedMap).map(function (id) { return state.judgedMap[id].judgment; });
+    var oCount = values.filter(function (v) { return v === 'o'; }).length;
+    var xCount = values.filter(function (v) { return v === 'x'; }).length;
+    var skipCount = values.filter(function (v) { return v === 'skip'; }).length;
+    el['done-summary'].innerHTML =
+      '判定者: <b>' + escapeHtml(state.judgerName) + '</b><br>' +
+      '合計判定数: <b>' + values.length + '</b><br>' +
+      '○: <b>' + oCount + '</b>　×: <b>' + xCount + '</b>　？: <b>' + skipCount + '</b>';
+    showScreen('screen-done');
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+
+  // --- ダウンロード ---
+  function buildDownloadPayload() {
+    var trialsOut = Object.keys(state.judgedMap).map(function (trialId) {
+      var j = state.judgedMap[trialId];
+      return {
+        trialId: trialId,
+        judgment: j.judgment,
+        judgedAt: j.judgedAt,
+        elapsedMs: j.elapsedMs,
+        queryRecordId: j.queryRecordId,
+        candidateRecordId: j.candidateRecordId
+      };
+    });
+    return {
+      judgerName: state.judgerName,
+      exportedAt: new Date().toISOString(),
+      trials: trialsOut
+    };
+  }
+
+  function pad2(n) { return String(n).padStart(2, '0'); }
+
+  function downloadResults() {
+    if (!state.judgerName) {
+      alert('判定を開始してからダウンロードしてください');
+      return;
+    }
+    var payload = buildDownloadPayload();
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var now = new Date();
+    var ts = now.getFullYear() + pad2(now.getMonth() + 1) + pad2(now.getDate()) +
+      '-' + pad2(now.getHours()) + pad2(now.getMinutes()) + pad2(now.getSeconds());
+    var safeName = state.judgerName.replace(/[^\w\-ぁ-んァ-ヶ一-龠]/g, '_');
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'judgments-' + safeName + '-' + ts + '.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 2000);
+  }
+
+  el['btn-download-mid'].addEventListener('click', downloadResults);
+  el['btn-download-final'].addEventListener('click', downloadResults);
+})();
+</script>
+</body>
+</html>
