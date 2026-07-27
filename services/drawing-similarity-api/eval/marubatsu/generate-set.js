@@ -41,7 +41,8 @@ const { values: args } = parseArgs({
     seed: { type: 'string' },
     top: { type: 'string', default: '5' },
     split: { type: 'string' },
-    out: { type: 'string' }
+    out: { type: 'string' },
+    'thumb-width': { type: 'string', default: '1200' }
   }
 });
 
@@ -57,7 +58,11 @@ const SPLIT = args.split || '';
 const OUT_DIR = args.out ? args.out : join(__dirname, 'out');
 const THUMBS_DIR = join(OUT_DIR, 'thumbs');
 const REPEAT_RATE = 0.05;
-const THUMB_MAX_WIDTH = 600;
+// サムネイル幅（px）。図面の細部（穴・ねじ・注記）を判定するには600pxでは粗すぎた
+// ため既定1200。/render-thumbnail の上限は2000。
+// 注意: 幅を変えても out/thumbs/ の既存キャッシュは再利用されるため、画質を
+// 変えたいときは out/thumbs/ を削除してから再実行すること。
+const THUMB_MAX_WIDTH = Math.max(16, Math.min(2000, Number(args['thumb-width']) || 1200));
 
 // --- 環境変数 ---
 

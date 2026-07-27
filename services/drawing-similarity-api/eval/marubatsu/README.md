@@ -222,6 +222,7 @@ node eval/marubatsu/generate-set.js --seed 20260725 --queries 100 --top 5
 - `--top <k>` クエリごとのシステム候補件数（既定5）
 - `--split <label>` 任意ラベル（`dev` / `test` 等。trials.json内の各trialに記録される）
 - `--out <dir>` 出力先（既定 `eval/marubatsu/out`）
+- `--thumb-width <px>` サムネイル幅（既定1200、上限2000）。**幅を変えるときは `out/thumbs/` を削除してから**再実行する（既存キャッシュが優先されるため）
 
 生成されるもの:
 
