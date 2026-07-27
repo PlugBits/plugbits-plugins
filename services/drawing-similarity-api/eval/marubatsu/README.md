@@ -266,7 +266,16 @@ node eval/marubatsu/aggregate.js \
   --out eval/marubatsu/out
 ```
 
+Windows (PowerShell) の場合（行継続はバッククォート。環境変数は不要）:
+
+```powershell
+node eval\marubatsu\aggregate.js `
+  --trials eval\marubatsu\out\trials.json `
+  --judgments "$env:USERPROFILE\Downloads\judgments-主判定者-20260725-101500.json"
+```
+
 - `--judgments` は複数指定できる。**1つ目に指定したファイルが「主判定者」として扱われ**、Precision@k・有用率@5・ランダム対比・再出題一致率の計算に使われる。2つ目以降は判定者間一致率の計算にのみ使う
+- 判定JSONは**その判定をしたときの trials.json とペア**で集計すること。generate-set をやり直すと trialId が変わるため、古い判定JSONは新しい trials.json と組み合わせられない（存在しない trialId は警告付きで無視される）
 - `--bootstrap-seed <整数>`（既定42）: クエリ単位ブートストラップ信頼区間の乱数seed。指定しなければ毎回同じ値で再現可能
 
 出力:
