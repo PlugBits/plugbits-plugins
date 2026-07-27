@@ -95,6 +95,92 @@ node --test services/drawing-similarity-api/test/marubatsu.test.mjs
 - 集計後に残すべきものは `report.json`・`failures.csv`・`random_hits.csv`・`manifest.json`・seed値。
   これらにも recordId・スコアが含まれるため、社外共有時は数字（率）だけを転記する
 
+## はじめての実行（クイックスタート）
+
+「何をどこで打てばいいか」から迷わないための手順。ターミナル（Mac: ターミナル.app / Windows: PowerShell）で上から順に実行する。
+
+### 1. Node.js が入っているか確認
+
+```bash
+node -v
+```
+
+`v20.x` 以上が表示されればOK。コマンドが見つからない場合は https://nodejs.org/ から LTS 版をインストールする。
+**`npm install` は不要**（このツールは Node コア機能のみで動く）。
+
+### 2. リポジトリを取得して作業ディレクトリへ移動
+
+```bash
+git clone https://github.com/PlugBits/plugbits-plugins.git   # 既にあるなら git pull
+cd plugbits-plugins/services/drawing-similarity-api
+```
+
+以降のコマンドはすべて **`services/drawing-similarity-api` ディレクトリで実行**する
+（`eval/marubatsu/...` という相対パスがこのディレクトリ基準のため）。
+
+### 3. 必要な5つの値を手元に揃える
+
+| 変数 | 値の在り処 |
+|---|---|
+| `API_BASE_URL` | 本番Cloud Run: `https://drawing-similarity-api-939943665629.asia-northeast1.run.app`（運用コマンド集.md 参照） |
+| `TENANT_ID` | 先方kintoneのサブドメイン（テナント発行時の値。テナント有効化手順.md 参照） |
+| `API_KEY` | 先方のプラグイン設定画面に貼ったのと**同じAPIキー**（provision-tenant.sh の出力） |
+| `KINTONE_BASE_URL` | 先方kintoneのURL: `https://<サブドメイン>.cybozu.com` |
+| `KINTONE_API_TOKEN` | 先方kintoneの図面アプリ →「設定」→「APIトークン」で**閲覧権限のみ**で生成してもらう |
+
+### 4. まずリハーサル実行（クエリ5件・数分で終わる）
+
+いきなり本番100クエリを回さず、疎通確認を兼ねて小さく実行する。Mac/Linux:
+
+```bash
+API_BASE_URL=https://drawing-similarity-api-939943665629.asia-northeast1.run.app \
+TENANT_ID=サブドメイン \
+API_KEY=プラグインに貼ったキー \
+KINTONE_BASE_URL=https://サブドメイン.cybozu.com \
+KINTONE_API_TOKEN=発行したトークン \
+node eval/marubatsu/generate-set.js --seed 1 --queries 5
+```
+
+Windows (PowerShell) は環境変数の渡し方だけ違う:
+
+```powershell
+$env:API_BASE_URL = "https://drawing-similarity-api-939943665629.asia-northeast1.run.app"
+$env:TENANT_ID = "サブドメイン"
+$env:API_KEY = "プラグインに貼ったキー"
+$env:KINTONE_BASE_URL = "https://サブドメイン.cybozu.com"
+$env:KINTONE_API_TOKEN = "発行したトークン"
+node eval/marubatsu/generate-set.js --seed 1 --queries 5
+```
+
+成功すると `eval/marubatsu/out/` に `trials.json`・`manifest.json`・`thumbs/*.png` ができる。
+続けて `node eval/marubatsu/serve.js` を実行し、ブラウザで http://localhost:8090/judge.html を開いて
+判定画面が出れば疎通は全部OK。
+
+### 5. 本番実行
+
+リハーサルの `out/` を削除してから、本番用のseed（任意の整数。**一度決めたら記録して変えない**）で実行する:
+
+```bash
+rm -rf eval/marubatsu/out    # PowerShell: Remove-Item -Recurse eval/marubatsu/out
+（上と同じ環境変数で）
+node eval/marubatsu/generate-set.js --seed 20260801 --queries 100
+```
+
+所要時間の目安: `/similar` 100回＋サムネイル最大700枚の生成で**数分〜20分程度**
+（Cloud Run が min-instances=0 だと初回リクエストにコールドスタートの待ちが入る）。
+途中で失敗しても生成済みサムネイルはキャッシュされるので、同じコマンドの再実行で続きから進む。
+
+### よくあるエラー
+
+| 症状 | 原因と対処 |
+|---|---|
+| `KINTONE_BASE_URL と KINTONE_API_TOKEN の両方が必要です` | 環境変数が渡っていない。コマンドと同じ行（PowerShellは事前の `$env:` 行）で設定したか確認 |
+| `index-status が configured:false` | テナントのQdrant設定が未完了。テナント有効化手順.md を確認 |
+| `HTTP 401/403`（/index-status や /similar） | `API_KEY` が違う。プラグイン設定画面の値と一致させる |
+| `kintone file.json 取得失敗: HTTP 401/403` | `KINTONE_API_TOKEN` の誤り、またはトークンに閲覧権限がない |
+| `kintone file.json 取得失敗` で接続エラー | 先方kintoneのIPアドレス制限に引っかかっている可能性。作業場所のIPを許可してもらう |
+| 未インデックス(mode=mock)のスキップが多発 | 一括インデックスが未完了。プラグインの「インデックス状況チェック」で確認 |
+
 ## 使い方（生成 → 配信 → 判定 → 集計）
 
 ### 0. 事前準備
