@@ -146,6 +146,23 @@ const main = async () => {
     ' n=' + prec5.perQuery.length);
   console.log('  ランダム候補○率  :', pct(randomRate.value), ' n=' + randomRate.n,
     ' (Precision@1との対比用ベースライン)');
+  // --- ペナルティ/ボーナス項の診断（system候補のみ）---
+  // shapeTagPenalty・processMatch が「発動したとき正しい相手に効いているか」を見る。
+  // ペナルティが×に偏って発動していれば強化(値を上げる)の根拠、○を多く巻き込んで
+  // いれば逆効果の警告になる。
+  const diagnoseTerm = (label, picker) => {
+    const fired = judgedTrials.filter((t) => t.source === 'system' && picker(t.scoreBreakdown || {}) > 0);
+    if (!fired.length) return null;
+    const o = fired.filter((t) => t.judgment === 'o').length;
+    const x = fired.filter((t) => t.judgment === 'x').length;
+    const s = fired.filter((t) => t.judgment === 'skip').length;
+    console.log('  ' + label + ' 発動:', fired.length + '件',
+      ' (○', o, ' ×', x, (s ? ' ？' + s : '') + ')');
+    return { fired: fired.length, o, x, skip: s };
+  };
+  const penaltyDiag = diagnoseTerm('shapeTagペナルティ', (bd) => Number(bd.shapeTagPenalty || 0));
+  const processDiag = diagnoseTerm('process一致ボーナス', (bd) => Number(bd.processMatch || 0));
+
   console.log(hr());
   console.log('  再出題一致率      :', pct(repeatResult.value), ' n=' + repeatResult.n);
   if (interRater.n > 0) {
@@ -225,6 +242,10 @@ const main = async () => {
     reliability: {
       repeatConsistency: { value: repeatResult.value, n: repeatResult.n },
       interRaterAgreement: { value: interRater.value, n: interRater.n }
+    },
+    termDiagnostics: {
+      shapeTagPenalty: penaltyDiag,
+      processMatchBonus: processDiag
     },
     qualityWarnings,
     failuresCount: failures.length,
