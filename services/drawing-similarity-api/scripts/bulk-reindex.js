@@ -175,7 +175,9 @@ const createCursor = async (fields, query) => {
 const fetchCursorPage = async (cursorId) => {
   const url = new URL('/k/v1/records/cursor.json', kintoneBaseUrl);
   url.searchParams.set('id', cursorId);
-  const res = await fetch(url, { headers: kintoneHeaders });
+  // 注意: ボディなしのGETに Content-Type: application/json を付けると kintone は
+  // 400 Invalid request を返す（ボディからパラメータを読もうとする仕様）。トークンのみ送る。
+  const res = await fetch(url, { headers: { 'X-Cybozu-API-Token': kintoneApiToken } });
   const data = await res.json().catch(() => ({}));
   if (!res.ok) {
     throw new Error('cursor取得失敗: HTTP ' + res.status + ' ' + (data.message || JSON.stringify(data)));
