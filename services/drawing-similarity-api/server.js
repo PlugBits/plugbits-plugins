@@ -81,6 +81,9 @@ const scoreShapeTagMismatchPenalty = Number(process.env.SCORE_SHAPE_TAG_MISMATCH
 // これ未満なら matchConfidence.level='low' になる。実測では類似ありが0.99台・
 // 類似なしが0.77台のため、中間の0.9をデフォルトにしている。
 const similarScoreFloor = Number(process.env.SIMILAR_SCORE_FLOOR || 0.9);
+// /similar の返却件数上限。既定10=従来通り。精度検証時に「取りこぼした正解が
+// 何位に沈んでいるか」を診断するため一時的に引き上げる用途を想定している。
+const similarMaxLimit = Number(process.env.SIMILAR_MAX_LIMIT || 10);
 const parseTags = (value) => String(value || '').split(',').map((s) => s.trim()).filter(Boolean);
 let payloadIndexesReady = false;
 
@@ -285,7 +288,8 @@ const getRuntimeInfo = () => ({
     model: process.env.DINO_MODEL || 'facebook/dinov2-small',
     device: process.env.OPENCLIP_DEVICE || 'auto'
   },
-  renderDpi
+  renderDpi,
+  similarMaxLimit
 });
 
 // --- Google Drive OAuthポップアップ（過去図面アーカイブ取込のGoogle Drive連携） ---
@@ -395,7 +399,7 @@ const buildGoogleOAuthPopupHtml = () => `<!doctype html>
 
 const buildMockResults = (body) => {
   const base = Number(body.recordId || 1000);
-  return Array.from({ length: Math.min(Number(body.limit || 10), 10) }, (_, index) => {
+  return Array.from({ length: Math.min(Number(body.limit || 10), similarMaxLimit) }, (_, index) => {
     const recordId = base + index + 1;
     return {
       recordId,
@@ -2209,7 +2213,7 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
 
   const queryVectors = Array.isArray(vector) && Array.isArray(vector[0]) ? vector : [vector];
   await ensureCollection(queryVectors[0].length);
-  const limit = Math.min((Number(body.limit || 10) + 1) * Math.max(1, queryVectors.length) * 4, 100);
+  const limit = Math.min((Number(body.limit || 10) + 1) * Math.max(1, queryVectors.length) * 4, Math.max(100, similarMaxLimit * 4));
   const byRecord = new Map();
 
   for (let queryIndex = 0; queryIndex < queryVectors.length; queryIndex += 1) {
@@ -2317,7 +2321,7 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
       };
     })
     .sort((a, b) => b.score - a.score)
-    .slice(0, Math.min(Number(body.limit || 10), 10));
+    .slice(0, Math.min(Number(body.limit || 10), similarMaxLimit));
 };
 
 // 「検索の確度」判定。

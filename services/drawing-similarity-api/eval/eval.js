@@ -9,6 +9,7 @@
  *   TENANT_ID      テナントID               (default: default)
  *   APP_ID         kintone アプリID         (optional)
  *   LIMIT          /similar に渡す件数      (default: 10)
+ *   API_KEY        X-API-Key ヘッダー       (optional; テナント認証有効時に必要)
  *
  * 事前準備:
  *   eval/pairs.json に正解ペアを記載してください。
@@ -27,6 +28,8 @@ const apiBaseUrl = String(process.env.API_BASE_URL || 'http://localhost:8080').r
 const tenantId = process.env.TENANT_ID || 'default';
 const appId = process.env.APP_ID || '';
 const limit = Number(process.env.LIMIT || 10);
+const apiKey = process.env.API_KEY || '';
+const authHeaders = apiKey ? { 'X-API-Key': apiKey } : {};
 const K_VALUES = [1, 3, 5, 10].filter((k) => k <= limit);
 
 // --- ユーティリティ ---
@@ -63,7 +66,7 @@ if (!Array.isArray(pairs) || !pairs.length) {
 // --- API 疎通確認 ---
 
 try {
-  const res = await fetch(apiBaseUrl + '/health');
+  const res = await fetch(apiBaseUrl + '/health', { headers: authHeaders });
   if (!res.ok) {
     console.warn('⚠ /health が HTTP ' + res.status + ' を返しました。処理を続行します。');
   }
@@ -100,7 +103,7 @@ for (let i = 0; i < pairs.length; i++) {
   try {
     const res = await fetch(apiBaseUrl + '/similar', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({
         tenantId,
         ...(appId ? { appId } : {}),

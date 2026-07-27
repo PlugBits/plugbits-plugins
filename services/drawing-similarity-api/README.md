@@ -156,6 +156,14 @@ If `EMBEDDING_ENDPOINT` is unset, the API falls back to spawning `embed_openclip
 
 When OpenCLIP is enabled, the Node API calls `embed_openclip.py`, which generates normalized image embeddings. `ViT-B-32` embeddings are 512-dimensional. If `VECTOR_SIZE` or the existing Qdrant collection size does not match the model output, the API returns a clear mismatch error instead of upserting incompatible vectors.
 
+`/similar` caps the number of returned results regardless of the requested `limit`:
+
+```sh
+SIMILAR_MAX_LIMIT=10
+```
+
+`SIMILAR_MAX_LIMIT` is a diagnostic knob for accuracy validation (checking how far down the ranking a missed match falls). The default `10` reproduces the previous hardcoded cap exactly; leave it unset for normal operation.
+
 Example request:
 
 ```sh

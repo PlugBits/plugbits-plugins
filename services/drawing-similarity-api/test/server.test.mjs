@@ -536,6 +536,57 @@ test('413: ボディ上限を超えると 413', async () => {
   }
 });
 
+test('similar: SIMILAR_MAX_LIMIT未設定では既定どおり最大10件に切り詰められる', async () => {
+  const tenantId = 'tenant-maxlimit-default';
+  for (let i = 0; i < 15; i++) {
+    mock.state.points.set('maxlimit-default-' + i, {
+      id: 9400 + i, vector: [0, 0, 0],
+      payload: { tenant_id: tenantId, record_id: 'maxlimit-default-src-' + i, file_key: 'file-a', __mockScore: 0.9 - i * 0.001 }
+    });
+  }
+  try {
+    const res = await postJson(api.url, '/similar', {
+      tenantId, pdf_base64: PDF_A.toString('base64'), fileName: 'query.pdf', limit: 15
+    });
+    const text = await res.text();
+    assert.equal(res.status, 200, text);
+    const data = JSON.parse(text);
+    assert.equal(data.results.length, 10, '既定のSIMILAR_MAX_LIMIT=10で切り詰められる');
+  } finally {
+    for (let i = 0; i < 15; i++) mock.state.points.delete('maxlimit-default-' + i);
+  }
+});
+
+test('similar: SIMILAR_MAX_LIMITを引き上げるとその件数まで返す', async () => {
+  const maxLimitApi = await startApi(mock.url, { SIMILAR_MAX_LIMIT: '15' });
+  try {
+    const healthRes = await fetch(maxLimitApi.url + '/health');
+    const health = await healthRes.json();
+    assert.equal(health.runtime.similarMaxLimit, 15, '/health のruntimeに反映される');
+
+    const tenantId = 'tenant-maxlimit-raised';
+    for (let i = 0; i < 15; i++) {
+      mock.state.points.set('maxlimit-raised-' + i, {
+        id: 9500 + i, vector: [0, 0, 0],
+        payload: { tenant_id: tenantId, record_id: 'maxlimit-raised-src-' + i, file_key: 'file-a', __mockScore: 0.9 - i * 0.001 }
+      });
+    }
+    try {
+      const res = await postJson(maxLimitApi.url, '/similar', {
+        tenantId, pdf_base64: PDF_A.toString('base64'), fileName: 'query.pdf', limit: 15
+      });
+      const text = await res.text();
+      assert.equal(res.status, 200, text);
+      const data = JSON.parse(text);
+      assert.equal(data.results.length, 15, 'SIMILAR_MAX_LIMIT=15まで返す');
+    } finally {
+      for (let i = 0; i < 15; i++) mock.state.points.delete('maxlimit-raised-' + i);
+    }
+  } finally {
+    maxLimitApi.child.kill();
+  }
+});
+
 test('index-status: テナント内の record_id と file_key を返す', async () => {
   const res = await fetch(api.url + '/index-status?tenantId=tenant-a&appId=1');
   assert.equal(res.status, 200);
