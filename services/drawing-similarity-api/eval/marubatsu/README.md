@@ -112,11 +112,18 @@ node -v
 
 ```bash
 git clone https://github.com/PlugBits/plugbits-plugins.git   # 既にあるなら git pull
-cd plugbits-plugins/services/drawing-similarity-api
+cd plugbits-plugins
+git checkout claude/drawing-similarity-accuracy-validation-8lxx6r   # ※mainにマージ済みなら不要
+cd services/drawing-similarity-api
+ls eval/marubatsu    # generate-set.js 等が表示されることを確認
 ```
 
+このツールがまだ main にマージされていない間は、**ブランチを切り替えないと `eval/marubatsu/` 自体が存在しない**
+（`node eval/marubatsu/generate-set.js` が `Cannot find module` になる典型原因）。
+
 以降のコマンドはすべて **`services/drawing-similarity-api` ディレクトリで実行**する
-（`eval/marubatsu/...` という相対パスがこのディレクトリ基準のため）。
+（`eval/marubatsu/...` という相対パスがこのディレクトリ基準のため）。リポジトリ直下で打っても
+`Cannot find module` になるので、迷ったら `pwd` で現在地を確認する。
 
 ### 3. 必要な5つの値を手元に揃える
 
@@ -174,6 +181,8 @@ node eval/marubatsu/generate-set.js --seed 20260801 --queries 100
 
 | 症状 | 原因と対処 |
 |---|---|
+| `Cannot find module '...generate-set.js'` | ①ブランチ未切替（上記手順2の `git checkout` を実行）②実行ディレクトリ違い（`services/drawing-similarity-api` 内で実行。`pwd` で確認） |
+| `Cannot find module './lib.js'` | generate-set.js を単体コピーして実行している。ツールは5ファイル一式で動くためリポジトリごと取得する |
 | `KINTONE_BASE_URL と KINTONE_API_TOKEN の両方が必要です` | 環境変数が渡っていない。コマンドと同じ行（PowerShellは事前の `$env:` 行）で設定したか確認 |
 | `index-status が configured:false` | テナントのQdrant設定が未完了。テナント有効化手順.md を確認 |
 | `HTTP 401/403`（/index-status や /similar） | `API_KEY` が違う。プラグイン設定画面の値と一致させる |
