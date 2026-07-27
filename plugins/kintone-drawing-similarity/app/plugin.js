@@ -3050,6 +3050,11 @@
     '.sim-hero-rank { position: absolute; top: 10px; left: 10px; padding: 4px 11px; border-radius: 9999px;',
     '  background: rgba(15,23,42,.82); color: #fff; font-size: 12px; font-weight: 700;',
     '  backdrop-filter: blur(2px); }',
+    // 高解像度サムネイル生成中の小さいインジケータ（拡大表示を開いた直後だけ出す）。
+    // 300px画像はそのまま表示し続けるため、既存表示を覆わない隅にだけ置く。
+    '.sim-hero-hires-spinner { position: absolute; bottom: 10px; right: 10px; width: 18px; height: 18px;',
+    '  border-radius: 50%; background: rgba(15,23,42,.55); box-sizing: border-box;',
+    '  border: 2px solid rgba(255,255,255,.35); border-top-color: #fff; animation: pb-spin .7s linear infinite; }',
     '.sim-hero-link { display: inline-block; margin-top: 10px; color: var(--pb-primary-hover);',
     '  font-weight: 700; font-size: 16px; text-decoration: none; }',
     '.sim-hero-link:hover { text-decoration: underline; }',
@@ -4471,6 +4476,79 @@
     }
   };
 
+  // ヒーロー表示（拡大表示）は300px保存サムネイルをCSSで70vhまで引き伸ばすため粗くなる。
+  // ここではヒーローカードを開いた（＝buildHeroCardが呼ばれた）タイミングだけ、
+  // オンデマンドでサーバーに1600px版を生成させ、できあがり次第 <img> の src を差し替える。
+  // 一覧のサムネイル（300px, 暗号化保存）や /thumbs の仕組みには一切触れない。
+  //
+  // キャッシュ: buildPreviewPanel の showTiffPreview（TIF単独プレビュー用フル解像度生成）と
+  // 同じ命名規則（fileKey + ':1600'）で、同じモジュール共有のメモリLRU（_thumbCache /
+  // getCachedThumbUrl・putCachedThumbUrl）とIndexedDB永続キャッシュ（idbGetThumbBlob・
+  // idbPutThumbBlob）に相乗りする。二重にMapを持たず既存の仕組みをそのまま流用するため。
+  // blob URLはキャッシュが所有し続け、モーダルを閉じても解放しない（trackObjectUrlには渡さない。
+  // 300px版サムネイルキャッシュと同じ寿命ポリシー）。fileKeyはkintone側のファイルに対して
+  // 不変な識別子なので無効化は不要で、LRU上限（THUMB_CACHE_MAX）に達したときだけ
+  // 古いものから自然に破棄される。よって再度同じ結果をヒーロー表示すれば
+  // ネットワーク・サーバー変換なしで即座に高解像度版が出る。
+  const upgradeHeroThumbToHiRes = (thumbBox, apiBaseUrl, fileKey, config) => {
+    if (!apiBaseUrl || !fileKey) return;
+    const cacheKey = fileKey + ':1600';
+
+    // 生成中に thumbBox の中身（画像→再取得ボタン等）が入れ替わっていても、
+    // その時点の <img> を見つけて差し替える。見つからない場合（読み込み失敗で
+    // 再取得ボタン表示中など）は何もしない＝300px版が用意でき次第の次回描画に任せる。
+    const applyHiRes = (url) => {
+      const img = thumbBox.querySelector('.sim-thumb-img');
+      if (img) img.src = url;
+    };
+
+    const cachedUrl = getCachedThumbUrl(cacheKey);
+    if (cachedUrl) {
+      applyHiRes(cachedUrl);
+      return;
+    }
+
+    // 生成中も既存の300px画像は表示したままにする（体験を壊さないよう、隅に小さい
+    // インジケータを出すだけに留める）。
+    const spinner = document.createElement('div');
+    spinner.className = 'sim-hero-hires-spinner';
+    thumbBox.appendChild(spinner);
+    const removeSpinner = () => { if (spinner.parentNode) spinner.remove(); };
+
+    (async () => {
+      try {
+        // 永続キャッシュ（前回訪問時などに生成済み）があればサーバー変換をスキップ。
+        const idbBlob = await idbGetThumbBlob(cacheKey);
+        if (idbBlob) {
+          const idbBlobUrl = URL.createObjectURL(idbBlob);
+          putCachedThumbUrl(cacheKey, idbBlobUrl);
+          applyHiRes(idbBlobUrl);
+          return;
+        }
+
+        // ブラウザのkintoneセッションでPDFを取得し、バイナリ直送で/render-thumbnailへ
+        // （/index・showTiffPreviewと同じ方式。base64化やJSON化の追加コピーを避ける）。
+        const blob = await downloadKintoneFile(fileKey);
+        const res = await fetch(apiBaseUrl + '/render-thumbnail?max_width=1600', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream', ...apiKeyHeader(config && config.apiKey) },
+          body: blob
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const resultBlob = await res.blob();
+        const blobUrl = URL.createObjectURL(resultBlob);
+        putCachedThumbUrl(cacheKey, blobUrl);
+        idbPutThumbBlob(cacheKey, resultBlob); // fire-and-forget。永続キャッシュへの反映
+        applyHiRes(blobUrl);
+      } catch (error) {
+        // 取得・変換に失敗しても300px画像のまま表示を続ける（エラーモーダルは出さない）。
+        console.warn('高解像度プレビューの生成に失敗しました。300px画像のまま表示します', error);
+      } finally {
+        removeSpinner();
+      }
+    })();
+  };
+
   // options:
   //   debug: 内訳等の開発者向け表示
   //   autoLoad: kintone登録図面のサムネイルを即時取得するか（false時は「プレビュー取得」ボタンを出す）。
@@ -4497,6 +4575,11 @@
       }
     } else {
       thumbBox = buildThumbnailBox(apiBaseUrl, item.fileKey, autoLoad, config, trackObjectUrl, 'sim-hero-thumb', thumbUrl);
+      // 拡大表示（.sim-hero-thumb）を開いた瞬間なので、ここでだけ高解像度版の生成を
+      // 裏で走らせる。一覧の300px画像・buildThumbnailBox自体には手を入れない。
+      if (item.fileKey) {
+        upgradeHeroThumbToHiRes(thumbBox, apiBaseUrl, item.fileKey, config);
+      }
     }
 
     const scoreBadge = document.createElement('div');
