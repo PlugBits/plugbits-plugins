@@ -106,6 +106,20 @@ SCORE_SHAPE_WEIGHT=0.10
 
 Use `scoreBreakdown.vectorRaw` to inspect the original Qdrant score. If most `vectorRaw` values are still tightly clustered, the next step is improving the image region or shape features rather than tuning the display score.
 
+Three more calibration knobs tune bonus/penalty terms in `scoreCandidate`:
+
+```sh
+SCORE_PROCESS_MATCH_BONUS=0.08
+SCORE_SHAPE_CATEGORY_BONUS=0.08
+SCORE_SHAPE_TAG_MISMATCH_PENALTY=0
+```
+
+- `SCORE_PROCESS_MATCH_BONUS`: bonus added when the query's `processes` (machining/加工方法, indexed as `process_methods`) share at least one value with the candidate's. It is additive only — missing or non-overlapping `processes` never lowers a score, because bulk-indexed drawings are commonly registered without a process value. At the default 0.08 this is a new bonus term, but it stays inert for any record until it is re-indexed with a `processes` value (old payloads have no `process_methods`, so `candidateProcesses.length` is 0 and the bonus branch never fires), so existing deployments see no ranking change until that record is re-indexed.
+- `SCORE_SHAPE_CATEGORY_BONUS`: the OCR shape-category match bonus, now configurable (previously a hardcoded `0.08`). Set to `0` to disable it. The default `0.08` reproduces the previous hardcoded behavior exactly.
+- `SCORE_SHAPE_TAG_MISMATCH_PENALTY`: subtracted (before the final `clamp01`) when the query's AI shape tags (`shapeTags`) and the candidate's `ocr_shape_tags` are both non-empty but share nothing. Default `0` keeps this disabled — it only ever fires when both sides already have AI shape tags, so records without them (including all pre-existing indexed drawings) are never affected.
+
+With every `SCORE_*` variable left unset, `/similar` ranking is byte-for-byte identical to the previous release.
+
 `EMBED_IMAGE_MODE` controls the image sent to the embedding provider:
 
 - `full`: use the full rendered first page.

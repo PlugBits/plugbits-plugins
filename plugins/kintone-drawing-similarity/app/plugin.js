@@ -60,6 +60,9 @@
       drawingNo: getFieldValue(event.record, config.drawingNoField),
       productName: getFieldValue(event.record, config.productNameField),
       tags: getFieldValue(event.record, config.tagField),
+      // 加工方法一致ボーナス（server.js scoreCandidate）用。表示中レコードの現在値をそのまま
+      // 送る（まだ再登録されておらずQdrant payload側が古い/空でも、こちらが優先される）。
+      processes: getFieldValue(event.record, config.processField),
       fileKey: file ? file.fileKey : '',
       fileName: file ? file.name : '',
       limit: 10
@@ -1318,6 +1321,7 @@
                     productName: getFieldValue(record, config.productNameField) || pending.productName,
                     material: getFieldValue(record, config.materialField) || pending.material,
                     dimension: getFieldValue(record, config.dimensionField) || pending.dimension,
+                    processes: getFieldValue(record, config.processField) || pending.processes.join(','),
                     tags,
                     shapeTags: shapeTagsForSync || '',
                     fileKey: permanentFileKey,
@@ -1659,6 +1663,11 @@
           : '',
         tags: config.tagField && record[config.tagField]
           ? String(record[config.tagField].value || '')
+          : '',
+        // 加工方法（processes）。/index のQdrant payloadにprocess_methodsとして保存され、
+        // scoreCandidateの加工方法一致ボーナスに使われる（server.js側は未入力でも減点しない）。
+        processes: config.processField && record[config.processField]
+          ? String(record[config.processField].value || '')
           : '',
         fileKey: file.fileKey,
         fileName: file.name,
@@ -4125,6 +4134,7 @@
         productName,
         material,
         dimension,
+        processes: processes.join(','),
         tags: tags.join(','),
         shapeTags: shapeTags.join(','),
         fileKey: indexFileKey,

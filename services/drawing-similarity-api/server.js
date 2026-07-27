@@ -69,6 +69,14 @@ const scoreMetadataWeight = Number(process.env.SCORE_METADATA_WEIGHT || 0.12);
 const scoreShapeWeight = Number(process.env.SCORE_SHAPE_WEIGHT || 0.10);
 const scoreTypeBonus = Number(process.env.SCORE_TYPE_BONUS || 0.05);
 const scoreAiShapeTagBonus = Number(process.env.SCORE_AI_SHAPE_TAG_BONUS || 0.05);
+// 加工方法（processes）一致ボーナス。tagBonusと同じ「加点のみ」の設計。一括登録は
+// 加工方法なしで登録されることがあるため、未入力・不一致による減点は絶対に行わない。
+const scoreProcessMatchBonus = Number(process.env.SCORE_PROCESS_MATCH_BONUS || 0.08);
+// OCR形状カテゴリ一致の固定加点。0を設定すると無効化される（従来は0.08固定だった）。
+const scoreShapeCategoryBonus = Number(process.env.SCORE_SHAPE_CATEGORY_BONUS || 0.08);
+// AI形状タグの不一致ペナルティ。既定0=無効。双方に形状タグがある場合のみ発動する
+// （タグ未生成の古いレコードには影響しない）。
+const scoreShapeTagMismatchPenalty = Number(process.env.SCORE_SHAPE_TAG_MISMATCH_PENALTY || 0);
 // 「似た図面が見つからなかった」警告の閾値。結果中の最高vectorRaw（生コサイン値）が
 // これ未満なら matchConfidence.level='low' になる。実測では類似ありが0.99台・
 // 類似なしが0.77台のため、中間の0.9をデフォルトにしている。
@@ -261,6 +269,9 @@ const getRuntimeInfo = () => ({
     shapeWeight: scoreShapeWeight,
     typeBonus: scoreTypeBonus,
     aiShapeTagBonus: scoreAiShapeTagBonus,
+    processMatchBonus: scoreProcessMatchBonus,
+    shapeCategoryBonus: scoreShapeCategoryBonus,
+    shapeTagMismatchPenalty: scoreShapeTagMismatchPenalty,
     similarScoreFloor
   },
   nodeVersion: process.version,
@@ -1595,7 +1606,12 @@ const buildQueryProfile = (body = {}, indexedPayload = null) => ({
   shapeCategory: String(indexedPayload?.ocr_shape_category || body.shapeCategory || '').trim(),
   ocrText: String(indexedPayload?.ocr_text || body.ocrText || '').trim(),
   tags: parseTags(indexedPayload?.tags || body.tags || ''),
-  shapeTags: parseTags(indexedPayload?.ocr_shape_tags || body.shapeTags || '')
+  shapeTags: parseTags(indexedPayload?.ocr_shape_tags || body.shapeTags || ''),
+  // processesだけは優先順位を他フィールドと逆にする: 詳細画面は今表示中のレコードの
+  // 加工方法フィールド値をリクエストボディに明示的に乗せてくる想定で、まだ再登録
+  // （/index）されていないレコードでは payload.process_methods が古い/空のことがある。
+  // bodyが空のときだけ payload の値にフォールバックする。
+  processes: parseTags(body.processes || indexedPayload?.process_methods || '')
 });
 
 const scoreCandidate = (candidatePayload = {}, query = {}) => {
@@ -1657,7 +1673,7 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
     reasons.push('revision match');
   }
   if (queryShapeCategory && candidateShapeCategory && queryShapeCategory === candidateShapeCategory) {
-    breakdown.shapeCategory = 0.08;
+    breakdown.shapeCategory = scoreShapeCategoryBonus;
     reasons.push('shape category match');
   }
   if (shapeScore.score > 0) {
@@ -1702,15 +1718,36 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
     }
   }
 
+  // 加工方法（processes）の一致度。tagBonusと同じ式・同じ「加点のみ」の設計。process_methods
+  // が無い（未再登録の）候補ではcandidateProcesses.lengthが0になり自然に加点0のまま
+  // スキップされるため、再インデックスされるまでは既存のスコアに一切影響しない。
+  const queryProcesses = Array.isArray(query.processes) ? query.processes : [];
+  const candidateProcesses = parseTags(candidatePayload.process_methods || '');
+  let processBonus = 0;
+  if (queryProcesses.length > 0 && candidateProcesses.length > 0) {
+    const sharedProcesses = queryProcesses.filter((p) => candidateProcesses.includes(p));
+    if (sharedProcesses.length > 0) {
+      processBonus = scoreProcessMatchBonus * sharedProcesses.length / Math.min(queryProcesses.length, candidateProcesses.length);
+      reasons.push('process:' + sharedProcesses.join(','));
+    }
+  }
+
   // AI（Vertex/Gemini）が登録時に推定した形状タグの一致度。ユーザーが手入力するtagsとは別軸の補助シグナル。
   const queryShapeTags = Array.isArray(query.shapeTags) ? query.shapeTags : [];
   const candidateShapeTags = parseTags(candidatePayload.ocr_shape_tags || '');
   let shapeTagBonus = 0;
+  let shapeTagPenalty = 0;
   if (queryShapeTags.length > 0 && candidateShapeTags.length > 0) {
     const sharedShapeTags = queryShapeTags.filter((t) => candidateShapeTags.includes(t));
     if (sharedShapeTags.length > 0) {
       shapeTagBonus = scoreAiShapeTagBonus * sharedShapeTags.length / Math.min(queryShapeTags.length, candidateShapeTags.length);
       reasons.push('shapeTag:' + sharedShapeTags.join(','));
+    } else if (scoreShapeTagMismatchPenalty > 0) {
+      // 双方にAI形状タグがあるのに共有が無い＝形が違う可能性が高いという弱いシグナル。
+      // 既定(SCORE_SHAPE_TAG_MISMATCH_PENALTY=0)では無効。上のlength>0チェックにより
+      // タグ未生成の古いレコード同士の比較では絶対に発動しない。
+      shapeTagPenalty = scoreShapeTagMismatchPenalty;
+      reasons.push('shapeTag mismatch');
     }
   }
 
@@ -1718,7 +1755,9 @@ const scoreCandidate = (candidatePayload = {}, query = {}) => {
   breakdown.bonus = Number((metadataBonus + breakdown.shape).toFixed(3));
   breakdown.tag = Number(tagBonus.toFixed(4));
   breakdown.shapeTag = Number(shapeTagBonus.toFixed(4));
-  breakdown.total = Number(clamp01(weightedTotal + tagBonus + shapeTagBonus).toFixed(4));
+  breakdown.processMatch = Number(processBonus.toFixed(4));
+  breakdown.shapeTagPenalty = Number(shapeTagPenalty.toFixed(4));
+  breakdown.total = Number(clamp01(weightedTotal + tagBonus + shapeTagBonus + processBonus - shapeTagPenalty).toFixed(4));
 
   if (!reasons.length && candidatePayload.ocr_text) {
     reasons.push('ocr text available');
@@ -2018,6 +2057,9 @@ const upsertDrawing = async (body, embedding, context = {}) => {
     drawing_no: context.extracted?.drawingNo || body.drawingNo || '',
     product_name: context.extracted?.productName || body.productName || '',
     tags: Array.isArray(body.tags) ? body.tags.filter(Boolean).join(',') : String(body.tags || ''),
+    // 加工方法（processes）。tagsと同じ「配列 or カンマ区切り文字列」の両方を受け付ける。
+    // scoreCandidateのprocess一致ボーナス（SCORE_PROCESS_MATCH_BONUS）でのみ参照される。
+    process_methods: Array.isArray(body.processes) ? body.processes.filter(Boolean).join(',') : String(body.processes || ''),
     part_name: context.extracted?.productName || body.productName || '',
     file_name: body.fileName || '',
     file_key: body.fileKey || '',
@@ -2257,6 +2299,7 @@ const searchDrawings = async (body, vector, queryProfile = {}) => {
         shapeCategory: payload.ocr_shape_category || '',
         shapeComment: payload.ocr_shape_comment || '',
         shapeTags: parseTags(payload.ocr_shape_tags || ''),
+        processes: parseTags(payload.process_methods || ''),
         ocrText: payload.ocr_text || '',
         shape: normalizeShapeProfile(payload.shape_profile_json || payload.shape_profile || null),
         vectorRaw: scored.scoreBreakdown.vectorRaw,
@@ -3263,6 +3306,8 @@ const server = createServer(async (request, response) => {
               customer: queryProfile.customer || body.customer || '',
               revision: queryProfile.revision || body.revision || '',
               shapeCategory: queryProfile.shapeCategory || body.shapeCategory || '',
+              // buildQueryProfileが既にbody優先→payloadフォールバックをマージ済みなのでそのまま使う。
+              processes: queryProfile.processes || [],
               shape: queryProfile.shape || null
             },
             qdrant: {
@@ -3283,6 +3328,7 @@ const server = createServer(async (request, response) => {
               shapeCategory: indexed.payload.ocr_shape_category || '',
               shapeComment: indexed.payload.ocr_shape_comment || '',
               shapeTags: parseTags(indexed.payload.ocr_shape_tags || ''),
+              processes: parseTags(indexed.payload.process_methods || ''),
               ocrTextLength: String(indexed.payload.ocr_text || '').length,
               shape: normalizeShapeProfile(indexed?.payload?.shape_profile_json || indexed?.payload?.shape_profile || null)
             } : null,

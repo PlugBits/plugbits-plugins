@@ -393,6 +393,132 @@ test('similar: 全候補のvectorRawが低い（類似図面なし）場合は m
   mock.state.points.delete('conf-2-b');
 });
 
+test('similar: 加工方法(processes)が両者にあり重なれば既定のSCORE_PROCESS_MATCH_BONUS(0.08)が加点される', async () => {
+  const tenantId = 'tenant-process-1';
+  mock.state.points.set('proc-1-match', {
+    id: 9201, vector: [0, 0, 0],
+    payload: {
+      tenant_id: tenantId, record_id: 'proc1-src-1', file_key: 'file-a',
+      process_methods: '旋盤,フライス', __mockScore: 0.9
+    }
+  });
+  mock.state.points.set('proc-1-nomatch', {
+    id: 9202, vector: [0, 0, 0],
+    payload: {
+      tenant_id: tenantId, record_id: 'proc1-src-2', file_key: 'file-a',
+      process_methods: '溶接', __mockScore: 0.9
+    }
+  });
+  // process_methods 未保存（未再登録レコード想定）。バックワード互換の要: 加点も減点もされない。
+  mock.state.points.set('proc-1-none', {
+    id: 9203, vector: [0, 0, 0],
+    payload: { tenant_id: tenantId, record_id: 'proc1-src-3', file_key: 'file-a', __mockScore: 0.9 }
+  });
+
+  const res = await postJson(api.url, '/similar', {
+    tenantId, recordId: 'proc1-query',
+    pdf_base64: PDF_A.toString('base64'), fileName: 'query.pdf', limit: 10,
+    processes: '旋盤'
+  });
+  const text = await res.text();
+  assert.equal(res.status, 200, text);
+  const data = JSON.parse(text);
+
+  const matched = data.results.find((r) => r.recordId === 'proc1-src-1');
+  const unmatched = data.results.find((r) => r.recordId === 'proc1-src-2');
+  const noProcesses = data.results.find((r) => r.recordId === 'proc1-src-3');
+  assert.ok(matched && unmatched && noProcesses, '3候補とも結果に含まれる: ' + JSON.stringify(data.results.map((r) => r.recordId)));
+
+  // 共有1件 / min(query=1件, candidate=2件) = 1倍 → 満額の0.08が加点される
+  assert.equal(matched.scoreBreakdown.processMatch, 0.08);
+  assert.ok(matched.reasons.includes('process:旋盤'), 'reasonsに一致した加工方法名が入る: ' + JSON.stringify(matched.reasons));
+  assert.equal(unmatched.scoreBreakdown.processMatch, 0, '重ならなければ加点なし（減点もしない）');
+  assert.equal(noProcesses.scoreBreakdown.processMatch, 0, '候補にprocess_methodsが無ければ加点も減点もしない（未再登録レコード保護）');
+
+  mock.state.points.delete('proc-1-match');
+  mock.state.points.delete('proc-1-nomatch');
+  mock.state.points.delete('proc-1-none');
+});
+
+test('similar: AI形状タグの不一致ペナルティは既定(SCORE_SHAPE_TAG_MISMATCH_PENALTY=0)では発動しない', async () => {
+  const tenantId = 'tenant-shapetag-default';
+  mock.state.points.set('shapetag-default-mismatch', {
+    id: 9204, vector: [0, 0, 0],
+    payload: {
+      tenant_id: tenantId, record_id: 'shapetag-default-src-1', file_key: 'file-a',
+      ocr_shape_tags: '丸型,フランジ', __mockScore: 0.9
+    }
+  });
+
+  const res = await postJson(api.url, '/similar', {
+    tenantId, recordId: 'shapetag-default-query',
+    pdf_base64: PDF_A.toString('base64'), fileName: 'query.pdf', limit: 10,
+    shapeTags: '角型'
+  });
+  const text = await res.text();
+  assert.equal(res.status, 200, text);
+  const data = JSON.parse(text);
+
+  const result = data.results.find((r) => r.recordId === 'shapetag-default-src-1');
+  assert.ok(result, '結果に含まれる: ' + JSON.stringify(data.results.map((r) => r.recordId)));
+  assert.equal(result.scoreBreakdown.shapeTagPenalty, 0, '既定では形状タグ不一致でも減点しない');
+  assert.ok(!result.reasons.includes('shapeTag mismatch'));
+
+  mock.state.points.delete('shapetag-default-mismatch');
+});
+
+test('similar: SCORE_SHAPE_TAG_MISMATCH_PENALTYを設定すると、双方にAI形状タグがあり共有ゼロの候補だけ減点される', async () => {
+  const penaltyApi = await startApi(mock.url, { SCORE_SHAPE_TAG_MISMATCH_PENALTY: '0.1' });
+  try {
+    const tenantId = 'tenant-shapetag-1';
+    mock.state.points.set('shapetag-1-mismatch', {
+      id: 9301, vector: [0, 0, 0],
+      payload: {
+        tenant_id: tenantId, record_id: 'shapetag1-src-1', file_key: 'file-a',
+        ocr_shape_tags: '丸型,フランジ', __mockScore: 0.9
+      }
+    });
+    // 候補側に形状タグが無い（未生成の古いレコード）。ペナルティは絶対に発動しない。
+    mock.state.points.set('shapetag-1-notags', {
+      id: 9302, vector: [0, 0, 0],
+      payload: { tenant_id: tenantId, record_id: 'shapetag1-src-2', file_key: 'file-a', __mockScore: 0.9 }
+    });
+    mock.state.points.set('shapetag-1-match', {
+      id: 9303, vector: [0, 0, 0],
+      payload: {
+        tenant_id: tenantId, record_id: 'shapetag1-src-3', file_key: 'file-a',
+        ocr_shape_tags: '角型', __mockScore: 0.9
+      }
+    });
+
+    const res = await postJson(penaltyApi.url, '/similar', {
+      tenantId, recordId: 'shapetag1-query',
+      pdf_base64: PDF_A.toString('base64'), fileName: 'query.pdf', limit: 10,
+      shapeTags: '角型'
+    });
+    const text = await res.text();
+    assert.equal(res.status, 200, text);
+    const data = JSON.parse(text);
+
+    const mismatch = data.results.find((r) => r.recordId === 'shapetag1-src-1');
+    const noTags = data.results.find((r) => r.recordId === 'shapetag1-src-2');
+    const match = data.results.find((r) => r.recordId === 'shapetag1-src-3');
+    assert.ok(mismatch && noTags && match, '3候補とも結果に含まれる: ' + JSON.stringify(data.results.map((r) => r.recordId)));
+
+    assert.equal(mismatch.scoreBreakdown.shapeTagPenalty, 0.1, '双方にタグがあり共有ゼロなので減点される');
+    assert.ok(mismatch.reasons.includes('shapeTag mismatch'));
+    assert.equal(noTags.scoreBreakdown.shapeTagPenalty, 0, '候補に形状タグが無ければペナルティ非対象（未生成の古いレコード保護）');
+    assert.equal(match.scoreBreakdown.shapeTagPenalty, 0, '一致すればペナルティ側は0（ボーナス側で加点される）');
+    assert.ok(match.scoreBreakdown.shapeTag > 0, '一致した場合はshapeTagボーナスが付く');
+
+    mock.state.points.delete('shapetag-1-mismatch');
+    mock.state.points.delete('shapetag-1-notags');
+    mock.state.points.delete('shapetag-1-match');
+  } finally {
+    penaltyApi.child.kill();
+  }
+});
+
 test('thumbnail: 認証OFFではトークン不要', async () => {
   const res = await fetch(api.url + '/thumbnail?fileKey=file-a');
   assert.equal(res.status, 200);

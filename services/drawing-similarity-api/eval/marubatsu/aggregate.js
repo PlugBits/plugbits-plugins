@@ -200,7 +200,9 @@ const main = async () => {
       bd_bonus: bd.bonus ?? '',
       bd_total: bd.total ?? '',
       judgment: t.judgment ?? '',
-      reasons: Array.isArray(t.reasons) ? t.reasons.join('|') : ''
+      reasons: Array.isArray(t.reasons) ? t.reasons.join('|') : '',
+      bd_processMatch: bd.processMatch ?? '',
+      bd_shapeTagPenalty: bd.shapeTagPenalty ?? ''
     };
   }
 
