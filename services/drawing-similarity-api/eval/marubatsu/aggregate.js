@@ -234,8 +234,9 @@ const main = async () => {
   const randomHitsPath = join(outDir, 'random_hits.csv');
 
   await writeFile(reportPath, JSON.stringify(report, null, 2));
-  await writeFile(failuresPath, toCsv(failures));
-  await writeFile(randomHitsPath, toCsv(randomHits));
+  // CSVはUTF-8 BOM付きで出力する（ExcelでダブルクリックしてもshapeTag等の日本語が化けないように）
+  await writeFile(failuresPath, '\ufeff' + toCsv(failures));
+  await writeFile(randomHitsPath, '\ufeff' + toCsv(randomHits));
 
   console.log('  改善分析(failures.csv)   :', failures.length, '件 →', failuresPath);
   console.log('  参考(random_hits.csv)   :', randomHits.length, '件 →', randomHitsPath);
