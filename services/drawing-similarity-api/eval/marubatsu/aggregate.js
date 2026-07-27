@@ -199,7 +199,8 @@ const main = async () => {
       bd_shapeTag: bd.shapeTag ?? '',
       bd_bonus: bd.bonus ?? '',
       bd_total: bd.total ?? '',
-      judgment: t.judgment ?? ''
+      judgment: t.judgment ?? '',
+      reasons: Array.isArray(t.reasons) ? t.reasons.join('|') : ''
     };
   }
 

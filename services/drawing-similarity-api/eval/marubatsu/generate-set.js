@@ -242,6 +242,7 @@ const main = async () => {
         score: candidate.score,
         scoreBreakdown: candidate.scoreBreakdown,
         vectorRaw: candidate.vectorRaw,
+        reasons: candidate.reasons || [],
         split: SPLIT,
         seed: SEED
       });
