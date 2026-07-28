@@ -3089,7 +3089,16 @@
     '.sim-debug { margin-top: 10px; font-size: 11px; color: var(--pb-faint); }',
     '.sim-debug summary { cursor: pointer; user-select: none; }',
     '.sim-debug pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--pb-bg);',
-    '  overflow-x: auto; font-size: 10.5px; line-height: 1.5; }'
+    '  overflow-x: auto; font-size: 10.5px; line-height: 1.5; }',
+    // ---- 使用ログ: 検索結果へのフィードバック（控えめ・任意。logAppId未設定時は非表示） ----
+    '.sim-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px;',
+    '  padding-top: 12px; border-top: 1px solid var(--pb-line); font-size: 12px; color: var(--pb-muted); }',
+    '.sim-feedback-q { margin-right: 2px; }',
+    '.sim-feedback-btn { min-height: 26px; padding: 2px 12px; border: 1px solid var(--pb-line-2);',
+    '  border-radius: 999px; background: #fff; color: var(--pb-ink-2); font-size: 12px;',
+    '  cursor: pointer; transition: background .15s, border-color .15s; }',
+    '.sim-feedback-btn:hover { background: var(--pb-bg); border-color: var(--pb-faint); }',
+    '.sim-feedback-thanks { color: var(--pb-muted); }'
   ].join('\n');
 
   const parseOptionsList = (str) =>
@@ -4558,6 +4567,16 @@
   //   config/trackObjectUrl: サムネイル取得（loadThumbnail）に必要なプラグイン設定とblob URL追跡関数。
   //   thumbUrl: 高速サムネイル（暗号化保存）で復号済みのblob URL。あればダウンロード・
   //     変換を待たずそのまま表示する（autoLoad指定に関わらず優先）。
+  // 結果クリック（kintoneレコードを開く／アーカイブのGoogle Driveプレビューを開く）を
+  // 使用ログに記録する。SearchLog.logClick自体がfire-and-forgetでawait不要・ナビゲーションを
+  // 一切遅らせないため、クリックハンドラ内でそのまま呼んでよい。logAppId未設定時や
+  // window.SearchLog未読込時は内部でno-opになる。
+  const logResultClick = (item, options) => {
+    if (!window.SearchLog || !options || !options.logIdPromise) return;
+    const code = item.drawingNo || item.archiveFileName || '';
+    window.SearchLog.logClick(options.logIdPromise, code, options.rank);
+  };
+
   const buildHeroCard = (item, apiBaseUrl, options = {}) => {
     const { debug, autoLoad = true, rank, detailFieldsMap, config, trackObjectUrl, thumbUrl } = options;
     const card = document.createElement('div');
@@ -4616,9 +4635,14 @@
     if (isArchive) {
       card.appendChild(buildArchiveBadge());
       const driveLink = buildDriveLink(item);
-      if (driveLink) card.appendChild(driveLink);
+      if (driveLink) {
+        // アーカイブはkintoneリンクが無く、Google Driveでのプレビュー表示がクリック相当。
+        driveLink.addEventListener('click', () => logResultClick(item, options));
+        card.appendChild(driveLink);
+      }
     } else {
       card.appendChild(buildDetailFieldsSlot(item, detailFieldsMap));
+      link.addEventListener('click', () => logResultClick(item, options));
     }
 
     const reasonsEl = buildReasonBadges(item.reasons);
@@ -4630,12 +4654,14 @@
     if (debug) card.appendChild(buildDebugDetails(item));
 
     // kintone登録図面はカード全体クリックでレコードを新規タブで開く。
-    // ただし既存のリンク・ボタン・詳細summaryのクリックは二重発火を防ぐため素通りさせる。
+    // ただし既存のリンク・ボタン・詳細summaryのクリックは二重発火を防ぐため素通りさせる
+    // （linkそのものをクリックした場合はここに来ず、上のlink自身のclickリスナーでログ済み）。
     if (!isArchive) {
       card.classList.add('sim-hero-card-clickable');
       card.addEventListener('click', (e) => {
         if (e.target.closest('a,button,summary')) return;
         window.open(link.href, '_blank', 'noopener');
+        logResultClick(item, options);
       });
     }
 
@@ -4667,7 +4693,7 @@
       loadBtn.className = 'sim-thumb-load';
       loadBtn.textContent = 'プレビュー取得';
       loadBtn.addEventListener('click', () => {
-        row.replaceWith(buildHeroCard(item, apiBaseUrl, { debug, autoLoad: true, rank, detailFieldsMap, config, trackObjectUrl }));
+        row.replaceWith(buildHeroCard(item, apiBaseUrl, { ...options, debug, autoLoad: true, rank, detailFieldsMap, config, trackObjectUrl }));
       });
       thumbBox.appendChild(loadBtn);
     }
@@ -4683,6 +4709,9 @@
     link.textContent = isArchive
       ? (item.drawingNo || item.archiveFileName || 'アーカイブ')
       : (item.drawingNo || 'record ' + item.recordId);
+    if (!isArchive) {
+      link.addEventListener('click', () => logResultClick(item, options));
+    }
 
     const meta = document.createElement('div');
     meta.className = 'sim-meta';
@@ -4695,7 +4724,11 @@
     if (isArchive) {
       body.appendChild(buildArchiveBadge());
       const driveLink = buildDriveLink(item);
-      if (driveLink) body.appendChild(driveLink);
+      if (driveLink) {
+        // アーカイブはkintoneリンクが無く、Google Driveでのプレビュー表示がクリック相当。
+        driveLink.addEventListener('click', () => logResultClick(item, options));
+        body.appendChild(driveLink);
+      }
     } else {
       body.appendChild(buildDetailFieldsSlot(item, detailFieldsMap));
     }
@@ -4764,6 +4797,42 @@
     return empty;
   };
 
+  // 検索結果モーダル下部の控えめなフィードバックUI（「役に立ったか」を聞くだけ。必須にしない・
+  // 目立たせない）。logAppId未設定（＝使用ログ無効）時はUI自体を出さない。押すと
+  // SearchLog.logFeedbackへfire-and-forgetで送り、即座に「ありがとうございます」に差し替える。
+  const buildFeedbackWidget = (config, logIdPromise) => {
+    const logAppId = Number(config && config.logAppId);
+    if (!Number.isFinite(logAppId) || logAppId <= 0) return null;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'sim-feedback';
+
+    const question = document.createElement('span');
+    question.className = 'sim-feedback-q';
+    question.textContent = 'この結果は役に立ちましたか？';
+
+    const answer = (value) => {
+      if (window.SearchLog) window.SearchLog.logFeedback(logIdPromise, value);
+      wrap.textContent = '';
+      const thanks = document.createElement('span');
+      thanks.className = 'sim-feedback-thanks';
+      thanks.textContent = 'ありがとうございます';
+      wrap.appendChild(thanks);
+    };
+
+    const buildBtn = (label, value) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'sim-feedback-btn';
+      btn.textContent = label;
+      btn.addEventListener('click', () => answer(value));
+      return btn;
+    };
+
+    wrap.append(question, buildBtn('はい', '役に立った'), buildBtn('いいえ', '役に立たなかった'));
+    return wrap;
+  };
+
   // options: { debug: 内訳等の開発者向け表示, emptyActions: 0件時に出すボタン配列, config: プラグイン設定 }
   const renderSimilarList = (listEl, statusEl, confidenceEl, data, apiBaseUrl, options = {}) => {
     const results = Array.isArray(data && data.results) ? data.results : [];
@@ -4805,10 +4874,12 @@
       const thumbUrl = !isArchive && options.thumbUrlMap ? options.thumbUrlMap.get(String(item.recordId)) : undefined;
       const autoLoad = index < THUMBNAIL_AUTO_COUNT || Boolean(thumbUrl);
       // buildHeroCard/buildResultRow に共通で渡すオプション（config/trackObjectUrl は
-      // サムネイル取得=loadThumbnail に必要）。
+      // サムネイル取得=loadThumbnail に必要。logIdPromiseはクリック時の使用ログ記録=
+      // SearchLog.logClickに渡す。この検索のログレコードを指すPromiseで、未設定時はnull）。
       const cardOptions = {
         debug: options.debug, rank, detailFieldsMap,
-        config: options.config, trackObjectUrl: options.trackObjectUrl, thumbUrl
+        config: options.config, trackObjectUrl: options.trackObjectUrl, thumbUrl,
+        logIdPromise: options.logIdPromise
       };
       let el = autoLoad
         ? buildHeroCard(item, apiBaseUrl, { ...cardOptions, autoLoad: true })
@@ -5006,15 +5077,27 @@
     return () => { stop(); statusEl.innerHTML = ''; };
   };
 
+  // 検索1回（＝モーダルを開いて最初に走る検索）ごとに1つ生成する使用ログの状態オブジェクト。
+  // openSimilarModal/openUploadSimilarModal がここで生成し、以後の再フェッチにはそのまま
+  // 使い回す。idPromiseの中身はSearchLog.logSearchが解決するもの（{id, logAppId} または
+  // logAppId未設定/失敗時はnull）で、結果クリックのログ（logClick）に渡す。
+  const createSearchLogState = () => ({ logged: false, idPromise: null });
+
   // 検索実行（進行表示・エラー日本語化・再試行を共通化）
   // fallbackAttempted: 「未登録レコード→図面直接検索」への自動フォールバックを既に
   // 1回試みたかどうか。再実行時は必ず true を渡し、無限ループを防ぐ（もっとも、
   // フォールバック後のpayloadにはfileKeyを含めないため下のnot_indexed分岐自体に
   // 再突入しない＝二重のガードになっている）。
-  const runSimilarSearch = ({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl, fallbackAttempted }) => {
+  // searchLog: 使用ログ用の状態オブジェクト（{logged, idPromise}、createSearchLogStateで生成）。
+  // 「さらに表示」・エラー再試行・not_indexedフォールバックの再帰呼び出しでも同一インスタンスを
+  // そのまま渡し続けることで、1回の検索操作＝ログアプリ1レコードを保つ
+  // （再フェッチのたびに新規レコードを作らない）。
+  const runSimilarSearch = ({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl, fallbackAttempted, searchLog }) => {
     listEl.textContent = '';
     confidenceEl.hidden = true;
     const stopStatus = showSearchingStatus(statusEl);
+    // 使用ログのelapsed_ms計測用。/similar呼び出し直前から、レスポンス受領までを計る。
+    const searchStartedAt = performance.now();
 
     fetch(apiBaseUrl + '/similar', {
       method: 'POST',
@@ -5041,6 +5124,22 @@
         stopStatus();
         if (onData) onData(data);
 
+        // 使用ログ: fire-and-forget、レンダリングは待たない。「さらに表示」等の再フェッチでは
+        // 新規レコードを作らない（同一searchLogインスタンス内で最初のレスポンスのみ記録）。
+        // logAppId未設定時はSearchLog.logSearch内でno-op（Promise.resolve(null)）になる。
+        if (searchLog && !searchLog.logged && window.SearchLog) {
+          searchLog.logged = true;
+          const searchLogResults = Array.isArray(data && data.results) ? data.results : [];
+          searchLog.idPromise = window.SearchLog.logSearch({
+            logAppId: config.logAppId,
+            queryAppId: payload.appId,
+            queryRecordId: payload.recordId || '',
+            queryCode: payload.drawingNo || '',
+            results: searchLogResults,
+            elapsedMs: performance.now() - searchStartedAt
+          });
+        }
+
         // 高速サムネイル: 有効なテナントのみ、kintone結果（アーカイブ以外）の
         // recordIdをまとめて復号取得してから描画する。/thumbsは1リクエストのみで
         // 通常は数百msのため描画前に待っても体感の遅れにはならないが、失敗・遅延に
@@ -5063,7 +5162,8 @@
           trackObjectUrl,
           debug: isDebugEnabled(config),
           emptyActions: emptyActions ? emptyActions() : undefined,
-          thumbUrlMap
+          thumbUrlMap,
+          logIdPromise: searchLog ? searchLog.idPromise : null
         });
 
         // 件数が limit に達しているときだけ「さらに表示」を出す（＝もっとある可能性がある場合）。
@@ -5077,9 +5177,16 @@
           moreBtn.textContent = 'さらに表示（+10件）';
           moreBtn.addEventListener('click', () => {
             payload.limit += 10;
-            runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl });
+            runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl, searchLog });
           });
           listEl.appendChild(moreBtn);
+        }
+
+        // 使用ログ: 結果グリッドの一番下に控えめなフィードバックUIを出す
+        // （0件時・logAppId未設定時は非表示）。
+        if (results.length) {
+          const feedbackWidget = buildFeedbackWidget(config, searchLog ? searchLog.idPromise : null);
+          if (feedbackWidget) listEl.appendChild(feedbackWidget);
         }
       })
       .catch((error) => {
@@ -5106,7 +5213,7 @@
               delete fallbackPayload.fileKey;
               runSimilarSearch({
                 apiBaseUrl, config, payload: fallbackPayload, statusEl, confidenceEl,
-                listEl, onData, emptyActions, trackObjectUrl, fallbackAttempted: true
+                listEl, onData, emptyActions, trackObjectUrl, fallbackAttempted: true, searchLog
               });
             })
             .catch((dlError) => {
@@ -5121,7 +5228,7 @@
               retryBtn.textContent = '再試行';
               retryBtn.style.cssText = 'margin-top:4px;';
               retryBtn.addEventListener('click', () => {
-                runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl });
+                runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl, searchLog });
               });
               listEl.append(errBox, retryBtn);
             });
@@ -5139,7 +5246,7 @@
         retryBtn.textContent = '再試行';
         retryBtn.style.cssText = 'margin-top:4px;';
         retryBtn.addEventListener('click', () => {
-          runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl });
+          runSimilarSearch({ apiBaseUrl, config, payload, statusEl, confidenceEl, listEl, onData, emptyActions, trackObjectUrl, searchLog });
         });
         listEl.append(errBox, retryBtn);
       });
@@ -5216,7 +5323,8 @@
           queryShapeTagsEl.replaceWith(queryShapeTagsChips);
         }
       },
-      trackObjectUrl: shell.trackObjectUrl
+      trackObjectUrl: shell.trackObjectUrl,
+      searchLog: createSearchLogState()
     });
   };
 
@@ -5421,7 +5529,8 @@
           confidenceEl,
           listEl,
           emptyActions: buildEmptyActions,
-          trackObjectUrl
+          trackObjectUrl,
+          searchLog: createSearchLogState()
         });
       }).catch((error) => {
         statusEl.textContent = 'ファイルの読み込みに失敗しました: ' + error.message;

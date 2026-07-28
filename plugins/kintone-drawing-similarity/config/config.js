@@ -7,7 +7,7 @@
   //（開発・検証時のみ「詳細設定」から上書きできる）。
   const DEFAULT_API_BASE_URL = 'https://drawing-similarity-api-939943665629.asia-northeast1.run.app';
 
-  const editableTextFields = ['apiBaseUrl', 'apiKey', 'tagSpaceId', 'processOptions', 'resultDetailFields'];
+  const editableTextFields = ['apiBaseUrl', 'apiKey', 'tagSpaceId', 'processOptions', 'resultDetailFields', 'logAppId'];
   const textFields = [...editableTextFields, 'tenantId'];
   const selectFields = ['drawingNoField', 'productNameField', 'pdfFileField', 'materialField', 'dimensionField', 'tagField', 'shapeTagField', 'processField'];
   const fields = [...textFields, ...selectFields];

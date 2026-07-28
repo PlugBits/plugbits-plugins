@@ -16,7 +16,7 @@
     "en": "https://plugbits.app/"
   },
   "desktop": {
-    "js": ["app/plugin.js"],
+    "js": ["app/log.js", "app/plugin.js"],
     "css": ["app/plugin.css"]
   },
   "config": {
