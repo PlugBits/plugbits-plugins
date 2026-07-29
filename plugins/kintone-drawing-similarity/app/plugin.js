@@ -3091,8 +3091,13 @@
     '.sim-debug pre { margin: 6px 0 0; padding: 8px 10px; border-radius: 8px; background: var(--pb-bg);',
     '  overflow-x: auto; font-size: 10.5px; line-height: 1.5; }',
     // ---- 使用ログ: 検索結果へのフィードバック（控えめ・任意。logAppId未設定時は非表示） ----
+    // sticky でモーダル下端に常時表示する（結果グリッドの下に置くだけだとスクロール
+    // しない限り存在に気づかれず、回答がほぼ集まらなかったため）。背景と上方向の
+    // 淡い影で結果カードの上に浮いていることを示しつつ、高さは1行分に抑える。
     '.sim-feedback { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-top: 6px;',
-    '  padding-top: 12px; border-top: 1px solid var(--pb-line); font-size: 12px; color: var(--pb-muted); }',
+    '  position: sticky; bottom: 0; z-index: 5; background: #fff;',
+    '  padding: 10px 0 12px; border-top: 1px solid var(--pb-line); font-size: 12px; color: var(--pb-muted);',
+    '  box-shadow: 0 -8px 12px -10px rgba(15,23,42,.18); }',
     '.sim-feedback-q { margin-right: 2px; }',
     '.sim-feedback-btn { min-height: 26px; padding: 2px 12px; border: 1px solid var(--pb-line-2);',
     '  border-radius: 999px; background: #fff; color: var(--pb-ink-2); font-size: 12px;',
