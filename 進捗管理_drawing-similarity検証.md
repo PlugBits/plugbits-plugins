@@ -58,7 +58,13 @@ fullモード採用が確定(ファミリーHit@5 = 17/17)。`_full` コレク�
 
 ## バックログ(トライアル後・優先度順)
 
-- [ ] ブランチ `claude/drawing-similarity-accuracy-validation-8lxx6r` のmainマージ(本番は既にこのコードで稼働中。PR作成はClaudeに依頼可)
+- [ ] **単独リポジトリ化+private化**(必須): drawing-similarity 一式を plugbits-plugins から独立した非公開リポへ。
+  手順骨子: ①mainマージを先に済ませる ②新規privateリポ作成 ③`git subtree split` 等で履歴ごと抽出(または履歴なしで開始) ④CLAUDE.md・デプロイ手順のパス修正 ⑤デプロイは `--source .` のローカル起点なので本番影響なし。
+  背景: 顧客データ由来の測定値・企業名を含むドキュメントを公開リポに置かない体制へ
+- [ ] **Qdrantアカウント移管**(必須): 個人(yhtko)→ PlugBitsアカウントへ。
+  手順骨子: ①PlugBits側でクラスタ作成 ②コレクションのスナップショット取得→新クラスタへリストア(再埋め込み不要を狙う。不可なら bulk-reindex で再構築=一晩+OCR課金) ③本番/expの `QDRANT_URL`・`QDRANT_API_KEY` を差し替え→/healthとeval.jsで検証 ④旧クラスタは数日並走後に解約。
+  タイミング: トライアル期間中の切替は避け、開始前に済ませるか終了後に
+- [ ] ブランチ `claude/drawing-similarity-accuracy-validation-8lxx6r` のmainマージ(本番切替の動作確認後にPR作成→マージ。Claudeに依頼可)
 - [ ] サーバenvから `KINTONE_BASE_URL` / `KINTONE_API_TOKEN` を削除(誤ったテナントの遺物)+kintone側でトークン失効
 - [ ] 加工方法フィールドの一括入力→再インデックス→効果測定(SCORE_PROCESS_MATCH_BONUS実装済み・未検証)
 - [ ] 既知の限界事例の改善検討: 4488(視覚類似なのに圏外)・4433(製品のみ90度回転)
