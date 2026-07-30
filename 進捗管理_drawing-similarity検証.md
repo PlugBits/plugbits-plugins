@@ -1,6 +1,6 @@
 # drawing-similarity 精度検証〜モニタートライアル 進捗管理
 
-最終更新: 2026-07-29
+最終更新: 2026-07-30
 詳細な経緯・数字の根拠 → `services/drawing-similarity-api/精度検証_実験ログ.md`
 関連手順書 → `検索ログ設定手順.md`(プラグイン配下) / `bulk-reindex.md`(scripts配下) / `eval/marubatsu/README.md`
 
@@ -25,14 +25,17 @@ fullモード採用が確定(ファミリーHit@5 = 17/17)。`_full` コレク�
 - [x] 本番をbaseペアにロールバック(検索復旧)
 - [x] `_full` コレクション削除
 - [x] THUMB_KEY・正しいテナント・APIキーの確認
-- [ ] **夜間実行**: `bulk-reindex.js --force`(exp経由・約4,616枚・サムネイル付き)
-- [ ] 完了サマリー確認(成功≈4,616・失敗件数の記録)
+- [x] **夜間実行**: `bulk-reindex.js --force`(exp経由・約4,616枚・サムネイル付き)
+- [x] 完了サマリー確認
 
-## フェーズ2: 本番切替 【未着手】
+## フェーズ2: 本番切替 【進行中】
 
-- [ ] expにAPIキー付きで `eval.js` → **17/17の再現**確認(本番と同じテナント解決経路)
-- [ ] 本番envを `EMBED_IMAGE_MODE=full` + `QDRANT_COLLECTION=drawing_similarity_dinov2_base_full` に(必ずペアで)
-- [ ] `/health` で full + `_full` のペア確認 → 出力を**凍結記録として保存**
+- [x] expにAPIキー付きで `eval.js` → **17/17を再現**(テナント解決経路で確認。Hit@1は70.6%、
+      3060のrank1が僅差0.005で入れ替わったのみ=再インデックス時のOCR/shape再計算の揺れ。
+      rank1の2958はファミミリー未記載の可能性あり→目視待ち)
+- [x] 本番envを full + `_full` ペアに切替(SIMILAR_MAX_LIMITも本番から撤去済み)
+- [x] `/health` 確認 → 凍結記録を `services/drawing-similarity-api/records/凍結設定_2026-07-30.json` に保存
+- [ ] 本番に対して eval.js(LIMIT=10)で 17/17 を最終確認
 - [ ] プラグインで検索動作+**サムネイル表示**を確認
 
 ## フェーズ3: プラグイン更新とログ稼働 【未着手】
